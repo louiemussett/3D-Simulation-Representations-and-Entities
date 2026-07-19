@@ -4,15 +4,64 @@ A browser-based Three.js grassland simulation. It is an exploratory prototype fo
 
 For the complete intended design, implemented feature inventory, known suspect areas and repeatable bug-bash method, read [the bug-bash design baseline](bugbash/DESIGN-AND-BUG-BASH-BASELINE.md).
 
-## Run it
+## Run the simulation
 
-From PowerShell:
+The simulation does not require installation or a build process. Follow the instructions below to run it on Windows.
+
+### 1. Download the project
+
+1. Select the green **Code** button near the top of this GitHub page.
+2. Select **Download ZIP**.
+3. Open your Downloads folder.
+4. Right-click the downloaded ZIP file and select **Extract All**.
+5. Open the extracted project folder.
+
+Inside the folder, you should be able to see the `run.ps1` file.
+
+### 2. Open PowerShell in the project folder
+
+The easiest method is:
+
+1. Open the project folder in File Explorer.
+2. Click the address bar at the top of File Explorer.
+3. Type `powershell`.
+4. Press **Enter**.
+
+A PowerShell window will open in the correct folder.
+
+You can confirm that PowerShell is in the correct location by running:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "C:\Users\louie_000\Documents\Codex\2026-07-17\run.ps1"
+Get-ChildItem
 ```
 
-No installation or build step is required. Three.js loads from a public CDN, so the first launch requires an internet connection.
+The resulting file list should include `run.ps1`.
+
+### 3. Start the simulation
+
+Copy the following command into PowerShell and press **Enter**:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ".\run.ps1"
+```
+
+The `.\` at the beginning of `.\run.ps1` means “use the file located in the current folder.” This allows the project to work regardless of where it was downloaded.
+
+The `ExecutionPolicy Bypass` option applies only to this command. It does not permanently change the computer’s PowerShell security settings.
+
+### 4. Keep the PowerShell window open
+
+Keep the PowerShell window open while using the simulation. If the script starts a local web server, closing the PowerShell window will stop it.
+
+To stop the simulation manually, return to PowerShell and press:
+
+```text
+Ctrl+C
+```
+
+### Internet connection
+
+No package installation or build step is required. However, Three.js is loaded from a public content delivery network, so an internet connection is required when launching the simulation.
 
 ## Controls
 
