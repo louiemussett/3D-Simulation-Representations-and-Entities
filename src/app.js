@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { HexWorld } from "./hex-world.js";
+import { authoritativeHash, authoritativeSnapshot, DevelopmentProfiler } from "./diagnostics.js";
 
 let WORLD = 220;
 let HALF = Math.floor(WORLD / 2);
@@ -65,7 +66,7 @@ const sun = new THREE.DirectionalLight(0xffffff, 2.4);
 sun.position.set(12, 18, 10);
 scene.add(sun);
 
-const groups = { terrain: new THREE.Group(), plants: new THREE.Group(), water: new THREE.Group(), animals: new THREE.Group(), fog: new THREE.Group(), overlays: new THREE.Group(), corpses: new THREE.Group() };
+const groups = { terrain: new THREE.Group(), plants: new THREE.Group(), water: new THREE.Group(), animals: new THREE.Group(), intent: new THREE.Group(), fog: new THREE.Group(), overlays: new THREE.Group(), corpses: new THREE.Group() };
 Object.values(groups).forEach((g) => scene.add(g));
 
 const mats = {
@@ -116,6 +117,9 @@ const mapBadgeMaterials = new Map();
 const socialSignalMaterials = new Map();
 const sexBadgeMaterials = new Map();
 const emotionFaceMaterials = new Map();
+const healthBarMaterials = new Map();
+const thoughtBubbleMaterials = new Map();
+const actionBadgeMaterials = new Map();
 let heartSpriteMaterial = null;
 let rejectionSpriteMaterial = null;
 let attackSpriteMaterial = null;
@@ -174,6 +178,63 @@ function emotionFaceMaterial(state, speciesId) {
   const material = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false }); emotionFaceMaterials.set(id, material); return material;
 }
 
+function healthTier(a) {
+  const health = clamp(a.health, 0, 100), cap = a.healthCap ?? 100;
+  if (health <= 25 || cap <= 60) return "critical";
+  if (health <= 50 || cap <= 75) return "severe";
+  if (health <= 75) return "injured";
+  return "hurt";
+}
+function healthBarMaterial(a) {
+  const percent = Math.round(clamp(a.health, 0, 100)), tier = healthTier(a), key = `${tier}:${percent}`;
+  if (healthBarMaterials.has(key)) return healthBarMaterials.get(key);
+  const canvas = document.createElement("canvas"); canvas.width = 192; canvas.height = 48;
+  const c = canvas.getContext("2d"), colours = { hurt: "#6ee787", injured: "#ffd166", severe: "#ff8a4c", critical: "#ff3b4f" };
+  c.fillStyle = "rgba(7,10,9,.9)"; c.beginPath(); c.roundRect(5, 5, 182, 38, tier === "critical" ? 6 : 14); c.fill();
+  c.strokeStyle = tier === "critical" ? "#fff" : colours[tier]; c.lineWidth = tier === "critical" ? 5 : 3; c.stroke();
+  c.fillStyle = colours[tier]; c.beginPath(); c.roundRect(12, 12, 168 * percent / 100, 24, 7); c.fill();
+  if (tier === "severe" || tier === "critical") { c.fillStyle = "rgba(255,255,255,.6)"; for (let x = 22; x < 174 * percent / 100; x += 24) c.fillRect(x, 12, 5, 24); }
+  c.fillStyle = "#fff"; c.font = "bold 20px system-ui"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(`${percent}%`, 96, 25);
+  const material = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false, depthWrite: false });
+  healthBarMaterials.set(key, material); return material;
+}
+function drawCreatureSymbol(c, speciesId, sex, x, y, scale = 1) {
+  const colour = speciesId === "hunter" ? "#d96cff" : "#e6bc52";
+  c.fillStyle = colour; c.beginPath(); c.ellipse(x, y, 25 * scale, 13 * scale, 0, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.arc(x + 24 * scale, y - 9 * scale, 10 * scale, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = colour; c.lineWidth = 5 * scale; for (const dx of [-14, 12]) { c.beginPath(); c.moveTo(x + dx * scale, y + 8 * scale); c.lineTo(x + dx * scale, y + 24 * scale); c.stroke(); }
+  if (speciesId === "hunter") { c.beginPath(); c.moveTo(x - 22 * scale, y); c.lineTo(x - 38 * scale, y - 13 * scale); c.stroke(); }
+  c.fillStyle = sex === "M" ? "#8bd3ff" : "#ff9cc8"; c.font = `bold ${24 * scale}px system-ui`; c.textAlign = "center"; c.fillText(sex === "M" ? "♂" : "♀", x - 29 * scale, y - 17 * scale);
+}
+function thoughtBubbleMaterial(a, priority) {
+  const kind = String(priority || "thinking").toLowerCase(), key = `${kind}|${a.speciesId}|${a.sex}`;
+  if (thoughtBubbleMaterials.has(key)) return thoughtBubbleMaterials.get(key);
+  const canvas = document.createElement("canvas"); canvas.width = 224; canvas.height = 160; const c = canvas.getContext("2d");
+  c.fillStyle = "rgba(249,252,247,.96)"; c.strokeStyle = "#26342c"; c.lineWidth = 5;
+  c.beginPath(); c.arc(111, 65, 50, Math.PI, 0); c.arc(160, 72, 36, -1.5, 1.7); c.arc(119, 102, 51, 0, Math.PI); c.arc(65, 76, 35, 1.3, 4.8); c.closePath(); c.fill(); c.stroke();
+  c.beginPath(); c.arc(67, 129, 12, 0, Math.PI * 2); c.fill(); c.stroke(); c.beginPath(); c.arc(45, 146, 6, 0, Math.PI * 2); c.fill(); c.stroke();
+  c.textAlign = "center"; c.textBaseline = "middle";
+  if (/hunt|prey/.test(kind)) drawCreatureSymbol(c, "grazer", "F", 112, 76, .9);
+  else if (/reproduction|courtship|mate/.test(kind)) { drawCreatureSymbol(c, a.speciesId, a.sex === "M" ? "F" : "M", 112, 79, .72); c.fillStyle = "#ed4f7b"; c.font = "bold 29px serif"; c.fillText("♥  ♥", 112, 39); }
+  else {
+    const match = [
+      [/hunger|graze|food|feeding/, "🌿"], [/thirst|water|drink/, "💧"], [/fear|threat|flee/, "⚠"],
+      [/fatigue|rest|sleep|recover/, "Zzz"], [/offspring|parent|dependency|caregiver|safeguard/, "🛡🐾"],
+      [/scavenge|carcass/, "🦴"], [/group|social|herd/, "🐾🐾"], [/explore|wander|orient/, "✦"], [/shelter|climate/, "⌂"]
+    ].find(([pattern]) => pattern.test(kind));
+    const symbol = match?.[1] || "…"; c.fillStyle = /fear|threat|flee/.test(kind) ? "#e5484d" : "#254638"; c.font = `bold ${symbol.length > 3 ? 34 : 52}px system-ui`; c.fillText(symbol, 112, 76);
+  }
+  const material = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false, depthWrite: false });
+  thoughtBubbleMaterials.set(key, material); return material;
+}
+function actionBadgeMaterial(action, category) {
+  const key = `${action}:${category}`;
+  if (actionBadgeMaterials.has(key)) return actionBadgeMaterials.get(key);
+  const symbols = { fleeing: "!", "backing-away": "↶", stalking: "◎", chasing: "»", searching: "◉", listening: "))", "tracking-scent": "~", guarding: "◆", blocked: "×", resting: "Z", eating: "♧", drinking: "◆", courtship: "♥" };
+  const colours = { danger: "#ff4d57", hunting: "#c774ff", food: "#c9d94e", water: "#59bdff", reproduction: "#ff78ae", family: "#f2c55c", rest: "#91a4bd", social: "#5edbd3", scavenge: "#d1aa76", exploration: "#73d3b1", unknown: "#d7ddd8" };
+  const material = badgeMaterial(symbols[action] || "·", colours[category] || colours.unknown); actionBadgeMaterials.set(key, material); return material;
+}
+
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const pickables = new Map();
@@ -192,7 +253,12 @@ let lastTerrainDetail = -1;
 let lastTerrainObserverKey = "";
 let renderedAnimalCount = 0;
 const animalRenderCache = new Map();
+const entityThoughtStates = new Map();
+const entityPresentationCache = new Map();
+const entityIntentCache = new Map();
+const entityMotionHistory = new Map();
 const perf = { frames: 0, ticks: 0, last: performance.now(), fps: 0, ticksPerSecond: 0 };
+const profiler = new DevelopmentProfiler({ enabled: new URLSearchParams(window.location.search).get("profile") === "1" });
 let lastMinimapTick = -Infinity;
 let lastAutosaveTick = -Infinity;
 let sim = null;
@@ -203,6 +269,60 @@ renderAll();
 updateUI();
 renderer.setAnimationLoop(loop);
 restoreAutosavedProgress();
+
+function visibleObjectCount(group) {
+  let count = 0;
+  group.traverse((object) => { if (object !== group && object.visible) count += 1; });
+  return count;
+}
+function fogVertexCount() {
+  let count = 0;
+  groups.fog.traverse((object) => { if (object.visible && object.geometry?.attributes?.position) count += object.geometry.attributes.position.count; });
+  return count;
+}
+function profilerResources() {
+  return {
+    "renderer.info.render.calls": renderer.info.render.calls,
+    "renderer.info.render.triangles": renderer.info.render.triangles,
+    "renderer.info.memory.geometries": renderer.info.memory.geometries,
+    "renderer.info.memory.textures": renderer.info.memory.textures,
+    visibleAnimals: renderedAnimalCount,
+    visibleCorpses: visibleObjectCount(groups.corpses),
+    visibleTrails: [...entityIntentCache.values()].filter((item) => item.root.visible && item.trail.visible).length,
+    visibleConnectors: [...entityIntentCache.values()].filter((item) => item.root.visible && item.connector.visible).length,
+    visibleThoughts: [...animalRenderCache.values()].filter((item) => item.visible && item.userData.thoughtBubble?.visible).length,
+    visibleCallRings: [...entityIntentCache.values()].filter((item) => item.root.visible && item.callRing.visible).length,
+    fogVertices: fogVertexCount()
+  };
+}
+window.rssDiagnostics = Object.freeze({
+  enable: () => profiler.setEnabled(true),
+  disable: () => profiler.setEnabled(false),
+  clear: () => profiler.clear(),
+  report: () => profiler.report(profilerResources()),
+  authoritativeSnapshot: () => authoritativeSnapshot(sim),
+  authoritativeHash: () => authoritativeHash(sim),
+  fixedSeedHash: (seed, ticks, setup = worldSetup) => {
+    loadSeedWorld(Number(seed), setup);
+    running = false;
+    for (let index = 0; index < Math.max(0, Math.floor(ticks)); index += 1) tickWorld();
+    return { seed: sim.seed, tick: sim.tick, hash: authoritativeHash(sim) };
+  },
+  prepareBaseline: (name) => {
+    profiler.clear();
+    selectedId = null; selectedGroupId = null; entityLocked = false; ui.realityPanel.hidden = true;
+    ui.speed.value = "3"; ui.speedMultiplier.value = "1"; running = name !== "paused-visible";
+    controls.target.set(0, 0, 0); camera.position.set(55, 78, 55);
+    if (name === "fast") { ui.speed.value = "10"; ui.speedMultiplier.value = "5"; }
+    if (name === "follow") {
+      const animal = sim.animals.find((item) => item.alive && item.speciesId === "grazer" && item.lifeStage === "adult");
+      if (animal) { selectedId = animal.id; entityLocked = true; controls.target.set(animal.x, terrainHeight(animal.x, animal.z), animal.z); camera.position.set(animal.x + 24, 34, animal.z + 24); }
+    }
+    if (name === "reality") ui.realityPanel.hidden = false;
+    updateSpeedLabel(); renderAll(); updateUI();
+    return { name, seed: sim.seed, tick: sim.tick, selectedId, visibleAnimals: renderedAnimalCount };
+  }
+});
 
 function toggleRunning() { running = !running; const label = running ? "Pause" : "Play"; ui.playPause.textContent = label; ui.hudPlay.textContent = label; ui.runState.textContent = running ? "Running" : "Paused"; }
 ui.playPause.addEventListener("click", toggleRunning);
@@ -291,14 +411,16 @@ function loop(now) {
     accumulator += delta * requestedTicksPerSecond() / 1000;
     while (accumulator >= 1) { tickWorld(); accumulator -= 1; }
   }
-  syncAnimalVisuals(now);
-  followSelected();
-  // Keep free camera exploration within the same visible world boundary. Move
-  // the camera by the same amount so this is a clamp, not a disorienting snap.
-  const panLimit = Math.max(8, HALF - 4), clampedX = clamp(controls.target.x, -panLimit, panLimit), clampedZ = clamp(controls.target.z, -panLimit, panLimit);
-  if (clampedX !== controls.target.x || clampedZ !== controls.target.z) { camera.position.x += clampedX - controls.target.x; camera.position.z += clampedZ - controls.target.z; controls.target.set(clampedX, controls.target.y, clampedZ); }
-  controls.update();
-  renderer.render(scene, camera);
+  profiler.measure("frame presentation update", () => syncAnimalVisuals(now));
+  profiler.measure("controls/camera", () => {
+    followSelected();
+    // Keep free camera exploration within the same visible world boundary. Move
+    // the camera by the same amount so this is a clamp, not a disorienting snap.
+    const panLimit = Math.max(8, HALF - 4), clampedX = clamp(controls.target.x, -panLimit, panLimit), clampedZ = clamp(controls.target.z, -panLimit, panLimit);
+    if (clampedX !== controls.target.x || clampedZ !== controls.target.z) { camera.position.x += clampedX - controls.target.x; camera.position.z += clampedZ - controls.target.z; controls.target.set(clampedX, controls.target.y, clampedZ); }
+    controls.update();
+  });
+  profiler.measure("Three.js render", () => renderer.render(scene, camera));
   perf.frames += 1;
   if (now - perf.last >= 1000) {
     const elapsed = now - perf.last;
@@ -485,22 +607,31 @@ function makeAnimal(id, speciesId, sex, pos, rng, age = 0, motherId = null) {
 }
 
 function tickWorld() {
+  // Preserve what is currently on screen before the authoritative tick mutates
+  // organism transforms.  The completed tick is then presented continuously
+  // over the following tick interval instead of appearing in one frame.
+  const presentationStarted = performance.now();
+  const presentationStarts = new Map();
+  for (const animal of sim.animals) if (animal.alive) presentationStarts.set(animal.id, visualState(animal, presentationStarted));
   perf.ticks += 1;
   sim.tick += 1;
   enforceWorldBoundary();
   if (sim.tick % 24 === 0) sim.day += 1;
-  updateWeather();
-  if (sim.tick % 24 === 0) beginWaterCycle();
-  advanceWaterCycle();
+  profiler.measure("weather/hydrology", () => {
+    updateWeather();
+    if (sim.tick % 24 === 0) beginWaterCycle();
+    advanceWaterCycle();
+  });
   if (sim.tick % 3 === 0) updateScentFields(3);
-  growPlants();
+  profiler.measure("vegetation simulation", growPlants);
   // Ecological cover evolves continuously, but rebuilding a 304×304 visual map
   // every few simulation steps is needless and was the cause of visible stutter.
   if (sim.tick % 240 === 0) landscapeDirty = true;
-  decayCorpses();
+  profiler.measure("corpse processing", decayCorpses);
   sim.occupied = new Map(sim.animals.filter((a) => a.alive).map((a) => [key(a), a.id]));
   buildEntityIndex();
   for (const animal of sim.animals) if (animal.alive) updateAnimal(animal);
+  beginAnimalPresentation(presentationStarts, performance.now());
   if (sim.tick % 24 === 0) updateSocialGroups();
   updateGroupAlerts();
   sim.animals = sim.animals.filter((a) => a.alive || sim.tick - (a.deathTick || sim.tick) < 8);
@@ -831,11 +962,11 @@ function updateAnimal(a) {
   updateInjuries(a);
   refreshOutwardSignal(a);
   const before = { energy: a.energy, hydration: a.hydration, health: a.health, x: a.x, z: a.z, fx: a.fx ?? a.x, fz: a.fz ?? a.z };
-  sense(a);
+  profiler.measure("animal perception", () => sense(a));
   refreshOutwardSignal(a);
-  chooseAndAct(a);
+  profiler.measure("decision/action", () => chooseAndAct(a));
   a.stationaryTicks = Math.hypot((a.fx ?? a.x) - before.fx, (a.fz ?? a.z) - before.fz) < 0.01 ? (a.stationaryTicks || 0) + 1 : 0;
-  recordCausalLoop(a, before);
+  profiler.measure("causal trace capture", () => recordCausalLoop(a, before));
   updatePregnancy(a, s);
   processDigestion(a);
   if (a.stomach < 8) { a.health -= 0.11; a.energy -= 0.08; }
@@ -1361,13 +1492,38 @@ function visualState(a, now = performance.now()) {
   if (!a.visualMove) return { x: a.fx ?? a.x, z: a.fz ?? a.z, orientation: a.orientation || 0 };
   const move = a.visualMove, t = clamp((now - move.started) / move.duration, 0, 1);
   const turn = Math.atan2(Math.sin(move.toOrientation - move.fromOrientation), Math.cos(move.toOrientation - move.fromOrientation));
-  // A pronounced turn is legible: face first, then travel. Nearly straight
-  // movement skips the pause so ordinary walking remains fluid.
-  const turnShare = Math.abs(turn) > 0.2 ? 0.3 : 0;
-  const turnT = turnShare ? clamp(t / turnShare, 0, 1) : 1;
-  const moveT = turnShare ? clamp((t - turnShare) / (1 - turnShare), 0, 1) : t;
-  const turnEase = turnT * turnT * (3 - 2 * turnT), moveEase = moveT * moveT * (3 - 2 * moveT);
-  return { x: move.fromX + (move.toX - move.fromX) * moveEase, z: move.fromZ + (move.toZ - move.fromZ) * moveEase, orientation: move.fromOrientation + turn * turnEase };
+  // Translation stays linear across the whole tick. Easing every one-second
+  // segment would make an organism decelerate and accelerate once per tick.
+  // Rotation can ease without changing travel speed.
+  const turnEase = t * t * (3 - 2 * t);
+  return { x: move.fromX + (move.toX - move.fromX) * t, z: move.fromZ + (move.toZ - move.fromZ) * t, orientation: move.fromOrientation + turn * turnEase };
+}
+function beginAnimalPresentation(starts, now = performance.now()) {
+  const ticksPerSecond = requestedTicksPerSecond();
+  // A manual Step at the slider's 0 setting still gets a readable one-second
+  // transition instead of an effectively infinite animation.
+  const duration = ticksPerSecond > 0 ? 1000 / ticksPerSecond : 1000;
+  for (const a of sim.animals) {
+    if (!a.alive) continue;
+    const start = starts.get(a.id);
+    if (!start) { a.visualMove = null; continue; }
+    const toX = a.fx ?? a.x, toZ = a.fz ?? a.z;
+    const distance = Math.hypot(toX - start.x, toZ - start.z);
+    // Ordinary locomotion advances less than one world unit per tick. A much
+    // larger change is a load/teleport/correction and must not sweep through
+    // terrain merely to look smooth.
+    if (distance > 3) { a.visualMove = null; continue; }
+    a.visualMove = {
+      fromX: start.x,
+      fromZ: start.z,
+      toX,
+      toZ,
+      fromOrientation: start.orientation,
+      toOrientation: a.orientation || 0,
+      started: now,
+      duration
+    };
+  }
 }
 function terrainNormal(x, z) {
   const e = 0.55, left = terrainHeight(x - e, z), right = terrainHeight(x + e, z), back = terrainHeight(x, z - e), front = terrainHeight(x, z + e);
@@ -1379,7 +1535,217 @@ function poseOnTerrain(object, visual) {
   const heading = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2 - visual.orientation);
   object.quaternion.copy(slope).multiply(heading);
 }
-function syncAnimalVisuals(now) { for (const [id, rendered] of animalRenderCache) { const a = animalById(id); if (!a?.alive || !rendered.visible) continue; poseOnTerrain(rendered, visualState(a, now)); } }
+function currentPriority(a) { return a.priorities?.[0]?.drive || a.drive || "explore"; }
+const PRESENTATION_STYLES = {
+  danger: { colour: 0xff4d57, label: "danger" }, hunting: { colour: 0xc774ff, label: "hunting" }, food: { colour: 0xc9d94e, label: "food" }, water: { colour: 0x59bdff, label: "water" }, reproduction: { colour: 0xff78ae, label: "reproduction" }, family: { colour: 0xf2c55c, label: "family" }, rest: { colour: 0x91a4bd, label: "rest" }, social: { colour: 0x5edbd3, label: "social" }, scavenge: { colour: 0xd1aa76, label: "scavenging" }, exploration: { colour: 0x73d3b1, label: "exploration" }, unknown: { colour: 0xd7ddd8, label: "intent" }
+};
+function priorityCategory(priority) {
+  const value = String(priority || "").toLowerCase();
+  if (/threat|fear|flee|danger/.test(value)) return "danger";
+  if (/hunt|prey/.test(value)) return "hunting";
+  if (/hunger|food|graze|feed/.test(value)) return "food";
+  if (/thirst|water|drink/.test(value)) return "water";
+  if (/reproduction|courtship|mate/.test(value)) return "reproduction";
+  if (/offspring|parent|dependency|caregiver|safeguard/.test(value)) return "family";
+  if (/fatigue|rest|sleep|recover|digest/.test(value)) return "rest";
+  if (/group|social|herd/.test(value)) return "social";
+  if (/scavenge|carcass/.test(value)) return "scavenge";
+  if (/explore|wander|orient/.test(value)) return "exploration";
+  return "unknown";
+}
+function actionPresentation(a) {
+  const text = String(a.currentAction || "").toLowerCase();
+  let key = a.moveIntent ? "travelling" : "idle", posture = a.moveIntent ? "travel" : "idle";
+  const rules = [[/sprint|fleeing|running from|escaping/, "fleeing", "flee"], [/backing away|retreating while watching/, "backing-away", "reverse"], [/stalk|moving quietly/, "stalking", "stalk"], [/chasing|pursuing|rushing to protect/, "chasing", "chase"], [/listening|frozen and scanning/, "listening", "listen"], [/searching|scanning|last known|last-known/, "searching", "scan"], [/tracking|scent/, "tracking-scent", "sniff"], [/guarding|defending|protect/, "guarding", "guard"], [/grazing|browsing|feeding/, "eating", "feed"], [/drinking/, "drinking", "drink"], [/resting|recovering|sleeping|digest/, "resting", "rest"], [/courtship/, "courtship", "court"], [/blocked|occupied|cannot reach/, "blocked", "blocked"]];
+  for (const [pattern, actionKey, actionPosture] of rules) if (pattern.test(text)) { key = actionKey; posture = actionPosture; break; }
+  return { key, posture, label: a.currentAction || "idle" };
+}
+function knownContactFor(a, targetId) {
+  if (!targetId) return null;
+  return [...(a.sensoryBuffer || []), ...(a.memories || [])].filter((contact) => contact.targetId === targetId).sort((left, right) => (right.confidence || 0) - (left.confidence || 0))[0] || null;
+}
+function presentationCause(a, category, action) {
+  if (category === "danger" && a.threatEvidence?.score > 0) return { kind: "threat", targetId: a.threatEvidence.sourceId || null, x: a.threatEvidence.x, z: a.threatEvidence.z, channel: a.threatEvidence.channel || "unknown", confidence: clamp(a.threatEvidence.score / 100, .2, 1), label: a.threatEvidence.explanation };
+  let targetId = typeof a.actionTarget === "string" && !a.actionTarget.includes(",") ? a.actionTarget : a.hunt?.targetId || null;
+  if (!targetId && category === "family") targetId = knownOffspringContact(a)?.targetId || a.motherId || null;
+  if (!targetId && category === "social") targetId = a.groupLeaderId || a.groupAlert?.source || null;
+  const contact = knownContactFor(a, targetId);
+  if (contact) return { kind: category, targetId, x: contact.x, z: contact.z, channel: contact.channel || "memory", confidence: clamp(contact.confidence ?? .5, .15, 1), label: `${contact.channel || "remembered"} evidence about ${targetId}` };
+  if (typeof a.actionTarget === "string" && a.actionTarget.includes(",")) { const [x, z] = a.actionTarget.split(",").map(Number); if (Number.isFinite(x) && Number.isFinite(z)) return { kind: category, targetId: null, x, z, channel: "memory", confidence: .55, label: "remembered destination" }; }
+  if (a.moveIntent && ["food", "water", "exploration", "scavenge"].includes(category)) return { kind: category, targetId: null, x: a.moveIntent.x, z: a.moveIntent.z, channel: /remember|vague/.test(action.label) ? "memory" : "intent", confidence: .65, label: "intended destination" };
+  return null;
+}
+function deriveEntityPresentation(a, now = performance.now()) {
+  const priority = currentPriority(a), category = priorityCategory(priority), action = actionPresentation(a), visual = visualState(a, now), move = a.visualMove;
+  const vx = move?.duration ? (move.toX - move.fromX) / (move.duration / 1000) : 0, vz = move?.duration ? (move.toZ - move.fromZ) / (move.duration / 1000) : 0, speed = Math.hypot(vx, vz);
+  const movementDirection = speed > .001 ? Math.atan2(vz, vx) : null;
+  const intended = a.moveIntent || a.motionTarget;
+  let intendedDirection = intended ? Math.atan2(intended.z - visual.z, intended.x - visual.x) : movementDirection;
+  const cause = presentationCause(a, category, action);
+  if (category === "danger" && cause && !intended) intendedDirection = Math.atan2(visual.z - cause.z, visual.x - cause.x);
+  const reverseDelta = movementDirection === null ? 0 : Math.atan2(Math.sin(movementDirection - visual.orientation), Math.cos(movementDirection - visual.orientation));
+  const state = { entityId: a.id, priority: { key: priority, category, score: a.priorities?.[0]?.score || 0 }, action, cause, movement: { facingDirection: visual.orientation, movementDirection, intendedDirection, speed, stationary: speed < .015, movingBackward: Math.abs(reverseDelta) > Math.PI * .65 }, expression: { key: emotionState(a) }, health: { percentage: clamp(a.health, 0, 100), cap: a.healthCap ?? 100, tier: healthTier(a) }, communication: animalCall(a) };
+  entityPresentationCache.set(a.id, state); return state;
+}
+function evidencePhrase(cause) {
+  if (!cause) return "its internal state currently makes this the strongest option";
+  if (cause.channel === "sight" || cause.channel === "visual-signal") return cause.targetId ? `it can see ${cause.targetId}` : "it can see the relevant location";
+  if (cause.channel === "hearing") return cause.targetId ? `it heard ${cause.targetId}` : "it heard an uncertain nearby source";
+  if (cause.channel === "smell") return cause.targetId ? `it detected ${cause.targetId}'s scent` : "it detected a relevant scent";
+  if (cause.channel === "memory") return cause.targetId ? `it remembers ${cause.targetId}'s last-known location` : "it is following a remembered location";
+  return cause.label || "it has relevant evidence";
+}
+function intendedResult(state) {
+  if (state.action.key === "fleeing") return "increase its distance from danger";
+  if (state.action.key === "backing-away") return "keep the threat in view while retreating";
+  if (state.action.key === "searching") return state.priority.category === "hunting" ? "reacquire its prey" : "find stronger evidence";
+  if (state.action.key === "stalking") return "approach prey without producing much noise";
+  if (state.action.key === "chasing") return state.priority.category === "family" ? "reach and protect its offspring" : "reach its target";
+  if (state.action.key === "guarding") return "keep the protected entity safe";
+  if (state.action.key === "blocked") return "find another usable route";
+  if (state.priority.category === "water") return "reach drinkable water";
+  if (state.priority.category === "food") return "reach food";
+  if (state.priority.category === "reproduction") return "reach a suitable mate";
+  return "satisfy its current highest priority";
+}
+function causalExplanation(a, state = deriveEntityPresentation(a)) { return `${state.action.label} because ${evidencePhrase(state.cause)}, intending to ${intendedResult(state)}.`; }
+function updateEntityIndicators(rendered, a, now = performance.now()) {
+  let healthBar = rendered.userData.healthBar;
+  if (!healthBar) {
+    healthBar = new THREE.Sprite(healthBarMaterial(a));
+    healthBar.renderOrder = 80; rendered.add(healthBar); rendered.userData.healthBar = healthBar;
+  }
+  const scale = animalVisualScale(a), showHealth = a.health < 99.5;
+  healthBar.visible = showHealth;
+  if (showHealth) {
+    healthBar.material = healthBarMaterial(a);
+    healthBar.position.set(0, 2.28 * scale, 0);
+    const pulse = healthTier(a) === "critical" ? 1 + Math.sin(now * .012) * .08 : 1;
+    healthBar.scale.set(1.7 * scale * pulse, .43 * scale * pulse, 1);
+  }
+
+  let thought = rendered.userData.thoughtBubble;
+  if (!thought) {
+    thought = new THREE.Sprite(thoughtBubbleMaterial(a, currentPriority(a)).clone());
+    thought.material.depthTest = false; thought.material.depthWrite = false; thought.renderOrder = 90;
+    rendered.add(thought); rendered.userData.thoughtBubble = thought;
+  }
+  const priority = currentPriority(a);
+  let state = entityThoughtStates.get(a.id);
+  if (!state) { state = { priority, until: 0, started: 0 }; entityThoughtStates.set(a.id, state); }
+  else if (state.priority !== priority) {
+    state.priority = priority; state.started = now; state.until = now + 2400;
+    const source = thoughtBubbleMaterial(a, priority);
+    thought.material.map = source.map; thought.material.needsUpdate = true;
+  }
+  const visible = now < state.until;
+  const urgentImpact = (a.attackFlashUntil || 0) > sim.tick || (a.injuryFlashUntil || 0) > sim.tick;
+  thought.visible = visible && !urgentImpact;
+  if (thought.visible) {
+    const elapsed = now - state.started, remaining = state.until - now;
+    thought.material.opacity = Math.min(1, elapsed / 180, remaining / 420);
+    thought.position.set(.62 * scale, 3.18 * scale + Math.sin(now * .004) * .06, 0);
+    thought.scale.set(2.25 * scale, 1.6 * scale, 1);
+  }
+  let sexMarker = rendered.userData.sexMarker;
+  if (!sexMarker) { sexMarker = new THREE.Sprite(sexBadgeMaterial(a.sex)); sexMarker.renderOrder = 72; rendered.add(sexMarker); rendered.userData.sexMarker = sexMarker; }
+  sexMarker.visible = selectedId === a.id || /reproduction|courtship|mate/.test(currentPriority(a)) || (a.courtshipUntil || 0) > sim.tick;
+  if (sexMarker.visible) { sexMarker.position.set(-.72 * scale, 1.35 * scale, 0); sexMarker.scale.set(.38 * scale, .38 * scale, .38 * scale); }
+  const action = actionPresentation(a), category = priorityCategory(currentPriority(a));
+  let actionBadge = rendered.userData.actionBadge;
+  if (!actionBadge) { actionBadge = new THREE.Sprite(actionBadgeMaterial(action.key, category)); actionBadge.renderOrder = 74; rendered.add(actionBadge); rendered.userData.actionBadge = actionBadge; }
+  const unusualAction = ["fleeing", "backing-away", "stalking", "chasing", "searching", "listening", "tracking-scent", "guarding", "blocked"].includes(action.key);
+  actionBadge.visible = unusualAction && !urgentImpact;
+  if (actionBadge.visible) { actionBadge.material = actionBadgeMaterial(action.key, category); actionBadge.position.set(.72 * scale, 1.48 * scale, 0); actionBadge.scale.set(.4 * scale, .4 * scale, .4 * scale); }
+}
+function updateEntityPosture(rendered, state, now) {
+  const parts = rendered.userData.parts;
+  if (!parts) return;
+  for (const part of Object.values(parts)) {
+    const rest = part?.userData.restTransform;
+    if (!rest) continue;
+    part.position.copy(rest.position); part.rotation.copy(rest.rotation); part.scale.copy(rest.scale);
+  }
+  const stride = Math.sin(now * (state.action.posture === "flee" || state.action.posture === "chase" ? .018 : .009));
+  if (["travel", "flee", "chase"].includes(state.action.posture)) parts.body.position.y += Math.abs(stride) * .055;
+  if (state.action.posture === "flee") { parts.body.rotation.x -= .16; if (parts.head) { parts.head.rotation.x -= .08; parts.head.position.z += .07; } if (parts.tail) parts.tail.rotation.x -= .15 + stride * .08; }
+  else if (state.action.posture === "chase") { parts.body.rotation.x -= .12; if (parts.head) parts.head.position.z += .06; }
+  else if (state.action.posture === "stalk") { parts.body.position.y -= .12; parts.body.rotation.x -= .08; if (parts.head) parts.head.position.y -= .08; if (parts.tail) parts.tail.rotation.x += .22; }
+  else if (state.action.posture === "scan") { if (parts.head) parts.head.rotation.y += Math.sin(now * .0035) * .65; }
+  else if (state.action.posture === "listen") { if (parts.head) { parts.head.position.y += .12; parts.head.rotation.y += Math.sin(now * .0022) * .22; } }
+  else if (state.action.posture === "sniff") { if (parts.head) { parts.head.position.y -= .12; parts.head.rotation.y += Math.sin(now * .003) * .28; } }
+  else if (state.action.posture === "feed" || state.action.posture === "drink") { if (parts.head) { parts.head.position.y -= .22; parts.head.rotation.x += .28; } }
+  else if (state.action.posture === "rest") { parts.body.position.y -= .18; parts.body.scale.y *= .82; if (parts.head) parts.head.position.y -= .12; }
+  else if (state.action.posture === "guard") { parts.body.position.y += .05; if (parts.head) parts.head.position.y += .08; }
+  else if (state.action.posture === "blocked") { parts.body.position.z += Math.sin(now * .009) * .025; }
+}
+function ensureEntityIntent(a) {
+  if (entityIntentCache.has(a.id)) return entityIntentCache.get(a.id);
+  const root = new THREE.Group();
+  const halo = new THREE.Mesh(geos.ring, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .38, depthWrite: false, side: THREE.DoubleSide })); halo.rotation.x = -Math.PI / 2; halo.renderOrder = 26; root.add(halo);
+  const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 1.5, 0xffffff, .42, .24); arrow.renderOrder = 27; root.add(arrow);
+  const connectorGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const connector = new THREE.Line(connectorGeometry, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .65, depthWrite: false })); connector.renderOrder = 25; root.add(connector);
+  const causeMarker = new THREE.Mesh(geos.marker, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .75, depthWrite: false })); causeMarker.renderOrder = 28; root.add(causeMarker);
+  const trail = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .3, depthWrite: false })); trail.renderOrder = 24; root.add(trail);
+  const callRing = new THREE.Mesh(geos.ring, communicationMat.clone()); callRing.rotation.x = -Math.PI / 2; callRing.renderOrder = 29; root.add(callRing);
+  groups.intent.add(root);
+  const item = { root, halo, arrow, connector, causeMarker, trail, callRing };
+  entityIntentCache.set(a.id, item); return item;
+}
+function connectorColour(state) {
+  if (state.cause?.channel === "hearing") return 0xffd166;
+  if (state.cause?.channel === "smell") return 0x53d9ff;
+  if (state.cause?.channel === "memory") return 0x75a7ff;
+  return PRESENTATION_STYLES[state.priority.category]?.colour ?? 0xd7ddd8;
+}
+function updateMotionTrail(a, state, item, now, visual) {
+  let history = entityMotionHistory.get(a.id);
+  if (!history) { history = { sampledAt: 0, points: [] }; entityMotionHistory.set(a.id, history); }
+  if (now - history.sampledAt >= 120) { history.sampledAt = now; history.points.push({ x: visual.x, z: visual.z, time: now }); }
+  history.points = history.points.filter((point) => now - point.time <= 1600).slice(-16);
+  const important = a.id === selectedId || ["fleeing", "chasing", "stalking", "searching", "backing-away"].includes(state.action.key) || state.health.tier === "critical";
+  item.trail.visible = important && history.points.length > 1;
+  if (item.trail.visible) {
+    item.trail.geometry.dispose();
+    item.trail.geometry = new THREE.BufferGeometry().setFromPoints(history.points.map((point) => new THREE.Vector3(point.x, terrainHeight(point.x, point.z) + .08, point.z)));
+    item.trail.material.color.set(PRESENTATION_STYLES[state.priority.category]?.colour ?? 0xd7ddd8);
+    item.trail.material.opacity = state.action.key === "stalking" ? .22 : state.action.key === "fleeing" ? .7 : .38;
+  }
+}
+function updateWorldPresentation(a, state, now) {
+  const item = ensureEntityIntent(a), visual = visualState(a, now), style = PRESENTATION_STYLES[state.priority.category] || PRESENTATION_STYLES.unknown;
+  item.root.visible = true; item.halo.position.set(visual.x, terrainHeight(visual.x, visual.z) + .08, visual.z);
+  const urgent = ["danger", "hunting", "reproduction", "family"].includes(state.priority.category) || ["searching", "blocked"].includes(state.action.key) || a.id === selectedId;
+  item.halo.visible = urgent; item.halo.material.color.set(style.colour); item.halo.material.opacity = state.priority.category === "danger" ? .55 : .3;
+  const haloPulse = state.priority.category === "danger" ? 1 + Math.sin(now * .012) * .1 : 1; item.halo.scale.setScalar((state.action.key === "searching" ? 1.22 : .92) * animalVisualScale(a) * haloPulse);
+  const angle = state.movement.intendedDirection, arrowOrigin = new THREE.Vector3(visual.x, terrainHeight(visual.x, visual.z) + .18, visual.z);
+  item.arrow.visible = angle !== null && (!state.movement.stationary || ["blocked", "searching"].includes(state.action.key) || a.id === selectedId);
+  if (item.arrow.visible) { const direction = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)); item.arrow.position.copy(arrowOrigin); item.arrow.setDirection(direction); item.arrow.setLength(state.action.key === "fleeing" ? 2.5 : 1.75, .48, .28); item.arrow.setColor(style.colour); }
+  const showConnector = Boolean(state.cause) && (a.id === selectedId || ["danger", "hunting", "reproduction", "family"].includes(state.priority.category));
+  item.connector.visible = item.causeMarker.visible = showConnector;
+  if (showConnector) {
+    const colour = connectorColour(state), positions = item.connector.geometry.attributes.position.array;
+    positions[0] = visual.x; positions[1] = terrainHeight(visual.x, visual.z) + .5; positions[2] = visual.z; positions[3] = state.cause.x; positions[4] = terrainHeight(state.cause.x, state.cause.z) + .45; positions[5] = state.cause.z; item.connector.geometry.attributes.position.needsUpdate = true;
+    item.connector.material.color.set(colour); item.connector.material.opacity = (state.cause.channel === "memory" ? .32 : .72) * state.cause.confidence;
+    item.causeMarker.material.color.set(colour); item.causeMarker.material.opacity = .35 + state.cause.confidence * .5; item.causeMarker.position.set(state.cause.x, terrainHeight(state.cause.x, state.cause.z) + .42, state.cause.z);
+    const uncertainty = state.cause.channel === "hearing" ? 1.8 - state.cause.confidence : .45; item.causeMarker.scale.set(uncertainty, .25, uncertainty);
+  }
+  item.callRing.visible = Boolean(state.communication);
+  if (item.callRing.visible) { const phase = ((now / 900) % 1), radius = .5 + phase * 1.5; item.callRing.position.set(visual.x, terrainHeight(visual.x, visual.z) + .12, visual.z); item.callRing.scale.set(radius, radius, radius); item.callRing.material.opacity = .8 * (1 - phase); }
+  updateMotionTrail(a, state, item, now, visual);
+}
+function syncAnimalVisuals(now) {
+  for (const [id, rendered] of animalRenderCache) {
+    const a = animalById(id);
+    if (!a?.alive || !rendered.visible) continue;
+    const state = deriveEntityPresentation(a, now);
+    poseOnTerrain(rendered, visualState(a, now));
+    updateEntityPosture(rendered, state, now);
+    updateEntityIndicators(rendered, a, now);
+    updateWorldPresentation(a, state, now);
+  }
+}
 function terrainTravelEffects(c, speciesId) {
   const cover = c?.landCover || (c?.woodland ? "youngWoodland" : c?.shrubland ? "bushland" : (c?.grassHeight || 0) > .68 ? "longGrass" : "shortGrass");
   const hunter = speciesId === "hunter";
@@ -1444,31 +1810,35 @@ function terrainDetailStride() {
   return 2;
 }
 
-function renderAll() {
+function renderAll() { return profiler.measure("animal presentation rebuild/update", renderAllWork); }
+function renderAllWork() {
   const observer = selectedAnimal();
   const entityFocus = Boolean(observer && ui.overlayEntityFocus?.checked);
   groups.plants.visible = !entityFocus;
   groups.water.visible = !entityFocus;
-  updateKnowledgeFog(observer);
+  profiler.measure("fog", () => updateKnowledgeFog(observer));
   const detail = terrainDetailStride();
   const observerKey = observer ? `${observer.id}:${observer.x},${observer.z}:${Math.round((observer.orientation || 0) * 8)}` : "laboratory";
   if (detail !== lastTerrainDetail) { lastTerrainDetail = detail; landscapeDirty = true; }
   const refreshLandscape = landscapeDirty || lastLandscapeTick < 0 || observerKey !== lastTerrainObserverKey;
   if (refreshLandscape) {
-    clear(groups.plants);
-    updateTerrainColours();
-    drawTerrainFields(observer, detail);
-    drawVegetationRegions(detail, observer);
+    profiler.measure("vegetation rebuild", () => {
+      clear(groups.plants);
+      updateTerrainColours();
+      drawTerrainFields(observer, detail);
+      drawVegetationRegions(detail, observer);
+    });
     landscapeDirty = false;
     lastLandscapeTick = sim.tick;
     lastTerrainObserverKey = observerKey;
   }
   const aliveIds = new Set(sim.animals.filter((a) => a.alive).map((a) => a.id));
-  for (const [id, group] of animalRenderCache) if (!aliveIds.has(id)) { groups.animals.remove(group); animalRenderCache.delete(id); }
+  for (const [id, group] of animalRenderCache) if (!aliveIds.has(id)) { groups.animals.remove(group); animalRenderCache.delete(id); const intent = entityIntentCache.get(id); if (intent) groups.intent.remove(intent.root); entityIntentCache.delete(id); entityPresentationCache.delete(id); entityMotionHistory.delete(id); entityThoughtStates.delete(id); }
   for (const group of animalRenderCache.values()) group.visible = false;
+  for (const item of entityIntentCache.values()) item.root.visible = false;
   clear(groups.overlays); clear(groups.corpses); pickables.clear();
-  if (!entityFocus && ui.overlayPheromone.checked) drawScentTrails(observer);
-  if (!entityFocus) for (const corpse of sim.corpses) { if (observer && dist(observer, corpse) > awarenessRange(observer)) continue; drawRemains(corpse); }
+  profiler.measure("overlays", () => { if (!entityFocus && ui.overlayPheromone.checked) drawScentTrails(observer); });
+  profiler.measure("corpse rendering", () => { if (!entityFocus) for (const corpse of sim.corpses) { if (observer && dist(observer, corpse) > awarenessRange(observer)) continue; drawRemains(corpse); } });
   const cameraDistance = camera.position.distanceTo(controls.target);
   const strategicMap = !observer && cameraDistance > 260;
   const groupMap = !observer && cameraDistance > 110;
@@ -1479,9 +1849,11 @@ function renderAll() {
   const displayAnimals = sim.animals.filter((x) => x.alive && !strategicMap && !groupMap && (!observer ? Math.hypot(x.x - controls.target.x, x.z - controls.target.z) <= drawRadius : x.id === observer.id || observer.sensoryBuffer.some((m) => m.targetId === x.id && m.channel === "sight")));
   renderedAnimalCount = displayAnimals.length;
   for (const a of displayAnimals) drawAnimal(a);
-  drawReproductiveHighlights();
-  if (!observer) drawMapMarkers();
-  drawSelectedOverlays();
+  profiler.measure("overlays", () => {
+    drawReproductiveHighlights();
+    if (!observer) drawMapMarkers();
+    drawSelectedOverlays();
+  });
 }
 
 function terrainColour(c) {
@@ -1622,7 +1994,8 @@ function terrainRenderHeight(x, z) {
   return terrainHeight(x, z);
 }
 
-function buildTerrain() {
+function buildTerrain() { return profiler.measure("terrain rebuild", buildTerrainWork); }
+function buildTerrainWork() {
   clear(groups.terrain); clear(groups.water);
   const world = sim.hexWorld, positions = [], indices = [], vertexMap = new Map(), groupsByClass = [];
   const add = (x, z, height) => { x = clamp(x, -HALF, HALF); z = clamp(z, -HALF, HALF); const k = `${Math.round(x * 1000)},${Math.round(z * 1000)}`; if (vertexMap.has(k)) return vertexMap.get(k); const id = positions.length / 3; positions.push(x, height, z); vertexMap.set(k, id); return id; };
@@ -1704,9 +2077,10 @@ function drawAnimal(a) {
   const signalKind = a.socialSignal?.until > sim.tick ? a.socialSignal.kind : "";
   const visualKey = `${a.speciesId}|${a.sex}|${a.lifeStage}|${Boolean(a.pregnant)}|${a.health < 45}|${courting}|${rejecting}|${attacking}|${injured}|${emotion}|${signalKind}`;
   const cached = animalRenderCache.get(a.id);
-  if (cached?.userData.visualKey === visualKey) { const visual = visualState(a); cached.visible = true; poseOnTerrain(cached, visual); pickables.set(a.id, cached.userData.pickMesh); if (selectedId === a.id) ringAt(a, 0.9, mats.selected); return; }
+  if (cached?.userData.visualKey === visualKey) { const visual = visualState(a); cached.visible = true; poseOnTerrain(cached, visual); updateEntityIndicators(cached, a); pickables.set(a.id, cached.userData.pickMesh); if (selectedId === a.id) ringAt(a, 0.9, mats.selected); return; }
   if (cached) { groups.animals.remove(cached); animalRenderCache.delete(a.id); }
   const group = new THREE.Group();
+  let head = null, tail = null;
   const scale = animalVisualScale(a);
   const bodyMat = animalMaterial(a);
   // Both silhouettes face local +Z. Group rotation then makes the head point
@@ -1719,7 +2093,7 @@ function drawAnimal(a) {
 
   if (a.speciesId === "grazer") {
     // Round browsing body, distinct forward head and twin eyes: a tiny deer/cow silhouette.
-    const head = new THREE.Mesh(geos.herbivore, bodyMat);
+    head = new THREE.Mesh(geos.herbivore, bodyMat);
     head.scale.set(0.43 * scale, 0.4 * scale, 0.45 * scale);
     head.position.set(0, 0.48 * scale, 0.5 * scale);
     group.add(head);
@@ -1730,12 +2104,12 @@ function drawAnimal(a) {
     }
   } else {
     // Low hunter body, forward-pointing wedge muzzle and trailing tail make its direction unambiguous.
-    const muzzle = new THREE.Mesh(geos.carnivore, bodyMat);
+    const muzzle = new THREE.Mesh(geos.carnivore, bodyMat); head = muzzle;
     muzzle.rotation.x = Math.PI / 2;
     muzzle.scale.set(0.58 * scale, 0.72 * scale, 0.58 * scale);
     muzzle.position.set(0, 0.31 * scale, 0.72 * scale);
     group.add(muzzle);
-    const tail = new THREE.Mesh(geos.horn, bodyMat);
+    tail = new THREE.Mesh(geos.horn, bodyMat);
     tail.rotation.x = -Math.PI / 2;
     tail.scale.set(1.15 * scale, 1.35 * scale, 1.15 * scale);
     tail.position.set(0, 0.2 * scale, -0.82 * scale);
@@ -1779,12 +2153,12 @@ function drawAnimal(a) {
   if (attacking) {
     const strike = new THREE.Mesh(geos.ring, new THREE.MeshBasicMaterial({ color: 0xff4d4d, transparent: true, opacity: 0.95, side: THREE.DoubleSide }));
     strike.rotation.x = -Math.PI / 2; strike.scale.set(1.35 * scale, 1.35 * scale, 1.35 * scale); strike.position.y = 0.08; group.add(strike);
-    const icon = new THREE.Sprite(attackMaterial()); icon.position.set(0, 2.05 * scale, 0); icon.scale.set(0.52, 0.52, 0.52); group.add(icon);
+    const icon = new THREE.Sprite(attackMaterial()); icon.position.set(0.78 * scale, 2.12 * scale, 0); icon.scale.set(0.52, 0.52, 0.52); group.add(icon);
   }
   if (injured) {
     const wound = new THREE.Mesh(geos.ring, new THREE.MeshBasicMaterial({ color: 0xff7168, transparent: true, opacity: 0.82, side: THREE.DoubleSide }));
     wound.rotation.x = -Math.PI / 2; wound.scale.set(1.12 * scale, 1.12 * scale, 1.12 * scale); wound.position.y = 0.065; group.add(wound);
-    if ((a.injuryFlashUntil || 0) > sim.tick) { const icon = new THREE.Sprite(attackMaterial()); icon.position.set(0.38 * scale, 1.95 * scale, 0); icon.scale.set(0.4, 0.4, 0.4); group.add(icon); }
+    if ((a.injuryFlashUntil || 0) > sim.tick) { const icon = new THREE.Sprite(attackMaterial()); icon.position.set(0.76 * scale, 2.08 * scale, 0); icon.scale.set(0.4, 0.4, 0.4); group.add(icon); }
   }
   if (signalKind && !(signalKind === "courtship" && courting)) {
     const status = new THREE.Sprite(socialSignalMaterial(signalKind));
@@ -1803,6 +2177,9 @@ function drawAnimal(a) {
   group.userData.id = a.id;
   group.userData.pickMesh = body;
   group.userData.visualKey = visualKey;
+  group.userData.parts = { body, head, tail };
+  for (const part of Object.values(group.userData.parts)) if (part) part.userData.restTransform = { position: part.position.clone(), rotation: part.rotation.clone(), scale: part.scale.clone() };
+  updateEntityIndicators(group, a);
   groups.animals.add(group);
   animalRenderCache.set(a.id, group);
   pickables.set(a.id, body);
@@ -1863,17 +2240,22 @@ function selectObject(e) { const rect = renderer.domElement.getBoundingClientRec
 function followSelected() {
   if (!entityLocked) return;
   const a = selectedAnimal();
-  if (a) return controls.target.lerp(new THREE.Vector3(a.x, terrainHeight(a.x, a.z), a.z), 0.08);
+  if (a) {
+    const visual = visualState(a);
+    return controls.target.lerp(new THREE.Vector3(visual.x, terrainHeight(visual.x, visual.z), visual.z), 0.08);
+  }
   const group = selectedGroupMembers();
   if (!group.length) return;
-  const x = group.reduce((sum, member) => sum + member.x, 0) / group.length;
-  const z = group.reduce((sum, member) => sum + member.z, 0) / group.length;
+  const visuals = group.map((member) => visualState(member));
+  const x = visuals.reduce((sum, visual) => sum + visual.x, 0) / visuals.length;
+  const z = visuals.reduce((sum, visual) => sum + visual.z, 0) / visuals.length;
   controls.target.lerp(new THREE.Vector3(x, terrainHeight(x, z), z), 0.08);
 }
 function resetCamera() { camera.position.set(175, 230, 190); controls.target.set(0, 0, 0); }
+function clearEntityPresentation() { clear(groups.intent); animalRenderCache.clear(); entityThoughtStates.clear(); entityPresentationCache.clear(); entityIntentCache.clear(); entityMotionHistory.clear(); }
 function readLocalList(key) { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } }
 function writeLocalList(key, items) { try { localStorage.setItem(key, JSON.stringify(items)); } catch { addEvent("Browser storage is unavailable"); } }
-function snapshotWorld() { const snapshot = { ...sim, worldSchema: WORLD_SCHEMA, savedAt: new Date().toISOString() }; delete snapshot.occupied; delete snapshot.entityIndex; delete snapshot.hexWorld; delete snapshot.cells; return snapshot; }
+function snapshotWorld() { const snapshot = { ...sim, animals: sim.animals.map(({ visualMove, ...animal }) => animal), worldSchema: WORLD_SCHEMA, savedAt: new Date().toISOString() }; delete snapshot.occupied; delete snapshot.entityIndex; delete snapshot.hexWorld; delete snapshot.cells; return snapshot; }
 function openProgressDb() { return new Promise((resolve, reject) => { if (!window.indexedDB) return reject(new Error("IndexedDB unavailable")); const request = indexedDB.open(AUTOSAVE_DB, 1); request.onupgradeneeded = () => request.result.createObjectStore(AUTOSAVE_STORE); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
 async function writeSnapshot(slot, snapshot = snapshotWorld()) { const db = await openProgressDb(); return new Promise((resolve, reject) => { const tx = db.transaction(AUTOSAVE_STORE, "readwrite"); tx.objectStore(AUTOSAVE_STORE).put(snapshot, slot); tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => { db.close(); reject(tx.error); }; }); }
 async function deleteSnapshot(slot) { const db = await openProgressDb(); return new Promise((resolve, reject) => { const tx = db.transaction(AUTOSAVE_STORE, "readwrite"); tx.objectStore(AUTOSAVE_STORE).delete(slot); tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => { db.close(); reject(tx.error); }; }); }
@@ -1884,7 +2266,7 @@ function activateSnapshot(snapshot, label) {
   sim = { ...createWorld(snapshot.seed, snapshot.worldSetup || worldSetup), ...snapshot }; sim.worldSchema = WORLD_SCHEMA; sim.worldSetup = { ...worldSetup }; sim.activeScent ||= {}; sim.weatherSystems ||= [];
   syncWorldSetupInputs();
   enforceWorldBoundary(); sim.occupied = new Map(sim.animals.filter((a) => a.alive).map((a) => [key(a), a.id])); buildEntityIndex();
-  clear(groups.terrain); clear(groups.plants); clear(groups.water); clear(groups.animals); clear(groups.corpses); clear(groups.fog); clear(groups.overlays); animalRenderCache.clear(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false;
+  clear(groups.terrain); clear(groups.plants); clear(groups.water); clear(groups.animals); clear(groups.corpses); clear(groups.fog); clear(groups.overlays); clearEntityPresentation(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false;
   buildTerrain(); addEvent(label); renderAll(); updateUI();
 }
 async function saveProgress(silent = false) { try { await writeSnapshot("resume"); if (!silent) { addEvent("Quick save created"); updateUI(); } } catch { if (!silent) { addEvent("Quick save failed: browser storage is full or unavailable"); updateUI(); } } }
@@ -1897,7 +2279,7 @@ async function deleteNamedSlot(name) { if (!window.confirm(`Delete the save “$
 function exportProgress() { try { const blob = new Blob([JSON.stringify(snapshotWorld())], { type: "application/json" }); const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `rss-living-laboratory-day-${sim.day}-seed-${sim.seed}.json`; link.click(); URL.revokeObjectURL(url); addEvent("Save file exported"); updateUI(); } catch { addEvent("Export failed"); updateUI(); } }
 function exportSlotShortcut() { const slots = savedSlotMetadata(); if (!slots.length) { addEvent("Create a named save slot before exporting its game shortcut"); updateUI(); return; } const name = window.prompt(`Shortcut for which save?\n${slots.map((slot) => `${slot.name} — seed ${slot.seed}, day ${slot.day}`).join("\n")}`, slots[0].name)?.trim(); if (!name || !slots.some((slot) => slot.name === name)) return; const base = `${window.location.protocol}//${window.location.host}${window.location.pathname}`; const blob = new Blob([`[InternetShortcut]\nURL=${base}?slot=${encodeURIComponent(name)}\n`], { type: "text/url" }); const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `${name.replace(/[^a-z0-9_-]+/gi, "-")}-rss-save.url`; link.click(); URL.revokeObjectURL(url); addEvent(`Game shortcut exported for ${name}`); updateUI(); }
 function importProgress(event) { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { activateSnapshot(JSON.parse(reader.result), `Imported save: ${file.name}`); } catch { addEvent("Import failed: that file is not a compatible simulation save"); updateUI(); } }; reader.readAsText(file); }
-function loadSeedWorld(seed, setup = worldSetup) { sim = createWorld(seed, setup); clear(groups.terrain); buildTerrain(); clear(groups.animals); clear(groups.fog); animalRenderCache.clear(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false; running = true; ui.playPause.textContent = "Pause"; ui.runState.textContent = "Running"; resetCamera(); addEvent(`Generated world seed ${seed}`); renderAll(); updateUI(); }
+function loadSeedWorld(seed, setup = worldSetup) { sim = createWorld(seed, setup); clear(groups.terrain); buildTerrain(); clear(groups.animals); clear(groups.fog); clearEntityPresentation(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false; running = true; ui.playPause.textContent = "Pause"; ui.runState.textContent = "Running"; resetCamera(); addEvent(`Generated world seed ${seed}`); renderAll(); updateUI(); }
 function dominantDrive(a) { const vals = [["hunger", 100 - a.energy], ["thirst", 100 - a.hydration], ["fear", a.fear], ["fatigue", a.fatigue], ["reproduction", reproductionDrive(a)]]; vals.sort((x, y) => y[1] - x[1]); return vals[0][0]; }
 function relationText(a) { const parts = []; if (a.motherId) parts.push(`dependent of ${a.motherId}`); if (a.caregiverIds?.length) parts.push(`adults: ${a.caregiverIds.join(", ")}`); if (a.offspringIds.length) parts.push(`${a.offspringIds.length} offspring`); if (a.groupId) parts.push(`${a.groupId}${a.groupGoal ? ` — ${a.groupGoal}` : ""}`); return parts.join("; ") || "none"; }
 function mateHistoryText(a) { const entries = (a.mateHistory || []).slice(0, 3); return entries.length ? entries.map((entry) => `${entry.status} with ${entry.partnerId} (day ${entry.day})`).join("; ") : "no mating history"; }
@@ -2362,16 +2744,11 @@ function drawSelectedOverlays() {
   if (!a) return;
   const visual = visualState(a), origin = new THREE.Vector3(visual.x, terrainHeight(visual.x, visual.z) + 0.45, visual.z);
   const heading = new THREE.Vector3(Math.cos(visual.orientation), 0, Math.sin(visual.orientation));
-  const driveColour = a.drive === "fear" ? 0xff6161 : a.drive === "hunt" ? 0xd96cff : a.drive === "thirst" ? 0x53d9ff : a.drive === "hunger" ? 0xf1c84a : 0xeaf6ef;
-  const headingArrow = new THREE.ArrowHelper(heading, origin, 2.8, driveColour, 0.62, 0.34);
+  // The white arrow is facing/attention. The coloured ground arrow maintained
+  // by the presentation layer is intended travel, so reverse movement and
+  // looking toward a threat while retreating remain visually distinct.
+  const headingArrow = new THREE.ArrowHelper(heading, origin, 2.2, 0xf2f7f3, 0.52, 0.3);
   headingArrow.renderOrder = 35; groups.overlays.add(headingArrow);
-  let predicted = a.actionTarget ? animalById(a.actionTarget) : null;
-  if (!predicted && a.actionTarget?.includes(",")) { const [x, z] = a.actionTarget.split(",").map(Number); if (Number.isFinite(x) && Number.isFinite(z)) predicted = { x, z }; }
-  if (predicted && Math.hypot(predicted.x - visual.x, predicted.z - visual.z) > 1) {
-    const dx = predicted.x - visual.x, dz = predicted.z - visual.z, length = Math.min(9, Math.hypot(dx, dz));
-    const prediction = new THREE.ArrowHelper(new THREE.Vector3(dx, 0, dz).normalize(), origin, length, 0x65e7ff, 0.72, 0.4);
-    prediction.renderOrder = 34; groups.overlays.add(prediction);
-  }
   const range = visionRangeFor(a);
   if (ui.overlayPerception.checked) {
     const scale = a.capabilities?.perceptionScale || 1;
@@ -2526,7 +2903,8 @@ function recordCausalLoop(a, before) {
   };
 }
 
-function drawMinimap() {
+function drawMinimap() { return profiler.measure("minimap", drawMinimapWork); }
+function drawMinimapWork() {
   if (sim.tick - lastMinimapTick < 18 && !selectedAnimal()) return;
   lastMinimapTick = sim.tick;
   const canvas = ui.minimap, c = canvas.getContext("2d"), size = canvas.width;
@@ -2553,7 +2931,8 @@ function drawMinimap() {
   const selected = selectedAnimal(); if (selected) { c.strokeStyle = "#ffffff"; c.lineWidth = 1.5; c.beginPath(); c.arc((selected.x + HALF) / WORLD * size, (selected.z + HALF) / WORLD * size, 4, 0, Math.PI * 2); c.stroke(); }
 }
 
-function updateUI() {
+function updateUI() { return profiler.measure("DOM/UI", updateUIWork); }
+function updateUIWork() {
   const herb = sim.animals.filter((a) => a.alive && a.speciesId === "grazer");
   const carn = sim.animals.filter((a) => a.alive && a.speciesId === "hunter");
   const selected = selectedAnimal();
@@ -2662,7 +3041,7 @@ function updateUI() {
     ui.selectedPregnancy.textContent = selected.pregnant ? `${selected.pregnant.age.toFixed(1)} / ${s.gestation} days` : selected.conception ? `conception in ${Math.max(0, selected.conception.completesAt - sim.tick)} steps` : (selected.courtshipUntil || 0) > sim.tick ? "courtship ♥" : selected.sex === "F" ? (cycle.fertile ? `fertile — cycle day ${cycle.day.toFixed(1)} / ${cycle.period}` : `cycle day ${cycle.day.toFixed(1)} / ${cycle.period}`) : "not applicable";
     const selectedWeather = regionalWeatherAt(selected);
     ui.selectedClimate.textContent = `${selectedWeather.temp.toFixed(1)}°C; rain ${(selectedWeather.rain * 100).toFixed(0)}%; wind ${(selectedWeather.wind * 100).toFixed(0)}%`;
-    ui.selectedAction.textContent = selected.currentAction;
+    ui.selectedAction.textContent = causalExplanation(selected);
     ui.selectedEnergy.textContent = selected.energy.toFixed(0);
     const recentHit = selected.lastHit && sim.tick - selected.lastHit.tick <= 48 ? `; last hit ${selected.lastHit.type}${selected.lastHit.attackerId ? ` by ${selected.lastHit.attackerId}` : ""} (−${selected.lastHit.damage})` : "";
     const cap = selected.healthCap ?? 100;
@@ -2784,7 +3163,7 @@ function updateObserverHud(selected, herb, carn) {
   }
   if (!selected) return;
   ui.hudSelectedName.textContent = `${selected.id} ${species[selected.speciesId].label}`;
-  ui.hudSelectedAction.textContent = selected.currentAction || "observing";
+  ui.hudSelectedAction.textContent = causalExplanation(selected);
   ui.hudEnergy.textContent = Math.max(0, selected.energy).toFixed(0);
   ui.hudHealth.textContent = `${Math.max(0, selected.health).toFixed(0)}%`;
   ui.hudWater.textContent = `${Math.max(0, selected.hydration).toFixed(0)}%`;

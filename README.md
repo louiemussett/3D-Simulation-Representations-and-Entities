@@ -46,6 +46,8 @@ The current world contains Valley Grazers and Ridge Hunters. Every organism has 
 
 They can search, drink, graze, hunt, scavenge, flee, rest, digest, communicate, court, reject a mate, conceive, give birth, nurse, follow caregivers, defend young, form groups and die. Occupied cells prevent animals from sharing the same space.
 
+World symbols use a consistent presentation grammar: the body shows the current physical action, the face shows emotion, a brief thought bubble announces a changed priority, the health bar shows physical condition, coloured ground cues show intended movement, and a single evidence-coloured connector shows the strongest known cause. White arrows on selected organisms show facing/attention rather than travel direction. Sight, sound, scent and memory use distinct connector colours and confidence; remembered or approximate evidence never reveals a hidden entity's true position. Unusual actions such as fleeing, stalking, searching, listening, guarding and obstruction receive a compact action badge, while intentional social calls use a separate expanding signal ring.
+
 - Hunters must perceive prey or follow their own remembered/scent information; they cannot use hidden target coordinates.
 - Carcasses provide variable food value, can be guarded or contested, rot into selectable skeletons and eventually disappear.
 - Herbivores graze only grassland biomass. Grazing reduces visible plant cover; regrowth follows local ecology.
@@ -83,3 +85,51 @@ At distant zoom levels, individual animals are replaced by grouped strategic mar
 - This is a fast visual/ecological prototype, not a full climate, fluid-dynamics or population-genetics model.
 - Rules and parameters are illustrative and should be calibrated or replaced before making scientific claims.
 - Rendering is a presentation layer; it is not the source of the scientific model state.
+
+## Phase 0 diagnostics
+
+No profiler runs during ordinary play. To enable the bounded development profiler, open
+`http://localhost:8017/?profile=1`. It retains only the newest 240 samples in each coarse
+category. In the browser developer console, use:
+
+```js
+rssDiagnostics.report()  // timing summaries and current renderer/visible-object counts
+rssDiagnostics.clear()   // discard samples before a new scenario
+rssDiagnostics.disable() // stop collecting; existing samples remain available
+rssDiagnostics.enable()  // resume collecting
+rssDiagnostics.authoritativeHash()
+rssDiagnostics.fixedSeedHash(1337, 24) // resets the current world, advances it, and returns its hash
+rssDiagnostics.prepareBaseline("normal") // development-only repeatable camera/UI setup
+```
+
+The report gives sample count, average, p95, p99 and maximum milliseconds for each requested
+category. It also reports Three.js calls, triangles, geometries and textures, plus visible
+animals, corpses/skeleton parts, trails, connectors, thoughts, call rings and fog vertices.
+Profiler samples and presentation interpolation are excluded from saves and authoritative hashes.
+
+### Repeatable baseline scenarios
+
+Use Microsoft Edge or Chrome at 1920×1080 with the browser zoom at 100%. Start from a fresh
+`?profile=1` page, choose the **Mixed grassland** preset, Standard physical span, 5,000 hexes,
+220 herbivores, 36 carnivores, seed 1337, and leave laboratory overlays off unless the scenario
+says otherwise. Before each measurement run `rssDiagnostics.clear()`, leave the scenario running
+for 30 seconds, then copy `rssDiagnostics.report()` from the console. Do not compare runs made at
+different window sizes, terrain detail, populations, or hardware.
+
+1. **Paused, many visible:** press Pause, select Map, then zoom until individual animals are drawn and the report shows at least 150 visible animals.
+2. **Normal speed:** Map view, unlocked camera, speed 3 ticks/s (×1), no selection.
+3. **Fast speed:** same view as scenario 2, speed 10 ticks/s with the ×5 multiplier.
+4. **Follow moving animal:** return to 3 ticks/s (×1), select a healthy adult grazer, enable Lock entity, and confirm it is moving before clearing samples.
+5. **Many corpses/skeletons:** use `rssDiagnostics.fixedSeedHash(1337, 2400)`, press Map, pause, and measure only if at least 20 corpse/skeleton objects are visible; otherwise advance another 2400 ticks and record the final tick with the report.
+6. **Reality panel open:** reload seed 1337, use 3 ticks/s (×1), Map view, open Reality, and leave the panel open for the full sample.
+
+For deterministic regression evidence, record `rssDiagnostics.fixedSeedHash(1337, 24)` and
+`rssDiagnostics.fixedSeedHash(7331, 240)` after a clean page load. These hashes cover authoritative
+simulation fields while excluding presentation caches, Three.js objects, wall-clock data and profiler state.
+
+Run automated regression checks from PowerShell with the bundled/current Node.js available:
+
+```powershell
+npm test
+npm run check
+```

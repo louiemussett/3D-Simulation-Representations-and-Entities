@@ -1,0 +1,9 @@
+{
+  "name": "rss-living-laboratory",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/app.js && node --check src/diagnostics.js",
+    "test": "node --test"
+  }
+}
