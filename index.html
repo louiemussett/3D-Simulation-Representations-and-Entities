@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RSS Living Laboratory</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section id="viewport" aria-label="3D ecosystem viewport">
+        <section id="observer-hud" aria-label="Observer controls">
+          <div class="hud-top"><strong id="hud-mode">World observer</strong><span id="hud-day">Day 1 · Spring</span></div>
+          <div class="hud-controls"><button id="hud-play" type="button">Pause</button><button id="hud-map" type="button">Map</button><button id="hud-reality" type="button">Reality</button><button id="lab-toggle" type="button">Laboratory</button></div>
+          <label class="hud-speed">Simulation <strong id="hud-speed-value">2 ticks/s</strong><input id="hud-speed" type="range" min="0" max="10" step="1" value="2" /></label>
+          <p id="hud-event" class="hud-event">Observing a new world.</p>
+          <details class="world-symbol-key">
+            <summary>World symbols</summary>
+            <div><b class="symbol water-symbol">W</b><span>Water request — an animal is critically thirsty.</span></div>
+            <div><b class="symbol alarm-symbol">!</b><span>Threat sighting — predator evidence received; the animal is scanning or fleeing.</span></div>
+            <div><b class="symbol attack-symbol">✹</b><span>Physical attack — the animal was struck moments ago; this is the highest emergency signal.</span></div>
+            <div><b class="symbol injury-symbol">+</b><span>Injury — health is impaired, but no current strike is being reported.</span></div>
+            <div><b class="symbol heart-symbol">♥</b><span>Dependent care request or courtship. An attacked dependent sends ✹ instead.</span></div>
+          </details>
+        </section>
+        <section id="observer-selection" hidden>
+          <div class="section-title">Selected organism</div><h2 id="hud-selected-name">—</h2>
+          <p id="hud-selected-action">—</p>
+          <div class="hud-stats"><span>Energy <strong id="hud-energy">—</strong></span><span>Health <strong id="hud-health">—</strong></span><span>Water <strong id="hud-water">—</strong></span><span>Drive <strong id="hud-drive">—</strong></span></div>
+          <div class="hud-controls"><button id="hud-lock" type="button">Lock camera</button><button id="hud-favourite" type="button">Favourite</button></div>
+          <div class="observer-tabs" role="tablist" aria-label="Selection information"><button type="button" data-observer-tab="details" class="is-active">Details</button><button type="button" data-observer-tab="priorities">Priorities</button><button type="button" data-observer-tab="trace">RSS trace</button><button type="button" data-observer-tab="view">View</button></div>
+          <div id="hud-detail-content" class="observer-detail" aria-live="polite"></div>
+        </section>
+        <section id="reality-panel" hidden aria-label="Reality overview">
+          <div class="reality-heading"><div><div class="section-title">Reality overview</div><h2>World state</h2></div><button id="reality-close" type="button" aria-label="Close reality overview">×</button></div>
+          <div id="reality-terrain" class="reality-grid"></div>
+          <div class="section-title">Population</div><div id="reality-population" class="reality-grid"></div>
+          <div class="section-title">Active groups</div><div id="reality-groups" class="reality-groups"></div>
+        </section>
+      </section>
+      <aside class="inspector is-closed">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">RSS experimental ecosystem</p>
+            <h1>Living Laboratory</h1>
+          </div>
+          <span id="run-state" class="pill">Running</span>
+          <span id="view-mode" class="pill">Laboratory map</span>
+        </header>
+
+        <div class="controls">
+          <button id="play-pause" type="button">Pause</button>
+          <button id="step" type="button">Step</button>
+          <button id="map-view" type="button">Map</button>
+          <button id="reset" type="button">Reset</button>
+          <button id="save" type="button">Quick save</button>
+          <button id="load" type="button">Quick load</button>
+          <button id="save-slot" type="button">Save slot</button>
+          <button id="load-slot" type="button">Load slot</button>
+          <button id="export-save" type="button">Export file</button>
+          <button id="export-shortcut" type="button">Game shortcut</button>
+          <button id="import-save" type="button">Import</button>
+          <input id="import-save-file" type="file" accept="application/json,.json" hidden />
+          <button id="lock-entity" type="button">Lock entity</button>
+          <button id="favourite-entity" type="button">Favourite</button>
+          <button id="save-seed" type="button">Save seed</button>
+        </div>
+        <div id="save-slot-list" class="saved-list"><span class="hint">No named saves yet.</span></div>
+        <section class="rss-card world-setup">
+          <div class="section-title">Next world setup</div>
+          <label class="world-setting"><span>Landscape preset</span><select id="world-preset"><option value="mixed" selected>Mixed temperate</option><option value="arid">Arid basin</option><option value="alpine">Alpine winter</option><option value="maritime">Cool maritime</option><option value="boreal">Northern forest lakes</option></select><output id="world-preset-value">Choose a preset, then Reset</output></label>
+          <label class="world-setting"><span>Physical world span</span><select id="world-size"><option value="1">Compact</option><option value="2">Medium</option><option value="3" selected>Standard</option><option value="4">Vast</option></select><output id="world-size-value">Standard physical span</output></label>
+          <label class="world-setting"><span>Hex terrain detail</span><select id="hex-detail"><option value="5000" selected>Balanced — 5,000 hexes</option><option value="10000">High — 10,000 hexes</option><option value="20000">Very high — 20,000 hexes</option><option value="40000">Ultra — 40,000 hexes</option></select><output id="hex-detail-value">5,000 connected hexes</output></label>
+          <label class="world-setting"><span>Starting season</span><select id="start-season"><option value="Spring" selected>Spring</option><option value="Summer">Summer</option><option value="Autumn">Autumn</option><option value="Winter">Winter</option></select><output>Applies when you press Reset</output></label>
+          <label class="world-setting"><span>Prevailing wind direction</span><select id="wind-direction"><option value="west" selected>West → east</option><option value="southwest">South-west → north-east</option><option value="south">South → north</option><option value="southeast">South-east → north-west</option><option value="east">East → west</option></select><output>Shapes moisture, rain shadows and sediment</output></label>
+          <label class="world-setting number-setting"><span>Starting herbivores</span><input id="start-herbivores" type="number" min="0" max="500" step="1" value="220" /><output id="start-herbivores-value" hidden>220</output></label>
+          <label class="world-setting number-setting"><span>Starting carnivores</span><input id="start-carnivores" type="number" min="0" max="200" step="1" value="36" /><output id="start-carnivores-value" hidden>36</output></label>
+          <label class="world-setting range-setting"><span>Terrain height variation</span><output id="terrain-relief-value">Normal · 1.00×</output><input id="terrain-relief" type="range" min="0" max="2" step="0.05" value="1" /></label>
+          <label class="world-setting range-setting"><span>Mountain height / frequency</span><output id="mountain-amount-value">Normal · 1.00×</output><input id="mountain-amount" type="range" min="0" max="2" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Rolling hills</span><output id="hill-amount-value">Normal · 1.00×</output><input id="hill-amount" type="range" min="0" max="2" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Valley depth</span><output id="valley-amount-value">Normal · 1.00×</output><input id="valley-amount" type="range" min="0" max="2" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Rivers and headwaters</span><output id="river-amount-value">Normal · 1.00×</output><input id="river-amount" type="range" min="0" max="3" step="0.25" value="1" /></label>
+          <label class="world-setting range-setting"><span>Lakes and ponds</span><output id="lake-amount-value">Normal · 1.00×</output><input id="lake-amount" type="range" min="0" max="3" step="0.25" value="1" /></label>
+          <label class="world-setting range-setting"><span>Woodland cover</span><output id="woodland-amount-value">Normal · 1.00×</output><input id="woodland-amount" type="range" min="0" max="2" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Tree density</span><output id="tree-density-value">Normal · 1.00×</output><input id="tree-density" type="range" min="0" max="3" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Bush density</span><output id="bush-density-value">Normal · 1.00×</output><input id="bush-density" type="range" min="0" max="3" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Long-grass cover</span><output id="long-grass-value">Normal · 1.00×</output><input id="long-grass" type="range" min="0" max="3" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Rainfall / surface water</span><output id="rainfall-amount-value">Normal · 1.00×</output><input id="rainfall-amount" type="range" min="0" max="3" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Prevailing wind strength</span><output id="wind-strength-value">Normal · 1.00×</output><input id="wind-strength" type="range" min="0" max="3" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Storm intensity / frequency</span><output id="storm-intensity-value">Normal · 1.00×</output><input id="storm-intensity" type="range" min="0" max="3" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Mountain rain-shadow strength</span><output id="rain-shadow-value">Normal · 1.00×</output><input id="rain-shadow" type="range" min="0" max="3" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Wind-driven sediment movement</span><output id="sediment-transport-value">Normal · 1.00×</output><input id="sediment-transport" type="range" min="0" max="3" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Northern baseline temperature</span><output id="north-temperature-value">Cool · 8°C</output><input id="north-temperature" type="range" min="-12" max="18" step="1" value="8" /></label>
+          <label class="world-setting range-setting"><span>Southern baseline temperature</span><output id="south-temperature-value">Warm · 24°C</output><input id="south-temperature" type="range" min="8" max="38" step="1" value="24" /></label>
+          <label class="world-setting range-setting"><span>Coldest regional temperature</span><output id="coldest-temperature-value">−12°C</output><input id="coldest-temperature" type="range" min="-30" max="5" step="1" value="-12" /></label>
+          <label class="world-setting range-setting"><span>Hottest regional temperature</span><output id="hottest-temperature-value">36°C</output><input id="hottest-temperature" type="range" min="18" max="50" step="1" value="36" /></label>
+          <label class="world-setting range-setting"><span>Regional climate contrast</span><output id="temperature-variation-value">Normal · mixed regions</output><input id="temperature-variation" type="range" min="0" max="3" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>North/south temperature variety</span><output id="climate-amount-value">Normal · 1.00×</output><input id="climate-amount" type="range" min="0" max="2" step="0.1" value="1" /></label>
+          <p class="hint">These choices apply the next time you press Reset.</p>
+        </section>
+
+        <label class="speed-control">
+          <span>Simulation rate: <strong id="speed-value">2 sim ticks/s</strong></span>
+          <input id="speed" type="range" min="0" max="10" step="1" value="2" />
+        </label>
+
+        <label class="speed-control">
+          <span>Rate multiplier</span>
+          <select id="speed-multiplier" aria-label="Simulation rate multiplier">
+            <option value="1">×1 (0–10)</option>
+            <option value="2">×2 (0–20)</option>
+            <option value="3">×3 (0–30)</option>
+            <option value="5">×5 (0–50)</option>
+          </select>
+        </label>
+
+        <label class="speed-control">
+          <span>Feedback return pathway</span>
+          <select id="feedback-mode">
+            <option value="immediate">Immediate</option>
+            <option value="delayed">Delayed</option>
+            <option value="suppressed">Suppressed</option>
+            <option value="independent">Independent corrective</option>
+          </select>
+        </label>
+
+        <div class="summary-grid">
+          <div><span>Day</span><strong id="day">1</strong></div>
+          <div><span>Season</span><strong id="season">Spring</strong></div>
+          <div><span>Weather</span><strong id="weather">Clear</strong></div>
+          <div><span>Plants</span><strong id="plants">0</strong></div>
+          <div><span>Herbivores</span><strong id="herbivores">0</strong></div>
+          <div><span>Carnivores</span><strong id="carnivores">0</strong></div>
+          <div><span>Births</span><strong id="births">0</strong></div>
+          <div><span>Deaths</span><strong id="deaths">0</strong></div>
+        </div>
+
+        <p id="performance" class="hint">Measuring display performance…</p>
+
+        <section class="selected-card">
+          <div class="section-title">Selected</div>
+          <h2 id="selected-name">Map overview</h2>
+          <dl>
+            <div><dt>Kind</dt><dd id="selected-kind">World</dd></div>
+            <div><dt>Sex</dt><dd id="selected-sex">-</dd></div>
+            <div><dt>Age</dt><dd id="selected-age">-</dd></div>
+            <div><dt>Stage</dt><dd id="selected-stage">-</dd></div>
+            <div><dt>Body size</dt><dd id="selected-size">-</dd></div>
+            <div><dt>Pregnancy</dt><dd id="selected-pregnancy">-</dd></div>
+            <div><dt>Local climate</dt><dd id="selected-climate">-</dd></div>
+            <div><dt>Action</dt><dd id="selected-action">Observing</dd></div>
+            <div><dt>Energy</dt><dd id="selected-energy">-</dd></div>
+            <div><dt>Health</dt><dd id="selected-health">-</dd></div>
+            <div><dt>Hydration</dt><dd id="selected-hydration">-</dd></div>
+            <div><dt>Injuries</dt><dd id="selected-injuries">-</dd></div>
+            <div><dt>Feeding state</dt><dd id="selected-feeding">-</dd></div>
+            <div><dt>Drive</dt><dd id="selected-drive">-</dd></div>
+            <div><dt>Expression</dt><dd id="selected-expression">-</dd></div>
+            <div><dt>Relation</dt><dd id="selected-relation">-</dd></div>
+            <div><dt>Memory</dt><dd id="selected-memory">-</dd></div>
+            <div><dt>Current target</dt><dd id="selected-target">-</dd></div>
+            <div><dt>Awareness</dt><dd id="selected-awareness">-</dd></div>
+          </dl>
+        </section>
+
+        <section class="rss-card">
+          <div class="section-title">Saved entities</div>
+          <div id="favourite-list" class="saved-list"><span class="hint">Select an organism, then favourite it.</span></div>
+          <div class="section-title">Saved world seeds</div>
+          <div id="seed-list" class="saved-list"><span class="hint">Save the current map seed to revisit it.</span></div>
+        </section>
+
+        <section class="rss-card">
+          <div class="section-title">Current priority chain</div>
+          <ol id="priority-list" class="trace"></ol>
+        </section>
+
+        <section class="rss-card">
+          <div class="section-title">Live RSS causal trace</div>
+          <p class="hint">Generated from the selected organism's actual update—not a separate demo.</p>
+          <ol id="rss-trace" class="trace"></ol>
+          <div class="drift-grid">
+            <div><span>Entity indicator</span><strong id="entity-indicator">-</strong></div>
+            <div><span>Physical viability</span><strong id="physicalViability">-</strong></div>
+            <div><span>Mismatch</span><strong id="mismatch">-</strong></div>
+            <div><span>Feedback</span><strong id="feedback-status">-</strong></div>
+          </div>
+          <p id="drift-status" class="status">Select an organism to inspect its causal loop.</p>
+        </section>
+
+        <section>
+          <div class="section-title">Laboratory overlays</div>
+          <div class="toggles">
+            <label><input id="overlay-biomass" type="checkbox" /> Biomass</label>
+            <label><input id="overlay-water" type="checkbox" checked /> Water</label>
+            <label><input id="overlay-pheromone" type="checkbox" /> Scent trails</label>
+          </div>
+          <div class="section-title">Entity overlays</div>
+          <div class="toggles">
+            <label><input id="overlay-perception" type="checkbox" checked /> Perception</label>
+            <label><input id="overlay-sound" type="checkbox" /> Ambient sound</label>
+            <label><input id="overlay-calls" type="checkbox" /> Calls & messages</label>
+            <label><input id="overlay-memory" type="checkbox" checked /> Memory</label>
+            <label><input id="overlay-entity-focus" type="checkbox" /> Entity focus</label>
+          </div>
+          <p class="hint">Entity focus hides laboratory-only layers and keeps the selected organism plus only animals it can currently see.</p>
+        </section>
+
+        <section>
+          <div class="section-title">Event Stream</div>
+          <div class="stream-controls"><select id="event-filter"><option value="all">All events</option><option value="danger">Danger / injury</option><option value="social">Social / mating</option><option value="life">Births / deaths</option><option value="needs">Needs / signals</option></select><select id="event-limit"><option value="12">Latest 12</option><option value="30">Latest 30</option><option value="80">All retained</option></select></div>
+          <ol id="events" class="events"></ol>
+        </section>
+
+        <section>
+          <div class="section-title">Laboratory minimap</div>
+          <select id="minimap-mode" class="minimap-mode"><option value="combined">Terrain + organisms</option><option value="organisms">Organisms only</option><option value="groups">Groups only</option><option value="terrain">Terrain only</option></select>
+          <canvas id="minimap" width="180" height="180" aria-label="Laboratory minimap"></canvas>
+        </section>
+
+
+        <footer class="legend">
+          <span><i class="plant"></i>Terrain classes</span>
+          <span><i class="herbivore"></i>Herbivores</span>
+          <span><i class="carnivore"></i>Carnivores</span>
+          <span><i class="water"></i>Water</span>
+          <span><i class="memory"></i>Entity memory</span>
+          <span>Sex shown in selected-entity details</span>
+          <span><i class="young"></i>Young ring</span>
+          <span><i class="pheromone"></i>Scent trail</span>
+        </footer>
+      </aside>
+    </main>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
+
