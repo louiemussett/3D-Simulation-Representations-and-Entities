@@ -2,10 +2,26 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { HexWorld } from "./hex-world.js";
 import { authoritativeHash, authoritativeSnapshot, DevelopmentProfiler } from "./diagnostics.js";
+import { ACTION_PRESENTATION, clearFrameMotion, completeActionArrival, completedVisibleVelocity, createActionState, migrateActionState, setAction, setBlockedAction } from "./action-state.js";
+import { alarmObservation, captureDecisionTrace, evidenceCaption, evidenceRef, memoryEvidence, splitCommunicationEvidence, threatAssessment, tracePrimaryEvidence } from "./decision-trace.js";
+import { clampAnimalHealth, healthPresentation } from "./health-presentation.js";
+import { lostCallEligible, VisualEventManager } from "./visual-events.js";
+import { compactTrace, formatTrace } from "./trace-data.js";
+import { PresentationSnapshotCache } from "./presentation-snapshots.js";
+import { FixedTrailBuffer, updateTrailGeometry } from "./trail-buffer.js";
+import { animalStructureKey, BADGED_ACTIONS } from "./animal-visual-structure.js";
+import { disposeOwnedTree, markResource, RESOURCE_OWNERSHIP } from "./resource-ownership.js";
+import { MultiEntitySpatialIndex } from "./spatial-index.js";
+import { visitNearbyCells } from "./cell-visitation.js";
+import { CorpseRenderCache } from "./corpse-visual-cache.js";
+import { assignDecisionOrder, rebuildOccupancy, runStableAnimalPhases } from "./simulation-phases.js";
+import { chunkKeyAt, DEFAULT_LANDSCAPE_CHUNK_SIZE, LandscapeDirtyState, ReusablePositionBuffer } from "./landscape-chunks.js";
+import { MinimapInvalidation, PresentationBudgetAllocator, presentationPartVisibility, resolvePresentationTier, shouldRunBoundedUpdate } from "./presentation-budget.js";
 
-let WORLD = 220;
+const TEST_MODE = new URLSearchParams(window.location.search).get("test") === "1";
+let WORLD = TEST_MODE ? 48 : 220;
 let HALF = Math.floor(WORLD / 2);
-let worldSetup = { size: 220, span: 3, hexDetail: 5000, startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, herbivores: 220, carnivores: 36, relief: 1, mountains: 1, hills: 1, valleys: 1, rivers: 1, lakes: 1, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1, climate: 1, temperatureVariation: 1, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36 };
+let worldSetup = { size: WORLD, span: TEST_MODE ? 1 : 3, hexDetail: TEST_MODE ? 400 : 5000, startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, herbivores: TEST_MODE ? 18 : 220, carnivores: TEST_MODE ? 4 : 36, relief: 1, mountains: 1, hills: 1, valleys: 1, rivers: 1, lakes: 1, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1, climate: 1, temperatureVariation: 1, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36 };
 const WORLD_SCHEMA = 2;
 const SAVE_KEY = "persistent-ecosystem-simulation-v1";
 const AUTOSAVE_DB = "rss-living-laboratory-progress-v1";
@@ -47,8 +63,8 @@ const plantTypes = { grass: { nutrition: 1, growth: 0.055, max: 1 }, shrub: { nu
 const seasons = ["Spring", "Summer", "Autumn", "Winter"];
 const seasonMods = { Spring: { growth: 1.45, temp: 14, rain: 0.42, breed: 1 }, Summer: { growth: 1.08, temp: 24, rain: 0.25, breed: 0.8 }, Autumn: { growth: 0.82, temp: 11, rain: 0.38, breed: 0.35 }, Winter: { growth: 0.22, temp: 1, rain: 0.22, breed: 0 } };
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+const renderer = new THREE.WebGLRenderer({ antialias: !TEST_MODE });
+renderer.setPixelRatio(TEST_MODE ? 1 : Math.min(window.devicePixelRatio, 1.5));
 renderer.setSize(ui.viewport.clientWidth, ui.viewport.clientHeight);
 renderer.setClearColor(0x18201c);
 ui.viewport.appendChild(renderer.domElement);
@@ -67,6 +83,9 @@ sun.position.set(12, 18, 10);
 scene.add(sun);
 
 const groups = { terrain: new THREE.Group(), plants: new THREE.Group(), water: new THREE.Group(), animals: new THREE.Group(), intent: new THREE.Group(), fog: new THREE.Group(), overlays: new THREE.Group(), corpses: new THREE.Group() };
+for (const name of ["terrain", "plants", "water", "corpses"]) groups[name].userData.resourceOwnership = RESOURCE_OWNERSHIP.chunk;
+for (const name of ["fog", "overlays"]) groups[name].userData.resourceOwnership = RESOURCE_OWNERSHIP.temporary;
+for (const name of ["animals", "intent"]) groups[name].userData.resourceOwnership = RESOURCE_OWNERSHIP.entity;
 Object.values(groups).forEach((g) => scene.add(g));
 
 const mats = {
@@ -96,6 +115,8 @@ memoryArrowShape.moveTo(-0.72, -0.34); memoryArrowShape.lineTo(0.08, -0.34); mem
 const geos = { terrainTile: flatTerrainTile, water: new THREE.BoxGeometry(0.98, 0.05, 0.98), herbivore: new THREE.SphereGeometry(0.42, 24, 16), carnivore: new THREE.ConeGeometry(0.46, 1, 5), marker: new THREE.SphereGeometry(0.11, 12, 8), horn: new THREE.ConeGeometry(0.08, 0.26, 8), ring: new THREE.RingGeometry(0.98, 1.03, 80), memoryArrow: new THREE.ShapeGeometry(memoryArrowShape), corpse: new THREE.BoxGeometry(0.7, 0.18, 0.42), bone: new THREE.BoxGeometry(0.78, 0.07, 0.09), bush: new THREE.SphereGeometry(0.46, 8, 6), tree: new THREE.ConeGeometry(0.5, 1.8, 7), trunk: new THREE.CylinderGeometry(0.09, 0.13, 0.82, 6), fallenTree: new THREE.CylinderGeometry(0.14, 0.22, 1.9, 7) };
 geos.eye = new THREE.SphereGeometry(0.05, 10, 8);
 const pregnancyMat = new THREE.MeshBasicMaterial({ color: 0xff6fae, transparent: true, opacity: 0.9 });
+const attackRingMat = new THREE.MeshBasicMaterial({ color: 0xff4d4d, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
+const woundRingMat = new THREE.MeshBasicMaterial({ color: 0xff7168, transparent: true, opacity: 0.82, side: THREE.DoubleSide });
 const mateLinkMat = new THREE.MeshBasicMaterial({ color: 0xff77b7, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
 const climateMats = { snow: new THREE.MeshBasicMaterial({ color: 0xddeeff, transparent: true, opacity: 0.34, depthWrite: false }), heat: new THREE.MeshBasicMaterial({ color: 0xd8863b, transparent: true, opacity: 0.16, depthWrite: false }) };
 const scentMats = { grazer: new THREE.MeshBasicMaterial({ color: 0x50e6c2, transparent: true, opacity: 0.42, depthWrite: false }), hunter: new THREE.MeshBasicMaterial({ color: 0xe45cff, transparent: true, opacity: 0.34, depthWrite: false }) };
@@ -108,24 +129,26 @@ const VISION_FOV = Math.PI * 1.45;
 const visionGeometries = new Map();
 function visionGeometryFor(a) { const fov = visionFovFor(a); const id = fov.toFixed(3); if (!visionGeometries.has(id)) visionGeometries.set(id, new THREE.CircleGeometry(1, 40, -fov / 2, fov)); return visionGeometries.get(id); }
 const senseMats = { vision: new THREE.MeshBasicMaterial({ color: 0x86ffad, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }), smell: new THREE.MeshBasicMaterial({ color: 0x53d9ff, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide }), hearing: new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }), sightContact: new THREE.MeshBasicMaterial({ color: 0x86ffad }), smellContact: new THREE.MeshBasicMaterial({ color: 0x53d9ff }), hearingContact: new THREE.MeshBasicMaterial({ color: 0xffd166 }) };
-
 const iconMaterials = {
   pregnantGrazer: badgeMaterial("P", "#e6bc52"), pregnantHunter: badgeMaterial("P", "#d96cff"),
   infantGrazer: badgeMaterial("B", "#f3d990"), infantHunter: badgeMaterial("B", "#e2a5ff")
 };
+for (const resource of [...Object.values(geos), ...Object.values(mats), pregnancyMat, attackRingMat, woundRingMat, mateLinkMat, communicationMat, ...Object.values(climateMats), ...Object.values(scentMats), ...Object.values(fogMats), ...Object.values(senseMats), ...Object.values(iconMaterials)]) markResource(resource, RESOURCE_OWNERSHIP.shared);
 const mapBadgeMaterials = new Map();
 const socialSignalMaterials = new Map();
 const sexBadgeMaterials = new Map();
 const emotionFaceMaterials = new Map();
 const healthBarMaterials = new Map();
 const thoughtBubbleMaterials = new Map();
+const visualEvents = new VisualEventManager();
+const frameScratch = { up: new THREE.Vector3(0, 1, 0), normal: new THREE.Vector3(), direction: new THREE.Vector3(), origin: new THREE.Vector3(), target: new THREE.Vector3(), slope: new THREE.Quaternion(), heading: new THREE.Quaternion(), flat: new THREE.Quaternion(), visual: { x: 0, z: 0, orientation: 0 } };
 const actionBadgeMaterials = new Map();
 let heartSpriteMaterial = null;
 let rejectionSpriteMaterial = null;
 let attackSpriteMaterial = null;
 function attackMaterial() { return attackSpriteMaterial ||= badgeMaterial("!", "#ff4d4d"); }
 
-function badgeMaterial(text, color) { const canvas = document.createElement("canvas"); canvas.width = canvas.height = 96; const c = canvas.getContext("2d"); c.fillStyle = "rgba(15,18,16,.9)"; c.beginPath(); c.arc(48,48,40,0,Math.PI*2); c.fill(); c.strokeStyle = color; c.lineWidth = 8; c.stroke(); c.fillStyle = color; c.font = "bold 52px system-ui"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(text,48,50); return new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false }); }
+function badgeMaterial(text, color) { const canvas = document.createElement("canvas"); canvas.width = canvas.height = 96; const c = canvas.getContext("2d"); c.fillStyle = "rgba(15,18,16,.9)"; c.beginPath(); c.arc(48,48,40,0,Math.PI*2); c.fill(); c.strokeStyle = color; c.lineWidth = 8; c.stroke(); c.fillStyle = color; c.font = "bold 52px system-ui"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(text,48,50); const map = markResource(new THREE.CanvasTexture(canvas), RESOURCE_OWNERSHIP.shared); return markResource(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false }), RESOURCE_OWNERSHIP.shared); }
 function socialSignalMaterial(kind) { if (!socialSignalMaterials.has(kind)) socialSignalMaterials.set(kind, badgeMaterial(socialSignalIcon(kind), socialSignalColour(kind))); return socialSignalMaterials.get(kind); }
 function sexBadgeMaterial(sex) { if (!sexBadgeMaterials.has(sex)) sexBadgeMaterials.set(sex, badgeMaterial(sex === "M" ? "♂" : "♀", sex === "M" ? "#8bd3ff" : "#ff9cc8")); return sexBadgeMaterials.get(sex); }
 
@@ -137,7 +160,7 @@ function emotionState(a) {
   if (a.hydration < 28) return "thirsty";
   if (a.fatigue > 76 || a.stomach > 92) return "sleepy";
   if (hunger > 72) return "hungry";
-  if (a.drive === "hunt" || a.drive === "protect offspring" || (a.aggression > 0.8 && a.currentAction.includes("fight"))) return "intense";
+  if (a.drive === "hunt" || a.drive === "protect offspring" || (a.aggression > 0.8 && ["attack", "defend"].includes(a.actionState?.key))) return "intense";
   if (a.pregnant || a.drive === "parental") return "gentle";
   if (a.stomach > 58 && a.hydration > 62 && a.fear < 15) return "happy";
   return "calm";
@@ -175,27 +198,26 @@ function emotionFaceMaterial(state, speciesId) {
   else if (state === "fear") { eye(36, 46, true); eye(60, 46, true); c.fillStyle = "#703b42"; c.beginPath(); c.arc(48, 65, 5, 0, Math.PI * 2); c.fill(); }
   else if (state === "thirsty") { eye(36, 47); eye(60, 47); c.strokeStyle = "#5c829d"; c.lineWidth = 3; c.beginPath(); c.moveTo(27, 38); c.lineTo(43, 36); c.moveTo(53, 36); c.lineTo(69, 38); c.stroke(); c.strokeStyle = "#8a4a4d"; c.beginPath(); c.arc(48, 66, 7, Math.PI, 0); c.stroke(); }
   else { eye(36, 46); eye(60, 46); c.strokeStyle = "#673d3d"; c.lineWidth = 3; c.beginPath(); if (state === "hungry") { c.arc(48, 67, 7, Math.PI, 0); } else { c.arc(48, 61, 8, 0, Math.PI); } c.stroke(); if (state === "gentle") { c.fillStyle = "#ef9dae"; c.beginPath(); c.arc(27, 58, 4, 0, Math.PI * 2); c.arc(69, 58, 4, 0, Math.PI * 2); c.fill(); } }
-  const material = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false }); emotionFaceMaterials.set(id, material); return material;
+  const map = markResource(new THREE.CanvasTexture(canvas), RESOURCE_OWNERSHIP.shared), material = markResource(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false }), RESOURCE_OWNERSHIP.shared); emotionFaceMaterials.set(id, material); return material;
 }
 
 function healthTier(a) {
-  const health = clamp(a.health, 0, 100), cap = a.healthCap ?? 100;
-  if (health <= 25 || cap <= 60) return "critical";
-  if (health <= 50 || cap <= 75) return "severe";
-  if (health <= 75) return "injured";
-  return "hurt";
+  return healthPresentation(a.health, a.healthCap).acuteTier;
 }
-function healthBarMaterial(a) {
-  const percent = Math.round(clamp(a.health, 0, 100)), tier = healthTier(a), key = `${tier}:${percent}`;
+function healthBarMaterial(a, cachedHealth = null) {
+  const state = cachedHealth || healthPresentation(a.health, a.healthCap), percent = Math.round(state.health), cap = Math.round(state.healthCap), tier = state.acuteTier, key = `${tier}:${percent}:${cap}`;
   if (healthBarMaterials.has(key)) return healthBarMaterials.get(key);
   const canvas = document.createElement("canvas"); canvas.width = 192; canvas.height = 48;
-  const c = canvas.getContext("2d"), colours = { hurt: "#6ee787", injured: "#ffd166", severe: "#ff8a4c", critical: "#ff3b4f" };
+  const c = canvas.getContext("2d"), colours = { stable: "#6ee787", injured: "#ffd166", severe: "#ff8a4c", critical: "#ff3b4f" };
   c.fillStyle = "rgba(7,10,9,.9)"; c.beginPath(); c.roundRect(5, 5, 182, 38, tier === "critical" ? 6 : 14); c.fill();
   c.strokeStyle = tier === "critical" ? "#fff" : colours[tier]; c.lineWidth = tier === "critical" ? 5 : 3; c.stroke();
-  c.fillStyle = colours[tier]; c.beginPath(); c.roundRect(12, 12, 168 * percent / 100, 24, 7); c.fill();
+  const width = 168;
+  c.fillStyle = colours[tier]; c.beginPath(); c.roundRect(12, 12, width * state.currentFill, 24, 7); c.fill();
+  c.fillStyle = "rgba(255,255,255,.22)"; c.fillRect(12 + width * state.currentFill, 12, width * state.recoverableEmpty, 24);
+  c.fillStyle = "rgba(45,48,47,.95)"; c.fillRect(12 + width * (state.currentFill + state.recoverableEmpty), 12, width * state.permanentlyUnavailable, 24);
   if (tier === "severe" || tier === "critical") { c.fillStyle = "rgba(255,255,255,.6)"; for (let x = 22; x < 174 * percent / 100; x += 24) c.fillRect(x, 12, 5, 24); }
-  c.fillStyle = "#fff"; c.font = "bold 20px system-ui"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(`${percent}%`, 96, 25);
-  const material = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false, depthWrite: false });
+  c.fillStyle = "#fff"; c.font = "bold 20px system-ui"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(`${percent}/${cap}`, 96, 25);
+  const map = markResource(new THREE.CanvasTexture(canvas), RESOURCE_OWNERSHIP.shared), material = markResource(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false, depthWrite: false }), RESOURCE_OWNERSHIP.shared);
   healthBarMaterials.set(key, material); return material;
 }
 function drawCreatureSymbol(c, speciesId, sex, x, y, scale = 1) {
@@ -224,13 +246,13 @@ function thoughtBubbleMaterial(a, priority) {
     ].find(([pattern]) => pattern.test(kind));
     const symbol = match?.[1] || "…"; c.fillStyle = /fear|threat|flee/.test(kind) ? "#e5484d" : "#254638"; c.font = `bold ${symbol.length > 3 ? 34 : 52}px system-ui`; c.fillText(symbol, 112, 76);
   }
-  const material = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false, depthWrite: false });
+  const map = markResource(new THREE.CanvasTexture(canvas), RESOURCE_OWNERSHIP.shared), material = markResource(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false, depthWrite: false }), RESOURCE_OWNERSHIP.shared);
   thoughtBubbleMaterials.set(key, material); return material;
 }
 function actionBadgeMaterial(action, category) {
   const key = `${action}:${category}`;
   if (actionBadgeMaterials.has(key)) return actionBadgeMaterials.get(key);
-  const symbols = { fleeing: "!", "backing-away": "↶", stalking: "◎", chasing: "»", searching: "◉", listening: "))", "tracking-scent": "~", guarding: "◆", blocked: "×", resting: "Z", eating: "♧", drinking: "◆", courtship: "♥" };
+  const symbols = { flee: "!", stalk: "◎", chase: "»", search: "◉", listen: "))", "track-scent": "~", guard: "◆", defend: "◆", blocked: "×", rest: "Z", graze: "♧", browse: "♧", "feed-carcass": "♧", drink: "◆", courtship: "♥" };
   const colours = { danger: "#ff4d57", hunting: "#c774ff", food: "#c9d94e", water: "#59bdff", reproduction: "#ff78ae", family: "#f2c55c", rest: "#91a4bd", social: "#5edbd3", scavenge: "#d1aa76", exploration: "#73d3b1", unknown: "#d7ddd8" };
   const material = badgeMaterial(symbols[action] || "·", colours[category] || colours.unknown); actionBadgeMaterials.set(key, material); return material;
 }
@@ -247,19 +269,41 @@ let running = true;
 let last = 0;
 let accumulator = 0;
 let fogCacheKey = "";
+let fogPositionBuffer = null;
+let fogPositionAttribute = null;
+let fogMesh = null;
+const landscapeDirtyState = new LandscapeDirtyState();
+const landscapeChunkCells = new Map();
+const vegetationChunkRoots = new Map();
 let landscapeDirty = true;
 let lastLandscapeTick = -1;
 let lastTerrainDetail = -1;
 let lastTerrainObserverKey = "";
 let renderedAnimalCount = 0;
 const animalRenderCache = new Map();
+const corpseFrustum = new THREE.Frustum();
+const corpseFrustumMatrix = new THREE.Matrix4();
+const corpseCullPoint = new THREE.Vector3();
+const corpseRenderCache = new CorpseRenderCache(disposeCorpseVisual);
+const resourceCounters = { animalRootsCreated: 0, animalRootsRemoved: 0, ownedResourcesDisposed: 0 };
+const spatialQueryCounters = { corpseQueries: 0, corpseCandidates: 0 };
+let tickPerceptionElapsed = 0;
+let diagnosticBatch = false;
 const entityThoughtStates = new Map();
-const entityPresentationCache = new Map();
+const presentationSnapshots = new PresentationSnapshotCache();
+const entityPresentationCache = presentationSnapshots.snapshots;
 const entityIntentCache = new Map();
 const entityMotionHistory = new Map();
+const nearbyCellBuffer = [];
 const perf = { frames: 0, ticks: 0, last: performance.now(), fps: 0, ticksPerSecond: 0 };
 const profiler = new DevelopmentProfiler({ enabled: new URLSearchParams(window.location.search).get("profile") === "1" });
+const presentationBudgets = new PresentationBudgetAllocator();
+const minimapInvalidation = new MinimapInvalidation();
+let minimapStaticCanvas = null;
 let lastMinimapTick = -Infinity;
+let lastRealityUpdate = -Infinity;
+let realityTerrainCache = { key: "", html: "" };
+const REALITY_UPDATE_INTERVAL_MS = 750;
 let lastAutosaveTick = -Infinity;
 let sim = null;
 sim = createWorld(1337);
@@ -292,7 +336,25 @@ function profilerResources() {
     visibleConnectors: [...entityIntentCache.values()].filter((item) => item.root.visible && item.connector.visible).length,
     visibleThoughts: [...animalRenderCache.values()].filter((item) => item.visible && item.userData.thoughtBubble?.visible).length,
     visibleCallRings: [...entityIntentCache.values()].filter((item) => item.root.visible && item.callRing.visible).length,
-    fogVertices: fogVertexCount()
+    visibleHealthBars: [...animalRenderCache.values()].filter((item) => item.visible && item.userData.healthBar?.visible).length,
+    visibleActionBadges: [...animalRenderCache.values()].filter((item) => item.visible && item.userData.actionBadge?.visible).length,
+    visibleMovementArrows: [...entityIntentCache.values()].filter((item) => item.root.visible && item.arrow.visible).length,
+    visibleUrgentHalos: [...entityIntentCache.values()].filter((item) => item.root.visible && item.halo.visible).length,
+    presentationTierCounts: [...animalRenderCache.values()].filter((item) => item.visible).reduce((counts, item) => { const tier = item.userData.presentationTier || "close"; counts[tier] = (counts[tier] || 0) + 1; return counts; }, {}),
+    presentationBudgets: { ...presentationBudgets.budgets },
+    fogVertices: fogVertexCount(),
+    presentationSnapshots: entityPresentationCache.size,
+    maximumSemanticDerivationsPerAnimalThisTick: presentationSnapshots.maximumCount()
+    , animalRootsCreated: resourceCounters.animalRootsCreated, animalRootsRemoved: resourceCounters.animalRootsRemoved, ownedResourcesDisposed: resourceCounters.ownedResourcesDisposed,
+    corpseQueryCallsLastTick: spatialQueryCounters.corpseQueries,
+    corpseCandidatesLastTick: spatialQueryCounters.corpseCandidates,
+    totalCorpses: sim.corpses.length
+    , landscapeChunks: landscapeDirtyState.keys.size,
+    dirtyTerrainChunks: landscapeDirtyState.terrain.size,
+    dirtyWaterChunks: landscapeDirtyState.water.size,
+    dirtyVegetationChunks: landscapeDirtyState.vegetation.size,
+    fogBufferCapacityVertices: fogPositionBuffer?.array.length / 3 || 0,
+    fogBufferDrawVertices: fogPositionBuffer?.vertices || 0
   };
 }
 window.rssDiagnostics = Object.freeze({
@@ -300,6 +362,8 @@ window.rssDiagnostics = Object.freeze({
   disable: () => profiler.setEnabled(false),
   clear: () => profiler.clear(),
   report: () => profiler.report(profilerResources()),
+  presentationBudgets: () => ({ ...presentationBudgets.budgets }),
+  configurePresentationBudgets: (budgets) => { presentationBudgets.configure(budgets); return { ...presentationBudgets.budgets }; },
   authoritativeSnapshot: () => authoritativeSnapshot(sim),
   authoritativeHash: () => authoritativeHash(sim),
   fixedSeedHash: (seed, ticks, setup = worldSetup) => {
@@ -307,6 +371,17 @@ window.rssDiagnostics = Object.freeze({
     running = false;
     for (let index = 0; index < Math.max(0, Math.floor(ticks)); index += 1) tickWorld();
     return { seed: sim.seed, tick: sim.tick, hash: authoritativeHash(sim) };
+  },
+  longRunSummary: (seed, ticks, setup = worldSetup) => {
+    const profilingWasEnabled = profiler.enabled;
+    loadSeedWorld(Number(seed), setup); running = false; profiler.clear(); profiler.setEnabled(true);
+    const starts = new Map(sim.animals.map((animal) => [animal.id, { x: animal.x, z: animal.z }]));
+    const started = performance.now(); diagnosticBatch = true;
+    try {
+      for (let index = 0; index < Math.max(0, Math.floor(ticks)); index += 1) tickWorld();
+      const alive = sim.animals.filter((animal) => animal.alive), moved = alive.filter((animal) => { const start = starts.get(animal.id); return !start || start.x !== animal.x || start.z !== animal.z; }).length;
+      return { seed: sim.seed, tick: sim.tick, elapsedMs: performance.now() - started, population: alive.length, grazers: alive.filter((animal) => animal.speciesId === "grazer").length, hunters: alive.filter((animal) => animal.speciesId === "hunter").length, births: sim.births, deaths: sim.deaths, movedAnimals: moved, authoritativeHash: authoritativeHash(sim), timings: profiler.report().timings };
+    } finally { diagnosticBatch = false; profiler.setEnabled(profilingWasEnabled); }
   },
   prepareBaseline: (name) => {
     profiler.clear();
@@ -328,7 +403,7 @@ function toggleRunning() { running = !running; const label = running ? "Pause" :
 ui.playPause.addEventListener("click", toggleRunning);
 ui.hudPlay.addEventListener("click", toggleRunning);
 ui.hudMap.addEventListener("click", () => ui.mapView.click());
-ui.hudReality.addEventListener("click", () => { ui.realityPanel.hidden = !ui.realityPanel.hidden; if (!ui.realityPanel.hidden) updateRealityPanel(); });
+ui.hudReality.addEventListener("click", () => { ui.realityPanel.hidden = !ui.realityPanel.hidden; if (!ui.realityPanel.hidden) updateRealityPanel(true); });
 ui.realityClose.addEventListener("click", () => { ui.realityPanel.hidden = true; });
 ui.realityGroups.addEventListener("click", (event) => { const id = event.target.closest("button")?.dataset.groupFocus; if (id) focusGroup(id); });
 ui.labToggle.addEventListener("click", () => ui.inspector.classList.toggle("is-closed"));
@@ -345,7 +420,7 @@ ui.hudDetail.addEventListener("click", (event) => {
 });
 ui.hudSpeed.addEventListener("input", () => { ui.speed.value = ui.hudSpeed.value; updateSpeedLabel(); });
 ui.step.addEventListener("click", () => { running = false; ui.playPause.textContent = "Play"; ui.runState.textContent = "Paused"; tickWorld(); });
-ui.mapView.addEventListener("click", () => { selectedId = null; selectedGroupId = null; selectedTerrain = null; entityLocked = false; landscapeDirty = true; resetCamera(); renderAll(); updateUI(); });
+ui.mapView.addEventListener("click", () => { selectedId = null; selectedGroupId = null; selectedTerrain = null; entityLocked = false; resetCamera(); renderAll(); updateUI(); });
 ui.reset.addEventListener("click", () => loadSeedWorld(1337 + Math.floor(Math.random() * 9999), selectedWorldSetup()));
 ui.save.addEventListener("click", () => saveProgress(false));
 ui.load.addEventListener("click", () => restoreAutosavedProgress(true));
@@ -390,7 +465,7 @@ ui.worldPreset?.addEventListener("change", () => applyWorldPreset(ui.worldPreset
 ui.minimapMode?.addEventListener("change", () => { lastMinimapTick = -1; drawMinimap(); });
 ui.eventFilter?.addEventListener("change", updateUI);
 ui.eventLimit?.addEventListener("change", updateUI);
-[ui.overlayPerception, ui.overlaySound, ui.overlayMemory, ui.overlayEntityFocus, ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone].forEach((el) => el.addEventListener("change", () => { if (el === ui.overlayBiomass || el === ui.overlayWater || el === ui.overlayEntityFocus) landscapeDirty = true; renderAll(); updateUI(); }));
+[ui.overlayPerception, ui.overlaySound, ui.overlayMemory, ui.overlayEntityFocus, ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone].forEach((el) => el.addEventListener("change", () => { renderAll(); updateUI(); }));
 ui.overlayCalls?.addEventListener("change", () => { renderAll(); updateUI(); });
 ui.feedbackMode.addEventListener("change", () => addEvent(`Feedback pathway changed to ${ui.feedbackMode.value}`));
 function requestedTicksPerSecond() { return Number(ui.speed.value) * Number(ui.speedMultiplier.value); }
@@ -405,6 +480,7 @@ window.addEventListener("visibilitychange", () => { if (document.visibilityState
 window.addEventListener("pagehide", () => saveProgress(true));
 
 function loop(now) {
+  const frameStarted = profiler.enabled ? performance.now() : 0;
   const delta = Math.min(80, now - last || 16);
   last = now;
   if (running) {
@@ -428,6 +504,7 @@ function loop(now) {
     perf.ticksPerSecond = Math.round(perf.ticks * 1000 / elapsed);
     perf.frames = 0; perf.ticks = 0; perf.last = now;
   }
+  if (profiler.enabled) profiler.record("frame.total", performance.now() - frameStarted);
 }
 
 function selectedWorldSetup() {
@@ -456,9 +533,10 @@ function createWorld(seed, setup = worldSetup) {
   const animals = [];
   for (let i = 0; i < worldSetup.herbivores; i++) animals.push(makeAnimal(`H${i + 1}`, "grazer", i % 2 === 0 ? "F" : "M", randomLandHex(), rng, 35 + rng() * 210));
   for (let i = 0; i < worldSetup.carnivores; i++) animals.push(makeAnimal(`C${i + 1}`, "hunter", i % 2 === 0 ? "F" : "M", randomLandHex(), rng, 55 + rng() * 190));
+  const nextDecisionOrder = assignDecisionOrder(animals);
   const season = seasons.includes(worldSetup.startSeason) ? worldSetup.startSeason : "Spring";
   const seasonal = seasonMods[season];
-  return { worldSchema: WORLD_SCHEMA, seed, worldSetup: { ...worldSetup }, rngState: seed, tick: 0, day: 1, season, weather: { type: season === "Winter" ? "Cold clear" : season === "Summer" ? "Warm settled" : "Settled", temp: seasonal.temp, rain: seasonal.rain, wind: 0.3 }, weatherSystems: [], activeScent: {}, hexWorld, cells: hexWorld.cells, water: hexWorld.cells.filter((c) => c.water).map((c) => c.id), hydrology: { model: "hex-basin-hydrology-v2" }, animals, relationships: [], corpses: [], events: [], births: 0, deaths: 0, nextId: 1000 };
+  return { worldSchema: WORLD_SCHEMA, seed, worldSetup: { ...worldSetup }, rngState: seed, tick: 0, day: 1, season, weather: { type: season === "Winter" ? "Cold clear" : season === "Summer" ? "Warm settled" : "Settled", temp: seasonal.temp, rain: seasonal.rain, wind: 0.3 }, weatherSystems: [], activeScent: {}, hexWorld, cells: hexWorld.cells, water: hexWorld.cells.filter((c) => c.water).map((c) => c.id), hydrology: { model: "hex-basin-hydrology-v2" }, animals, relationships: [], corpses: [], events: [], births: 0, deaths: 0, nextId: 1000, nextDecisionOrder };
 }
 
 function legacySquareWorld(seed, setup = worldSetup) {
@@ -524,7 +602,8 @@ function legacySquareWorld(seed, setup = worldSetup) {
   // an odd population differs by only one individual.
   for (let i = 0; i < worldSetup.herbivores; i++) animals.push(makeAnimal(`H${i + 1}`, "grazer", i % 2 === 0 ? "F" : "M", randomLandCell(rng, occupied), rng, 35 + rng() * 210));
   for (let i = 0; i < worldSetup.carnivores; i++) animals.push(makeAnimal(`C${i + 1}`, "hunter", i % 2 === 0 ? "F" : "M", randomLandCell(rng, occupied), rng, 55 + rng() * 190));
-  return { seed, worldSetup: { ...worldSetup }, rngState: seed, tick: 0, day: 1, season: "Spring", weather: { type: "Clear", temp: 14, rain: 0, wind: 0.3 }, weatherSystems: createWeatherSystems(), activeScent: {}, cells, water: [...water], hydrology, animals, relationships: [], corpses: [], events: [], births: 0, deaths: 0, nextId: 1000 };
+  const nextDecisionOrder = assignDecisionOrder(animals);
+  return { seed, worldSetup: { ...worldSetup }, rngState: seed, tick: 0, day: 1, season: "Spring", weather: { type: "Clear", temp: 14, rain: 0, wind: 0.3 }, weatherSystems: createWeatherSystems(), activeScent: {}, cells, water: [...water], hydrology, animals, relationships: [], corpses: [], events: [], births: 0, deaths: 0, nextId: 1000, nextDecisionOrder };
 }
 
 function deriveTerrainFields(cells, rng) {
@@ -603,10 +682,11 @@ function makeAnimal(id, speciesId, sex, pos, rng, age = 0, motherId = null) {
   const bodyCondition = 0.92 + rng() * 0.14;
   const aggression = clamp(0.18 + rng() * 0.68 + (speciesId === "hunter" ? 0.08 : 0), 0, 1), scentSkill = 0.7 + rng() * 0.6, waterSkill = 0.7 + rng() * 0.6, foodSkill = 0.7 + rng() * 0.6, mateSkill = 0.7 + rng() * 0.6, careAffinity = clamp(1 - aggression * 0.45 + (rng() - 0.5) * 0.28, 0.2, 1.1);
   const matePreferences = sex === "F" ? { minHealth: 62 + rng() * 25, preferredMass: s.adultMass * (0.82 + rng() * 0.42), massTolerance: s.adultMass * (0.2 + rng() * 0.18), preferredAge: s.matureAge * (1.2 + rng() * 1.15), ageTolerance: s.matureAge * (0.5 + rng() * 0.65), preferredAggression: 0.18 + rng() * 0.68, aggressionTolerance: 0.18 + rng() * 0.25 } : null;
-  return { id, speciesId, sex, x: pos.x, z: pos.z, fx: pos.x, fz: pos.z, orientation: rng() * Math.PI * 2, stationaryTicks: 0, age, lifeStage, sizeTrait, bodyCondition, bodyMass: s.adultMass * body * sizeTrait * bodyCondition, aggression, scentSkill, waterSkill, foodSkill, mateSkill, careAffinity, health: 100, healthCap: 100, energy: 86 + rng() * 18, hydration: 82 + rng() * 16, stomach: 35, seedLoad: [], fatigue: 0, fear: 0, injuries: [], tempStress: 0, capabilities: {}, sensoryBuffer: [], receivedSignals: [], threatEvidence: null, socialSignal: null, signalCooldownUntil: 0, groupAlert: null, alive: true, pregnant: null, courtship: null, lactation: 0, postpartum: 0, cycleOffset: rng() * (speciesId === "grazer" ? 28 : 36), matePreferences, mateHistory: [], motherId, dependentUntil: motherId ? age + s.dependency : 0, offspringIds: [], offspringMemory: {}, memories: [], longMemory: [], explored: {}, mapMemory: {}, communicationReveals: [], relationships: [], currentAction: "orienting", actionTarget: null, drive: "explore", timeline: [`born day ${Math.max(1, Math.floor(age))}`] };
+  return { id, speciesId, sex, x: pos.x, z: pos.z, fx: pos.x, fz: pos.z, orientation: rng() * Math.PI * 2, stationaryTicks: 0, age, lifeStage, sizeTrait, bodyCondition, bodyMass: s.adultMass * body * sizeTrait * bodyCondition, aggression, scentSkill, waterSkill, foodSkill, mateSkill, careAffinity, health: 100, healthCap: 100, energy: 86 + rng() * 18, hydration: 82 + rng() * 16, stomach: 35, seedLoad: [], fatigue: 0, fear: 0, injuries: [], tempStress: 0, capabilities: {}, sensoryBuffer: [], receivedSignals: [], heardEvents: [], mapReveals: [], threatAssessment: null, decisionTrace: null, socialSignal: null, signalCooldownUntil: 0, groupAlert: null, alive: true, pregnant: null, courtship: null, lactation: 0, postpartum: 0, cycleOffset: rng() * (speciesId === "grazer" ? 28 : 36), matePreferences, mateHistory: [], motherId, dependentUntil: motherId ? age + s.dependency : 0, offspringIds: [], offspringMemory: {}, memories: [], longMemory: [], explored: {}, mapMemory: {}, relationships: [], actionState: createActionState("orient", { label: "orienting" }), currentAction: "orienting", actionTarget: null, drive: "explore", timeline: [`born day ${Math.max(1, Math.floor(age))}`] };
 }
 
 function tickWorld() {
+  const tickStarted = profiler.enabled ? performance.now() : 0;
   // Preserve what is currently on screen before the authoritative tick mutates
   // organism transforms.  The completed tick is then presented continuously
   // over the following tick interval instead of appearing in one frame.
@@ -614,6 +694,7 @@ function tickWorld() {
   const presentationStarts = new Map();
   for (const animal of sim.animals) if (animal.alive) presentationStarts.set(animal.id, visualState(animal, presentationStarted));
   perf.ticks += 1;
+  spatialQueryCounters.corpseQueries = 0; spatialQueryCounters.corpseCandidates = 0;
   sim.tick += 1;
   enforceWorldBoundary();
   if (sim.tick % 24 === 0) sim.day += 1;
@@ -626,22 +707,34 @@ function tickWorld() {
   profiler.measure("vegetation simulation", growPlants);
   // Ecological cover evolves continuously, but rebuilding a 304×304 visual map
   // every few simulation steps is needless and was the cause of visible stutter.
-  if (sim.tick % 240 === 0) landscapeDirty = true;
-  profiler.measure("corpse processing", decayCorpses);
-  sim.occupied = new Map(sim.animals.filter((a) => a.alive).map((a) => [key(a), a.id]));
-  buildEntityIndex();
-  for (const animal of sim.animals) if (animal.alive) updateAnimal(animal);
+  profiler.measure("tick.corpses", () => profiler.measure("corpse processing", decayCorpses));
+  sim.nextDecisionOrder = assignDecisionOrder(sim.animals, sim.nextDecisionOrder);
+  tickPerceptionElapsed = 0;
+  const beforeStates = new Map();
+  runStableAnimalPhases({
+    animals: sim.animals,
+    preSense: (animal) => beforeStates.set(animal.id, prepareAnimalForSensing(animal)),
+    prepareOutwardSignals: refreshOutwardSignal,
+    buildSnapshot: () => { sim.occupied = rebuildOccupancy(sim.animals, key); buildEntityIndex(); },
+    sense: senseAnimalProfiled,
+    interpretSignals: (animals) => { for (const animal of animals) if (animal.alive) refreshOutwardSignal(animal); updateGroupAlerts(); },
+    act: (animal) => applyAnimalDecision(animal, beforeStates.get(animal.id)),
+    postAction: applyAnimalPostAction,
+    afterActions: () => { sim.occupied = rebuildOccupancy(sim.animals, key); buildEntityIndex(); }
+  });
+  profiler.record("tick.perception", tickPerceptionElapsed);
   beginAnimalPresentation(presentationStarts, performance.now());
   if (sim.tick % 24 === 0) updateSocialGroups();
-  updateGroupAlerts();
   sim.animals = sim.animals.filter((a) => a.alive || sim.tick - (a.deathTick || sim.tick) < 8);
+  buildPresentationSnapshots(performance.now());
   // At slow speeds the display updates every simulation step, so organisms never
   // appear to teleport. Faster modes still throttle heavy overlay/UI rebuilds.
   const displayEvery = Math.max(1, Math.ceil(requestedTicksPerSecond() / 3));
-  if (sim.tick % displayEvery === 0) { renderAll(); updateUI(); }
+  if (!diagnosticBatch && sim.tick % displayEvery === 0) { renderAll(); updateUI(); }
   // Keep a resumable browser snapshot without making every display update write
   // a large 304×304 world to storage.
-  if (sim.tick - lastAutosaveTick >= 120) { lastAutosaveTick = sim.tick; saveProgress(true); }
+  if (!diagnosticBatch && sim.tick - lastAutosaveTick >= 120) { lastAutosaveTick = sim.tick; saveProgress(true); }
+  if (profiler.enabled) profiler.record("tick.total", performance.now() - tickStarted);
 }
 
 function updateWeather() {
@@ -756,7 +849,7 @@ function localTemperatureAt(p) {
 }
 
 function beginWaterCycle() {
-  if (sim.hexWorld) { sim.hexWorld.update(sim.day, sim.season, sim.weather); sim.water = sim.hexWorld.cells.filter((c) => c.water).map((c) => c.id); buildTerrain(); landscapeDirty = true; return; }
+  if (sim.hexWorld) { const before = new Map(sim.hexWorld.cells.map((c) => [c.id, `${c.water}|${c.waterLevel}|${c.waterSurface}|${c.terrainClass}`])); sim.hexWorld.update(sim.day, sim.season, sim.weather); sim.water = sim.hexWorld.cells.filter((c) => c.water).map((c) => c.id); for (const cell of sim.hexWorld.cells) if (before.get(cell.id) !== `${cell.water}|${cell.waterLevel}|${cell.waterSurface}|${cell.terrainClass}`) markLandscapeCell(cell, "terrain", "water", "vegetation"); buildTerrain(); landscapeDirty = true; return; }
   // The fixed drainage map is still evaluated once per simulated day, but its
   // 92k cells are spread across ticks so the browser never has one large frame.
   // A lake changes one horizontal water level, rather than raising individual
@@ -845,8 +938,8 @@ function advanceWaterCycle(budget = 23000) {
 function displaceFromWater(a) {
   const dry = neighbors(a).filter((p) => inside(p.x, p.z) && !cellAt(p.x, p.z).water && !sim.occupied?.has(key(p)));
   const destination = dry.sort((p, q) => terrainHeight(p.x, p.z) - terrainHeight(q.x, q.z))[0];
-  if (destination) { applyMove(a, destination, "leaving newly flooded ground"); a.fatigue += 3; return; }
-  a.health -= 3; a.currentAction = "stranded by rising water";
+  if (destination) { applyMove(a, destination, "travel", "leaving newly flooded ground", { intendedOutcome: "reach dry ground" }); a.fatigue += 3; return; }
+  a.health -= 3; setAction(a, "blocked", { label: "stranded by rising water", reason: "no dry unoccupied neighbouring cell", intendedOutcome: "escape rising water" });
 }
 
 function growPlants() {
@@ -854,7 +947,9 @@ function growPlants() {
   const cadence = 32;
   for (let i = sim.tick % cadence; i < sim.cells.length; i += cadence) {
     const cell = sim.cells[i];
-    if (cell.water || cell.rocky || cell.sandy || cell.wetland) { cell.biomass = 0; cell.terrainClass = landClass(cell, cachedWeatherAt(cell).temp); continue; }
+    const visualBefore = `${cell.terrainClass}|${cell.plantType}|${cell.woodland}|${cell.shrubland}|${cell.woodyStage}|${cell.leaflessTreeUntil > sim.tick}|${cell.fallenTreeUntil > sim.tick}`;
+    const commitVisualChange = () => { const after = `${cell.terrainClass}|${cell.plantType}|${cell.woodland}|${cell.shrubland}|${cell.woodyStage}|${cell.leaflessTreeUntil > sim.tick}|${cell.fallenTreeUntil > sim.tick}`; if (after !== visualBefore) markLandscapeCell(cell, "terrain", "vegetation"); };
+    if (cell.water || cell.rocky || cell.sandy || cell.wetland) { cell.biomass = 0; cell.terrainClass = landClass(cell, cachedWeatherAt(cell).temp); commitVisualChange(); continue; }
     const type = plantTypes[cell.plantType];
     const local = cachedWeatherAt(cell), localTemp = local.temp;
     // A fallen trunk is retained as cover for six simulated months (180 days),
@@ -887,7 +982,7 @@ function growPlants() {
       cell.biomass = Math.max(0, cell.biomass - 0.025 * cadence);
       cell.plantStage = cell.biomass <= 0.01 ? "dead" : "senescent";
       if (cell.biomass <= 0.01 && rand() < 0.02) reseedCell(cell);
-      continue;
+      commitVisualChange(); continue;
     }
     const climateGrowth = clamp(1 - Math.abs(localTemp - 17) / 26, 0.08, 1);
     const growth = cell.dormant ? 0 : type.growth * mod.growth * climateGrowth * cell.fertility * (0.35 + cell.moisture) * cadence;
@@ -923,6 +1018,7 @@ function growPlants() {
     cell.shrubBiomass = cell.plantType === "shrub" ? cell.biomass : 0;
     cell.vegetationStage = cell.woodland && cell.woodyStage === "matureTree" ? "matureForest" : cell.woodland ? "youngWoodland" : cell.shrubland ? "scrub" : cell.biomass > .12 ? "grass" : "bare";
     cell.terrainClass = landClass(cell, localTemp);
+    commitVisualChange();
   }
 }
 
@@ -941,7 +1037,7 @@ function landClass(c, temp = cachedWeatherAt(c).temp) {
   return c.biomass > 0.12 ? "grass" : "dirt";
 }
 
-function updateAnimal(a) {
+function prepareAnimalForSensing(a) {
   const s = species[a.speciesId];
   a.age += 1 / 24;
   a.postpartum = Math.max(0, (a.postpartum || 0) - 1 / 24);
@@ -960,17 +1056,28 @@ function updateAnimal(a) {
   updateTrauma(a);
   ageDecline(a, s);
   updateInjuries(a);
-  refreshOutwardSignal(a);
-  const before = { energy: a.energy, hydration: a.hydration, health: a.health, x: a.x, z: a.z, fx: a.fx ?? a.x, fz: a.fz ?? a.z };
+  return { energy: a.energy, hydration: a.hydration, health: a.health, x: a.x, z: a.z, fx: a.fx ?? a.x, fz: a.fz ?? a.z };
+}
+
+function senseAnimalProfiled(a) {
+  const perceptionStarted = profiler.enabled ? performance.now() : 0;
   profiler.measure("animal perception", () => sense(a));
-  refreshOutwardSignal(a);
+  if (profiler.enabled) tickPerceptionElapsed += performance.now() - perceptionStarted;
+}
+
+function applyAnimalDecision(a, before) {
   profiler.measure("decision/action", () => chooseAndAct(a));
   a.stationaryTicks = Math.hypot((a.fx ?? a.x) - before.fx, (a.fz ?? a.z) - before.fz) < 0.01 ? (a.stationaryTicks || 0) + 1 : 0;
   profiler.measure("causal trace capture", () => recordCausalLoop(a, before));
+}
+
+function applyAnimalPostAction(a) {
+  const s = species[a.speciesId];
   updatePregnancy(a, s);
   processDigestion(a);
   if (a.stomach < 8) { a.health -= 0.11; a.energy -= 0.08; }
   if (a.energy <= 0) { a.energy = 0; a.health -= 0.32; }
+  clampAnimalHealth(a);
   if (a.health <= 0 && (a.stomach < 8 || a.energy <= 0)) die(a, "starvation");
   else if (a.hydration <= 0) die(a, "dehydration");
   else if (a.health <= 0) die(a, "injury");
@@ -988,22 +1095,7 @@ function sense(a) {
   a.explored ||= {};
   a.mapMemory ||= {};
   a.longMemory ||= [];
-  a.communicationReveals = (a.communicationReveals || []).filter((r) => r.until > sim.tick);
-  // Exploration is made by sight, not by an invisible circular scan. This keeps
-  // the persistent map distinct from smell and hearing.
-  for (const c of nearbyCells(a, visionRange)) if (hasMapVision(a, c, visionRange)) {
-    const mapKey = exploreKey(c);
-    a.explored[mapKey] = sim.tick;
-    // An explored cell is remembered only as neutral ground unless water was
-    // actually seen. This prevents the map view from leaking hidden ecology.
-    // A remembered water source is deliberately coarse.  The organism retains
-    // an approximate place to travel to, not every blue terrain cell that makes
-    // up a river or lake.
-    if (c.drinkable) {
-      const sourceKey = `water:${Math.round(c.x / 6)},${Math.round(c.z / 6)}`;
-      a.mapMemory[sourceKey] = { type: "water", x: Math.round(c.x / 6) * 6, z: Math.round(c.z / 6) * 6, seenTick: sim.tick, confidence: 1 };
-    }
-  }
+  a.mapReveals = (a.mapReveals || []).filter((r) => r.until > sim.tick);
   const contacts = [];
   const hearingRange = hearingRangeFor(a);
   for (const other of nearbyAnimals(a, Math.max(visionRange, hearingRange) + 1)) {
@@ -1020,7 +1112,7 @@ function sense(a) {
         a.offspringMemory ||= {};
         a.offspringMemory[other.id] = { ...(a.offspringMemory[other.id] || {}), x: other.x, z: other.z, tick: sim.tick, confidence: 1, source: "sight" };
       }
-      if (other.socialSignal?.until > sim.tick && other.speciesId === a.speciesId) contacts.push({ type: ["alarm", "threat"].includes(other.socialSignal.kind) ? "predator" : `signal:${other.socialSignal.kind}`, targetId: other.id, x: other.socialSignal.x, z: other.socialSignal.z, confidence: clamp(1 - d / (visionRange + 1), 0.2, 1), age: 0, channel: "visual-signal", signalKind: other.socialSignal.kind, communicatedBy: other.id });
+      if (other.socialSignal?.until > sim.tick && other.speciesId === a.speciesId) contacts.push(alarmObservation(other, other.socialSignal, clamp(1 - d / (visionRange + 1), 0.2, 1)));
     }
     const call = animalCall(other);
     const movementNoise = other.movementNoise || 0;
@@ -1039,31 +1131,43 @@ function sense(a) {
         const message = { type: call.noun, x: messageX, z: messageZ, confidence: precision * 0.82, age: 0, channel: "hearing", communicatedBy: other.id, signalKind: call.signalKind, urgency: call.urgency };
         contacts.push(message);
         if (a.offspringIds?.includes(other.id)) { a.offspringMemory ||= {}; a.offspringMemory[other.id] = { ...(a.offspringMemory[other.id] || {}), x: messageX, z: messageZ, tick: sim.tick, confidence: message.confidence, source: "call" }; }
-        a.communicationReveals.push({ x: messageX, z: messageZ, until: sim.tick + 14, sourceId: other.id, noun: call.noun });
       } else contacts.push({ type: "unknownSound", ...(identifiesCaller ? { targetId: other.id, speciesId: other.speciesId, soundIdentity: other.speciesId } : { soundIdentity: "unknown" }), x: heardX, z: heardZ, confidence: precision * 0.65, age: 0, channel: "hearing" });
-      a.communicationReveals.push({ x: heardX, z: heardZ, until: sim.tick + 8, sourceId: other.id });
     }
   }
-  for (const cell of nearbyCells(a, range)) {
+  visitNearbyCells(a, range, HALF, cellAt, (cell) => {
     const d = manhattan(a, cell);
-    if (hasVisualLine(a, cell, visionRange) && cell.drinkable && rand() > d / (visionRange + 3)) contacts.push({ type: "water", x: cell.x, z: cell.z, confidence: 0.92, age: 0, channel: "sight" });
-    if (hasVisualLine(a, cell, visionRange) && !cell.water && (!cell.woodland || cell.plantType === "shrub") && cell.biomass > 0.28 && a.speciesId === "grazer" && rand() > d / (visionRange + 3)) contacts.push({ type: "food", plantType: cell.plantType, quality: plantQuality(cell), x: cell.x, z: cell.z, confidence: clamp(cell.biomass, 0.15, 1), age: 0, channel: "sight" });
+    const visible = hasVisualLine(a, cell, visionRange);
+    // Terrain, water and food share this one line-of-sight result. Exploration
+    // remains sight-only and does not inherit the larger scent radius.
+    if (visible) {
+      const mapKey = exploreKey(cell); a.explored[mapKey] = sim.tick;
+      if (cell.drinkable) {
+        const sourceKey = `water:${Math.round(cell.x / 6)},${Math.round(cell.z / 6)}`;
+        a.mapMemory[sourceKey] = { type: "water", x: Math.round(cell.x / 6) * 6, z: Math.round(cell.z / 6) * 6, seenTick: sim.tick, confidence: 1 };
+      }
+    }
+    if (visible && cell.drinkable && rand() > d / (visionRange + 3)) contacts.push({ type: "water", x: cell.x, z: cell.z, confidence: 0.92, age: 0, channel: "sight" });
+    if (visible && !cell.water && (!cell.woodland || cell.plantType === "shrub") && cell.biomass > 0.28 && a.speciesId === "grazer" && rand() > d / (visionRange + 3)) contacts.push({ type: "food", plantType: cell.plantType, quality: plantQuality(cell), x: cell.x, z: cell.z, confidence: clamp(cell.biomass, 0.15, 1), age: 0, channel: "sight" });
     const scentType = a.speciesId === "hunter" ? "grazer" : "hunter";
     // Scent has no line-of-sight requirement, but it must still obey the
     // animal's actual smell range. Previously it quietly inherited vision
     // range, giving some animals a false long-distance scent radar.
     if (d <= smellRange && cell.scent && cell.scent[scentType] > 0.6 && rand() > d / (smellRange + 4)) contacts.push({ type: scentType === "hunter" ? "predator" : "preyTrail", x: cell.x, z: cell.z, confidence: clamp(cell.scent[scentType] / 5, 0.15, 1), age: 0, channel: "smell" });
-  }
-  for (const corpse of sim.corpses) {
+  });
+  const maximumCorpseSmellRange = s.smell * scale * 3 * (a.scentSkill || 1) * 2.7;
+  for (const corpse of nearbyCorpses(a, Math.max(visionRange, maximumCorpseSmellRange))) {
     if (corpse.biomass <= 0) continue;
     const d = dist(a, corpse), smellRange = s.smell * scale * 3 * (a.scentSkill || 1) * (1.1 + Math.min(1.6, corpse.biomass / 18));
     if (hasVisualLine(a, corpse, visionRange)) contacts.push({ type: "carcass", targetId: corpse.id, x: corpse.x, z: corpse.z, confidence: clamp(1 - d / (visionRange + 1), 0.2, 1), age: 0, channel: "sight" });
     else if (d <= smellRange) { const certainty = clamp(Math.pow(0.5, d / Math.max(1, smellRange * 0.34)), 0.08, 0.9), error = Math.round((1 - certainty) * 13); contacts.push({ type: "carcass", targetId: corpse.id, x: clamp(Math.round(corpse.x + (rand() - 0.5) * error), -HALF, HALF - 1), z: clamp(Math.round(corpse.z + (rand() - 0.5) * error), -HALF, HALF - 1), confidence: certainty, age: 0, channel: "smell" }); }
   }
-  a.sensoryBuffer = contacts;
-  a.receivedSignals = contacts.filter((m) => m.signalKind || m.channel === "visual-signal").slice(-12);
-  const prioritised = attentionFilter(a, contacts);
-  updateThreatEvidence(a, contacts);
+  a.sensoryBuffer = contacts.map((contact) => evidenceRef(contact, sim.tick));
+  const communication = splitCommunicationEvidence(a.sensoryBuffer);
+  a.heardEvents = communication.heardEvents.slice(-12);
+  a.receivedSignals = communication.receivedSignals.slice(-12);
+  a.mapReveals = [...(a.mapReveals || []), ...communication.mapReveals].slice(-24);
+  const prioritised = attentionFilter(a, [...a.sensoryBuffer]);
+  updateThreatAssessment(a, a.sensoryBuffer);
   const memoryRetention = a.speciesId === "hunter" ? 0.972 : 0.94;
   const memoryLimit = a.speciesId === "hunter" ? 300 : 150;
   a.memories.forEach((m) => { m.age += 1; m.confidence *= memoryRetention; });
@@ -1087,16 +1191,16 @@ function huntDecisionExplanation(a) {
 function socialSignalIcon(kind) { return ({ threat: "!", attacked: "✹", care: "♥", alarm: "!", distress: "!", injury: "+", water: "W", hunger: "F", lost: "?", courtship: "♥" })[kind] || "•"; }
 function socialSignalColour(kind) { return ({ threat: "#ffcf4f", attacked: "#ff4854", care: "#ff94c2", alarm: "#ffcf4f", distress: "#ff8754", injury: "#ff8754", water: "#5ab9ff", hunger: "#f3cd52", lost: "#d7ecff", courtship: "#ff72ab" })[kind] || "#ffffff"; }
 function socialStatusCandidate(a) {
-  const threat = a.threatEvidence?.score || 0;
+  const threat = (a.threatAssessment?.overallConfidence || 0) * 100;
   const caregiverVisible = (a.sensoryBuffer || []).some((m) => m.channel === "sight" && (m.targetId === a.motherId || (a.caregiverIds || []).includes(m.targetId)));
   const infantNeed = a.lifeStage === "dependent" && (a.energy < 52 || a.hydration < 52 || a.fear > 48 || !caregiverVisible);
   if ((a.lastHit?.tick ?? -999) >= sim.tick - 18) return { kind: "attacked", urgency: 100, x: a.x, z: a.z, attackerId: a.lastHit.attackerId };
-  if (threat >= 52) return { kind: "threat", urgency: Math.round(threat), x: a.threatEvidence?.x ?? a.x, z: a.threatEvidence?.z ?? a.z };
+  if (threat >= 52) { const contributor = a.threatAssessment?.contributors?.[0]; return { kind: "threat", urgency: Math.round(threat), x: contributor?.x ?? a.x, z: contributor?.z ?? a.z }; }
   if (infantNeed) return { kind: "care", urgency: caregiverVisible ? 88 : 96, x: a.x, z: a.z };
   if (a.health < 46 || (a.injuries || []).length > 1) return { kind: "injury", urgency: Math.round(100 - a.health), x: a.x, z: a.z };
   if (a.hydration < 35) return { kind: "water", urgency: Math.round(100 - a.hydration), x: a.x, z: a.z };
   if (Math.max(100 - a.energy, (68 - a.stomach) * 1.65) > 70) return { kind: "hunger", urgency: Math.round(Math.max(100 - a.energy, (68 - a.stomach) * 1.65)), x: a.x, z: a.z };
-  if (a.lifeStage !== "dependent" && !a.groupId && (a.stationaryTicks || 0) > 8) return { kind: "lost", urgency: 35, x: a.x, z: a.z };
+  if (lostCallEligible(a)) return { kind: "lost", urgency: 35, x: a.x, z: a.z };
   if ((a.courtshipUntil || 0) > sim.tick || a.drive === "reproduction") return { kind: "courtship", urgency: 28, x: a.x, z: a.z };
   return null;
 }
@@ -1109,7 +1213,7 @@ function shouldStartCall(a, signal) {
   if (signal.kind === "attacked") return rand() < (a.lifeStage === "dependent" ? 0.92 : 0.62);
   if (signal.kind === "threat" || signal.kind === "alarm") return signal.urgency > 72 && rand() < (a.lifeStage === "dependent" ? 0.8 : 0.34);
   if (signal.kind === "injury" || signal.kind === "distress") return a.lifeStage === "dependent" ? rand() < 0.55 : rand() < 0.12;
-  if (signal.kind === "lost") return a.lifeStage === "dependent" && rand() < 0.45;
+  if (signal.kind === "lost") return lostCallEligible(a) && rand() < 0.45;
   if (signal.kind === "courtship") return mature(a) && rand() < 0.08;
   return false;
 }
@@ -1129,20 +1233,20 @@ function refreshOutwardSignal(a) {
     }
   } else a.socialSignal = { ...active, ...next, until: Math.max(active.until, sim.tick + 5) };
 }
-function updateThreatEvidence(a, contacts) {
-  if (a.speciesId !== "grazer") { a.threatEvidence = null; return; }
-  const predatorEvidence = contacts.filter((m) => m.type === "predator");
+function updateThreatAssessment(a, contacts) {
+  if (a.speciesId !== "grazer") { a.threatAssessment = null; return; }
+  const predatorEvidence = contacts.filter((m) => m.type === "predator" || ["alarm", "threat"].includes(m.signalKind));
   const sight = predatorEvidence.filter((m) => m.channel === "sight" || m.channel === "visual-signal");
   const sound = predatorEvidence.filter((m) => m.channel === "hearing");
   const smell = predatorEvidence.filter((m) => m.channel === "smell");
   const unknownNear = contacts.filter((m) => m.type === "unknownSound" && m.channel === "hearing" && m.confidence > 0.28);
   const score = clamp(sight.reduce((n, m) => n + m.confidence * 62, 0) + sound.reduce((n, m) => n + m.confidence * 31, 0) + smell.reduce((n, m) => n + m.confidence * 20, 0) + unknownNear.reduce((n, m) => n + m.confidence * 12, 0), 0, 100);
-  const strongest = [...sight, ...sound, ...smell, ...unknownNear].sort((p, q) => q.confidence - p.confidence)[0];
   const parts = []; if (sight.length) parts.push(`${sight.length} predator sighting${sight.length > 1 ? "s" : ""}`); if (sound.length) parts.push(`${sound.length} alarm call${sound.length > 1 ? "s" : ""}`); if (smell.length) parts.push("predator scent"); if (!parts.length && unknownNear.length) parts.push("unknown large-animal sound");
-  a.threatEvidence = { score, x: strongest?.x ?? a.x, z: strongest?.z ?? a.z, sourceId: strongest?.targetId, channel: strongest?.channel, explanation: parts.length ? parts.join(" + ") : "no predator evidence" };
+  const assessment = threatAssessment([...predatorEvidence, ...unknownNear]);
+  a.threatAssessment = { overallConfidence: score / 100, contributors: assessment.contributors, explanation: parts.length ? parts.join(" + ") : "no predator evidence" };
   if (score > 0) a.fear = clamp(a.fear + Math.max(3, score * 0.5) + vulnerability(a) * 8, 0, 100);
 }
-function animalCall(a) { const stalking = a.speciesId === "hunter" && /stalk|pursu|track/.test(a.currentAction || ""); const signal = a.socialSignal; if (!stalking && (a.vocalUntil || 0) > sim.tick && signal && signal.until > sim.tick) return { noun: ["threat", "alarm"].includes(signal.kind) ? "predator" : signal.kind, x: signal.x, z: signal.z, signalKind: signal.kind, urgency: signal.urgency }; return null; }
+function animalCall(a) { const stalking = a.speciesId === "hunter" && ["stalk", "chase", "track-scent"].includes(a.actionState?.key); const signal = a.socialSignal; if (!stalking && (a.vocalUntil || 0) > sim.tick && signal && signal.until > sim.tick) return { noun: ["threat", "alarm"].includes(signal.kind) ? "predator" : signal.kind, x: signal.x, z: signal.z, signalKind: signal.kind, urgency: signal.urgency }; return null; }
 function audibleActivity(a) { return Boolean(animalCall(a)) || (a.movementNoise || 0) > 0.045; }
 
 function attentionFilter(a, contacts) {
@@ -1161,22 +1265,29 @@ function contactSalience(a, m, drives) {
 }
 
 function chooseAndAct(a) {
-  if (a.lifeStage === "dependent") { a.priorities = [{ drive: "dependency", score: 100 }]; return dependentAction(a); }
-  if ((a.courtshipUntil || 0) > sim.tick) { a.priorities = [{ drive: "courtship", score: 100 }]; a.currentAction = `courtship (${a.courtshipUntil - sim.tick} steps remaining)`; return; }
-  a.actionTarget = null;
+  if (a.lifeStage === "dependent") { a.priorities = [{ drive: "dependency", score: 100 }]; dependentAction(a); captureChosenDecision(a, { drive: "dependency", score: 100 }); return; }
+  if ((a.courtshipUntil || 0) > sim.tick) { a.priorities = [{ drive: "courtship", score: 100 }]; setAction(a, "courtship", { label: `courtship (${a.courtshipUntil - sim.tick} steps remaining)`, target: a.courtship?.partnerId, intendedOutcome: "complete courtship" }); captureChosenDecision(a, { drive: "courtship", score: 100 }); return; }
   const candidates = actionCandidates(a);
   candidates.sort((x, y) => y.score - x.score);
   a.priorities = candidates.map(({ drive, score }) => ({ drive, score: Math.round(score) }));
   const chosen = candidates[0];
   a.drive = chosen.drive;
+  const evidence = [...(a.sensoryBuffer || []), ...(a.memories || [])].map((item) => ({ ...item }));
   chosen.run();
+  captureChosenDecision(a, chosen, evidence);
+}
+
+function captureChosenDecision(a, chosen, evidence = a.sensoryBuffer || []) {
+  evidence = [...evidence, evidenceRef({ type: `priority:${chosen.drive}`, confidence: clamp((chosen.score || 0) / 100, 0, 1), channel: "internal", provenance: "internal" }, sim.tick)];
+  const primary = evidence.find((item) => item.targetId === a.actionState?.target) || null;
+  a.decisionTrace = captureDecisionTrace({ tick: sim.tick, priority: { key: chosen.drive, score: chosen.score }, trigger: chosen.drive, actionState: a.actionState, evidence, primaryEvidenceId: primary?.evidenceId || null, constraints: [{ health: a.health, energy: a.energy, hydration: a.hydration, fatigue: a.fatigue, capabilities: { ...a.capabilities } }] });
 }
 
 function actionCandidates(a) {
   const d = driveLevels(a);
   const c = a.capabilities || computeCapabilities(a, species[a.speciesId]);
   const candidates = [];
-  const threat = a.threatEvidence?.score || 0;
+  const threat = (a.threatAssessment?.overallConfidence || 0) * 100;
   if (a.speciesId === "grazer" && threat >= 46) candidates.push({ drive: "threat response", score: 330 + threat * 2, run: () => flee(a) });
   const missingChild = missingDependentNeed(a);
   if (missingChild) candidates.push({ drive: "safeguard missing offspring", score: missingChild.emergency ? 920 : 520, run: () => searchForOffspring(a, missingChild) });
@@ -1200,7 +1311,7 @@ function actionCandidates(a) {
       if (alert.goal.includes("flee")) flee(a);
       else if (alert.goal === "water") seekWater(a);
       else if (alert.goal === "caregiving") attendOffspring(a);
-      else if (alert.goal === "defend / rescue") { if (attackedOffspringSignal(a)) protectOffspring(a); else { const source = animalById(alert.source); source?.alive ? moveToward(a, source, `responding to ${source.id}'s attack signal`) : socialWander(a, "responding to attack signal"); } }
+      else if (alert.goal === "defend / rescue") { if (attackedOffspringSignal(a)) protectOffspring(a); else { const source = animalById(alert.source); source?.alive ? moveToward(a, source, "defend", `responding to ${source.id}'s attack signal`, "assist attacked group member") : socialWander(a, "responding to attack signal"); } }
       else socialWander(a, `responding to group ${alert.goal}`);
     } });
   }
@@ -1224,9 +1335,9 @@ function dependentAction(a) {
   const contact = (a.sensoryBuffer || []).find((m) => m.channel === "sight" && (m.targetId === a.motherId || (a.caregiverIds || []).includes(m.targetId)));
   const caregiver = contact ? animalById(contact.targetId) : null;
   const mother = caregiver?.id === a.motherId ? caregiver : null;
-  if (!caregiver) { if (a.age > a.dependentUntil) return becomeIndependent(a, "without a caregiver"); const memory = (a.memories || []).find((m) => m.targetId === a.motherId || (a.caregiverIds || []).includes(m.targetId)); if (memory) return moveToward(a, memory, "following remembered caregiver location"); a.energy -= 1.6; a.currentAction = "calling for a dependable adult"; return; }
-  if (dist(a, caregiver) > 1.5) moveToward(a, caregiver, `following caregiver ${caregiver.id}`);
-  else { const knowsFood = caregiver.memories.some((m) => m.age < 40 && (m.type === "food" || m.type === "animal" || m.type === "preyTrail")); const knowsWater = caregiver.memories.some((m) => m.age < 40 && m.type === "water"); if (mother?.lactation > 0 || knowsFood) a.energy = clamp(a.energy + (mother ? 1.2 : 0.55), 0, 100); if (mother?.lactation > 0 || knowsWater) a.hydration = clamp(a.hydration + (mother ? 0.8 : 0.4), 0, 100); a.stomach = clamp(a.stomach + (mother?.lactation > 0 ? 0.7 : knowsFood ? 0.3 : 0), 0, 68); a.currentAction = mother?.lactation > 0 ? "nursing from mother" : `depending on ${caregiver.id}'s resource knowledge`; }
+  if (!caregiver) { if (a.age > a.dependentUntil) return becomeIndependent(a, "without a caregiver"); const memory = (a.memories || []).find((m) => m.targetId === a.motherId || (a.caregiverIds || []).includes(m.targetId)); if (memory) return moveToward(a, memory, "travel", "following remembered caregiver location", "rejoin caregiver"); a.energy -= 1.6; setAction(a, "communicate", { label: "calling for a dependable adult", intendedOutcome: "re-establish caregiver contact" }); return; }
+  if (dist(a, caregiver) > 1.5) moveToward(a, caregiver, "travel", `following caregiver ${caregiver.id}`, "stay with caregiver");
+  else { const knowsFood = caregiver.memories.some((m) => m.age < 40 && (m.type === "food" || m.type === "animal" || m.type === "preyTrail")); const knowsWater = caregiver.memories.some((m) => m.age < 40 && m.type === "water"); if (mother?.lactation > 0 || knowsFood) a.energy = clamp(a.energy + (mother ? 1.2 : 0.55), 0, 100); if (mother?.lactation > 0 || knowsWater) a.hydration = clamp(a.hydration + (mother ? 0.8 : 0.4), 0, 100); a.stomach = clamp(a.stomach + (mother?.lactation > 0 ? 0.7 : knowsFood ? 0.3 : 0), 0, 68); setAction(a, mother?.lactation > 0 ? "nurse" : "dependent", { label: mother?.lactation > 0 ? "nursing from mother" : `depending on ${caregiver.id}'s resource knowledge`, target: caregiver.id, intendedOutcome: "receive food and water support" }); }
   if (sim.weather.type === "Cold" && a.age < 4) a.health -= 0.04;
   if (a.age > a.dependentUntil && a.energy > 55) becomeIndependent(a);
 }
@@ -1239,10 +1350,10 @@ function updateGroupAlerts() {
   for (const a of sim.animals) if (a.alive && a.groupId) { const list = groupsById.get(a.groupId) || []; list.push(a); groupsById.set(a.groupId, list); }
   for (const members of groupsById.values()) {
     const signals = members.flatMap((a) => a.receivedSignals || []).filter((s) => s.confidence > 0.24);
-    const threat = Math.max(0, ...members.map((a) => a.threatEvidence?.score || 0));
+    const threat = Math.max(0, ...members.map((a) => (a.threatAssessment?.overallConfidence || 0) * 100));
     let goal = null, score = 0, source = null;
     if (signals.some((s) => s.signalKind === "attacked")) { goal = "defend / rescue"; score = 100; source = signals.find((s) => s.signalKind === "attacked")?.communicatedBy; }
-    else if (threat >= 42 || signals.some((s) => ["alarm", "threat"].includes(s.signalKind) || s.type === "predator")) { goal = "flee / protection"; score = Math.max(threat, 72); source = members.find((a) => (a.threatEvidence?.score || 0) >= threat)?.id; }
+    else if (threat >= 42 || signals.some((s) => ["alarm", "threat"].includes(s.signalKind) || s.type === "predator")) { goal = "flee / protection"; score = Math.max(threat, 72); source = members.find((a) => (a.threatAssessment?.overallConfidence || 0) * 100 >= threat)?.id; }
     else if (signals.some((s) => s.signalKind === "care")) { goal = "caregiving"; score = 76; source = signals.find((s) => s.signalKind === "care")?.communicatedBy; }
     else if (signals.some((s) => s.signalKind === "water")) { goal = "water"; score = 55; source = signals.find((s) => s.signalKind === "water")?.communicatedBy; }
     else if (signals.some((s) => ["injury", "distress"].includes(s.signalKind))) { goal = "assist / protect"; score = 48; source = signals.find((s) => ["injury", "distress"].includes(s.signalKind))?.communicatedBy; }
@@ -1256,7 +1367,7 @@ function socialCompatible(a, b) { if (a.lifeStage === "dependent" || b.lifeStage
 function groupGoal(members) { const young = members.some((m) => m.offspringIds?.some((id) => { const child = animalById(id); return child?.alive && child.energy < 55; })); const carcass = members.some((m) => (m.sensoryBuffer || []).some((x) => x.type === "carcass") || nearestMemory(m, "carcass")); const fear = Math.max(...members.map((m) => m.fear)); const thirst = Math.max(...members.map((m) => 100 - m.hydration)); const hunger = Math.max(...members.map((m) => 100 - m.energy)); if (young) return "caregiving"; if (carcass && members[0].speciesId === "hunter") return "carcass hunt"; if (fear > 32) return "protection"; if (thirst > 56) return "water"; if (hunger > 52) return members[0].speciesId === "hunter" ? "hunting" : "foraging"; if (members.some((m) => reproductionDrive(m) > 55)) return "mates"; return "travelling"; }
 function groupSkillFor(a, goal) { if (goal === "carcass hunt" || goal === "hunting") return (a.scentSkill || 1) * 2 + a.aggression; if (goal === "caregiving" || goal === "protection") return (a.careAffinity || 0.5) * 2 + (1 - a.aggression); if (goal === "water") return a.waterSkill || 1; if (goal === "foraging") return a.foodSkill || 1; if (goal === "mates") return a.mateSkill || 1; return ((a.waterSkill || 1) + (a.foodSkill || 1)) / 2; }
 function groupFollowScore(a, drives) { const alert = a.groupAlert?.until > sim.tick ? a.groupAlert : null; if (alert) return alert.score + (alert.goal.includes("flee") ? drives.fear * 1.6 : 0); const goal = a.groupGoal; if (goal === "carcass hunt") return 265 + drives.hunger * 1.7 + carcassFamilyUrgency(a); if (goal === "hunting") return 70 + drives.hunger; if (goal === "protection") return 92 + drives.fear * 1.4; if (goal === "caregiving") return 86 + carcassFamilyUrgency(a); if (goal === "water") return 48 + drives.thirst * 1.25; if (goal === "foraging") return 42 + drives.hunger; return 38 + drives.reproduction; }
-function followGroupLeader(a, leader) { if (dist(a, leader) > 1.8) return moveToward(a, leader, `following ${leader.id} for ${a.groupGoal}`); a.currentAction = `coordinating ${a.groupGoal} group`; }
+function followGroupLeader(a, leader) { if (dist(a, leader) > 1.8) return moveToward(a, leader, "travel", `following ${leader.id} for ${a.groupGoal}`, `support group ${a.groupGoal}`); setAction(a, "coordinate-group", { label: `coordinating ${a.groupGoal} group`, target: leader.id, intendedOutcome: `coordinate ${a.groupGoal}` }); }
 
 function attackedOffspringSignal(a) { return (a.receivedSignals || []).find((m) => m.signalKind === "attacked" && a.offspringIds.includes(m.targetId || m.communicatedBy)); }
 function dependentSignal(a) { return (a.receivedSignals || []).find((m) => ["care", "attacked"].includes(m.signalKind) && a.offspringIds.includes(m.targetId || m.communicatedBy)); }
@@ -1270,54 +1381,53 @@ function missingDependentNeed(a) {
   return { ...record, emergency: Boolean(urgent?.signalKind === "attacked"), lostFor: sim.tick - (record.tick || sim.tick) };
 }
 function searchForOffspring(a, target) {
-  a.actionTarget = target.targetId || target.communicatedBy || null;
-  if (dist(a, target) > 1.4) return moveToward(a, target, target.emergency ? "rushing to attacked offspring" : "searching for missing offspring");
-  a.currentAction = target.emergency ? "guarding attacked offspring's last call" : "searching offspring's last known location";
+  if (dist(a, target) > 1.4) return moveToward(a, target, target.emergency ? "protect-offspring" : "search", target.emergency ? "rushing to attacked offspring" : "searching for missing offspring", "find and safeguard offspring");
+  setAction(a, target.emergency ? "guard" : "search", { label: target.emergency ? "guarding attacked offspring's last call" : "searching offspring's last known location", target: target.targetId || target.communicatedBy || null, intendedOutcome: "re-establish offspring contact" });
   a.orientation += 0.52;
   a.stationaryTicks = (a.stationaryTicks || 0) + 1;
 }
 function attendOffspring(a) {
   const child = knownOffspringContact(a);
   if (!child) return rest(a);
-  if (a.fear > 50) return moveToward(a, child, "returning to offspring under risk");
-  moveToward(a, child, "leading dependent offspring");
+  if (a.fear > 50) return moveToward(a, child, "protect-offspring", "returning to offspring under risk", "protect offspring");
+  moveToward(a, child, "travel", "leading dependent offspring", "guide offspring");
 }
 
-function socialWander(a, label = "exploring") {
+function socialWander(a, label = "exploring", actionKey = "wander") {
   const leader = a.groupLeaderId ? animalById(a.groupLeaderId) : null;
-  if (leader?.alive && leader.id !== a.id && dist(a, leader) > 2.5) return moveToward(a, leader, `moving with ${a.groupGoal || "temporary"} group`);
+  if (leader?.alive && leader.id !== a.id && dist(a, leader) > 2.5) return moveToward(a, leader, "travel", `moving with ${a.groupGoal || "temporary"} group`, "stay with group");
   const herdMate = nearestConspecific(a);
-  if (herdMate && species[a.speciesId].herdTendency > rand() && dist(a, herdMate) > 3) return moveToward(a, herdMate, "moving with group");
-  wander(a, label);
+  if (herdMate && species[a.speciesId].herdTendency > rand() && dist(a, herdMate) > 3) return moveToward(a, herdMate, "travel", "moving with group", "stay with group");
+  wander(a, actionKey, label);
 }
 function visibleHerd(a) { return (a.sensoryBuffer || []).filter((m) => m.type === "conspecific" && m.channel === "sight" && m.targetId).map((m) => animalById(m.targetId)).filter((other) => other?.alive && mature(other)); }
-function seekHerdSafety(a, herd = visibleHerd(a)) { if (!herd.length) return flee(a); const centre = herd.reduce((sum, other) => ({ x: sum.x + other.x / herd.length, z: sum.z + other.z / herd.length }), { x: 0, z: 0 }); if (dist(a, centre) > 2) moveToward(a, centre, `joining herd safety (${herd.length} adults)`); else { a.fear = clamp(a.fear - Math.min(14, herd.length * 2), 0, 100); a.currentAction = `sheltering with herd (${herd.length} adults)`; } }
+function seekHerdSafety(a, herd = visibleHerd(a)) { if (!herd.length) return flee(a); const centre = herd.reduce((sum, other) => ({ x: sum.x + other.x / herd.length, z: sum.z + other.z / herd.length }), { x: 0, z: 0 }); if (dist(a, centre) > 2) moveToward(a, centre, "join-herd", `joining herd safety (${herd.length} adults)`, "reach herd safety"); else { a.fear = clamp(a.fear - Math.min(14, herd.length * 2), 0, 100); setAction(a, "shelter-herd", { label: `sheltering with herd (${herd.length} adults)`, intendedOutcome: "remain protected by herd" }); } }
 function hunt(a) {
   if (!a.hunt || !animalById(a.hunt.targetId)?.alive) {
     const target = chooseVisiblePrey(a);
     if (!target) return followPreyTrailOrWander(a);
     const contact = sightContactFor(a, target.id);
     a.hunt = { stage: "approach", targetId: target.id, started: sim.tick, lost: 0, lastKnown: { x: contact.x, z: contact.z, tick: sim.tick } };
-    a.currentAction = "evaluating prey";
+    setAction(a, "evaluate-prey", { label: "evaluating prey", target: target.id, intendedOutcome: "choose a safe hunting approach" });
   }
   const target = animalById(a.hunt.targetId);
   if (!target || !target.alive) { a.hunt = null; return; }
   const sight = sightContactFor(a, target.id);
   if (sight) { a.hunt.lastKnown = { x: sight.x, z: sight.z, tick: sim.tick }; a.hunt.lost = 0; } else a.hunt.lost += 1;
-  if (a.hunt.lost > 12 || a.fatigue > 94 || a.energy < 7) { a.currentAction = "abandoning hunt"; a.hunt = null; return rest(a); }
+  if (a.hunt.lost > 12 || a.fatigue > 94 || a.energy < 7) { a.hunt = null; return rest(a, "abandoning hunt", "abandon-hunt"); }
   // A hunter may pursue only a current sighting or its own last observed point;
   // it never receives a hidden herbivore's changing coordinates.
   const pursuitPoint = sight ? target : a.hunt.lastKnown;
   if (!sight) {
-    if (dist(a, pursuitPoint) > 1) return moveToward(a, pursuitPoint, "tracking last seen prey position");
-    a.currentAction = "searching where prey was last seen"; a.hunt = null; return followPreyTrailOrWander(a);
+    if (dist(a, pursuitPoint) > 1) return moveToward(a, pursuitPoint, "search", "tracking last seen prey position", "reacquire prey");
+    setAction(a, "search", { label: "searching where prey was last seen", destination: pursuitPoint, intendedOutcome: "reacquire prey" }); a.hunt = null; return followPreyTrailOrWander(a);
   }
-  if (dist(a, target) > 4 && a.hunt.stage === "approach") return moveToward(a, target, "stalking prey");
+  if (dist(a, target) > 4 && a.hunt.stage === "approach") return moveToward(a, target, "stalk", "stalking prey", "approach prey without detection");
   a.hunt.stage = "pursuit";
   if (dist(a, target) > 1) {
     a.fatigue += 2.8;
-    moveToward(a, target, "pursuing prey");
-    if (a.capabilities?.canSprint && dist(a, target) > 1 && rand() < 0.72) { a.energy -= 0.35; a.fatigue += 2.2; moveToward(a, target, "sprinting after prey"); }
+    moveToward(a, target, "chase", "pursuing prey", "catch prey");
+    if (a.capabilities?.canSprint && dist(a, target) > 1 && rand() < 0.72) { a.energy -= 0.35; a.fatigue += 2.2; moveToward(a, target, "chase", "sprinting after prey", "catch prey"); }
     return;
   }
   const defenderList = sim.animals.filter((o) => o.alive && o.speciesId === "grazer" && mature(o) && dist(o, target) <= 2.2 && (o.offspringIds.includes(target.id) || target.lifeStage === "dependent" || o.id === target.id));
@@ -1328,9 +1438,9 @@ function hunt(a) {
   if (success) {
     const damage = 18 + rand() * 18;
     strikeAnimal(a, target, damage, "bite");
-    if (target.health <= 0) { die(target, `killed by ${a.id}`, a.id); a.currentAction = "claiming fresh kill"; a.hunt = null; }
-    else { a.currentAction = `bit ${target.id} (${Math.round(damage)} health damage)`; if (defenderList.length && rand() < Math.min(0.82, 0.22 + defenderList.length * 0.16)) herbivoreCounterattack(defenderList[Math.floor(rand() * defenderList.length)], a); }
-  } else { target.fear = 100; a.attackFlashUntil = sim.tick + 14; if (defenderList.length) herbivoreCounterattack(defenderList[Math.floor(rand() * defenderList.length)], a); else maybeInjure(a, 0.18, target.id, "defence"); if (!a.alive) return; maybeInjure(target, 0.12, a.id, "near miss"); a.currentAction = defenders ? "attack repelled by herd defence" : "failed attack"; if (a.fatigue > 75) a.hunt = null; }
+    if (target.health <= 0) { die(target, `killed by ${a.id}`, a.id); setAction(a, "claim-kill", { label: "claiming fresh kill", target: `corpse-${target.id}`, intendedOutcome: "secure carcass" }); a.hunt = null; }
+    else { setAction(a, "attack", { label: `bit ${target.id} (${Math.round(damage)} health damage)`, target: target.id, intendedOutcome: "subdue prey" }); if (defenderList.length && rand() < Math.min(0.82, 0.22 + defenderList.length * 0.16)) herbivoreCounterattack(defenderList[Math.floor(rand() * defenderList.length)], a); }
+  } else { target.fear = 100; a.attackFlashUntil = sim.tick + 14; a.lastAttack = { targetId: target.id, damage: 0, type: "failed attack", tick: sim.tick }; if (defenderList.length) herbivoreCounterattack(defenderList[Math.floor(rand() * defenderList.length)], a); else maybeInjure(a, 0.18, target.id, "defence"); if (!a.alive) return; maybeInjure(target, 0.12, a.id, "near miss"); setAction(a, "attack", { label: defenders ? "attack repelled by herd defence" : "failed attack", target: target.id, intendedOutcome: "subdue prey", reason: defenders ? "herd defence" : "attack missed" }); if (a.fatigue > 75) a.hunt = null; }
 }
 
 function herbivoreCounterattack(defender, hunter) {
@@ -1341,7 +1451,7 @@ function herbivoreCounterattack(defender, hunter) {
   const damage = hunterStrikeEquivalent * 0.10;
   defender.energy -= 10.4;
   defender.fatigue += 8;
-  defender.currentAction = `defending against ${hunter.id}`;
+  setAction(defender, "defend", { label: `defending against ${hunter.id}`, target: hunter.id, intendedOutcome: "repel hunter" });
   strikeAnimal(defender, hunter, damage, "horn/hoof defence");
   hunter.fear = clamp(hunter.fear + 24, 0, 100);
   if (hunter.health <= 0) die(hunter, `killed by ${defender.id}`, defender.id);
@@ -1358,20 +1468,19 @@ function sightContactFor(a, targetId) { return (a.sensoryBuffer || []).find((m) 
 
 function followPreyTrailOrWander(a) {
   const trail = nearestMemory(a, "preyTrail");
-  if (trail) return moveToward(a, trail, "tracking scent trail");
-  socialWander(a, "searching for prey");
+  if (trail) return moveToward(a, trail, "track-scent", "tracking scent trail", "locate prey");
+  socialWander(a, "searching for prey", "search");
 }
 
 function seekMate(a) {
   const contact = (a.sensoryBuffer || []).find((m) => m.channel === "sight" && m.type === "conspecific" && m.targetId && eligibleMate(a, animalById(m.targetId)));
   const mate = contact ? animalById(contact.targetId) : null;
-  if (!mate) { const memory = a.memories.find((m) => m.type === "conspecific" && m.targetId && eligibleMate(a, animalById(m.targetId))); return memory ? moveToward(a, memory, "following remembered mate location") : wander(a, "searching for mate"); }
-  if (dist(a, mate) > 1) return moveToward(a, mate, "approaching mate");
+  if (!mate) { const memory = a.memories.find((m) => m.type === "conspecific" && m.targetId && eligibleMate(a, animalById(m.targetId))); return memory ? moveToward(a, memory, "courtship", "following remembered mate location", "meet potential mate") : wander(a, "search", "searching for mate"); }
+  if (dist(a, mate) > 1) return moveToward(a, mate, "courtship", "approaching mate", "begin courtship");
   const female = a.sex === "F" ? a : mate;
   const male = female.id === a.id ? mate : a;
   if ((female.mateRejectUntil || 0) > sim.tick && female.rejectedMateId === male.id) {
-    a.currentAction = `giving ${female.id} space after rejection`;
-    return wander(a, a.currentAction);
+    return wander(a, "reject", `giving ${female.id} space after rejection`);
   }
   if (!female.pregnant && !female.conception && female.energy > species[female.speciesId].reproductionEnergy) {
     const fatherId = male.id;
@@ -1386,8 +1495,8 @@ function seekMate(a) {
     if (rand() > acceptance) {
       female.mateRejectUntil = sim.tick + 36;
       female.rejectedMateId = male.id;
-      female.currentAction = `rejecting courtship from ${male.id}`;
-      male.currentAction = `rejected by ${female.id}`;
+      setAction(female, "reject", { label: `rejecting courtship from ${male.id}`, target: male.id, intendedOutcome: "end courtship" });
+      setAction(male, "reject", { label: `rejected by ${female.id}`, target: female.id, intendedOutcome: "leave rejected mate" });
       addEvent(`${female.id} rejected courtship from ${male.id}`);
       return;
     }
@@ -1404,15 +1513,14 @@ function seekMate(a) {
     female.energy -= 10;
     addEvent(`${female.id} and ${fatherId} began courtship`);
   }
-  a.currentAction = `courtship with ${mate.id}`;
-  a.actionTarget = mate.id;
+  setAction(a, "courtship", { label: `courtship with ${mate.id}`, target: mate.id, intendedOutcome: "complete courtship" });
 }
 
 function fertilityCycle(a) { const period = a.speciesId === "grazer" ? 28 : 36, fertileDays = a.speciesId === "grazer" ? 6 : 7; const day = ((a.age + (a.cycleOffset || 0)) % period + period) % period; return { period, day, fertileDays, fertile: a.sex === "F" && mature(a) && !a.pregnant && !a.conception && a.postpartum <= 0 && day < fertileDays }; }
 function eligibleMate(a, mate) { return Boolean(mate?.alive && mate.speciesId === a.speciesId && mate.sex !== a.sex && mature(mate) && !mate.pregnant && !mate.conception && (mate.sex !== "F" || fertilityCycle(mate).fertile) && (a.sex !== "F" || fertilityCycle(a).fertile)); }
 function sensedMateBonus(a) { return (a.sensoryBuffer || []).some((m) => m.channel === "sight" && m.type === "conspecific" && eligibleMate(a, animalById(m.targetId))) ? 35 : 0; }
 function threatenedOffspring(a) { const predators = (a.sensoryBuffer || []).filter((m) => m.type === "predator" && m.channel === "sight"); const children = (a.sensoryBuffer || []).filter((m) => a.offspringIds.includes(m.targetId) && m.channel === "sight"); return children.some((child) => predators.some((predator) => manhattan(child, predator) < 7)); }
-function protectOffspring(a) { const childContact = knownOffspringContact(a); const childId = childContact?.targetId || childContact?.communicatedBy || "offspring"; const predatorContact = (a.sensoryBuffer || []).filter((m) => m.type === "predator" && m.channel === "sight").sort((p, q) => manhattan(p, childContact || a) - manhattan(q, childContact || a))[0]; if (!childContact) return rest(a, "guarding from remembered risk"); if (predatorContact && manhattan(predatorContact, childContact) < 3) { const predator = animalById(predatorContact.targetId); if (predator) { a.currentAction = `defending ${childId} from ${predator.id}`; a.actionTarget = predator.id; predator.fatigue += 4; if (rand() < 0.12) herbivoreCounterattack(a, predator); return; } } moveToward(a, childContact, `rushing to protect ${childId}`); }
+function protectOffspring(a) { const childContact = knownOffspringContact(a); const childId = childContact?.targetId || childContact?.communicatedBy || "offspring"; const predatorContact = (a.sensoryBuffer || []).filter((m) => m.type === "predator" && m.channel === "sight").sort((p, q) => manhattan(p, childContact || a) - manhattan(q, childContact || a))[0]; if (!childContact) return rest(a, "guarding from remembered risk", "guard"); if (predatorContact && manhattan(predatorContact, childContact) < 3) { const predator = animalById(predatorContact.targetId); if (predator) { setAction(a, "defend", { label: `defending ${childId} from ${predator.id}`, target: predator.id, intendedOutcome: "protect offspring" }); predator.fatigue += 4; if (rand() < 0.12) herbivoreCounterattack(a, predator); return; } } moveToward(a, childContact, "protect-offspring", `rushing to protect ${childId}`, "reach offspring"); }
 
 function updatePregnancy(a, s) {
   if (a.conception && sim.tick >= a.conception.completesAt) { const fatherId = a.conception.fatherId; a.pregnant = { age: 0, fatherId, viability: 1 }; a.conception = null; const father = animalById(fatherId); for (const parent of [a, father]) { const record = parent?.mateHistory?.find((entry) => entry.partnerId === (parent.id === a.id ? fatherId : a.id) && entry.status === "courtship"); if (record) record.status = "conceived"; } addEvent(`${a.id} conceived with ${fatherId}`); }
@@ -1430,6 +1538,7 @@ function giveBirth(mother, s) {
     const pos = nearestFree(mother);
     const id = `${mother.speciesId === "grazer" ? "H" : "C"}${sim.nextId++}`;
     const child = makeAnimal(id, mother.speciesId, rand() > 0.5 ? "F" : "M", pos, rand, 0, mother.id);
+    child.decisionOrder = sim.nextDecisionOrder++;
     mother.offspringIds.push(id);
     mother.offspringMemory ||= {};
     mother.offspringMemory[id] = { x: pos.x, z: pos.z, tick: sim.tick, confidence: 1, source: "birth", dependent: true };
@@ -1447,14 +1556,14 @@ function giveBirth(mother, s) {
 
 function moveToMemory(a, type, label, arrival) {
   const m = nearestMemory(a, type);
-  if (!m) return moveByLongMemory(a, type, `following vague ${type} direction`) || socialWander(a, `searching for ${type}`);
-  if (manhattan(a, m) > 0) moveToward(a, m, label);
+  if (!m) return moveByLongMemory(a, type, `following vague ${type} direction`) || socialWander(a, `searching for ${type}`, "search");
+  if (manhattan(a, m) > 0) moveToward(a, m, type === "preyTrail" ? "track-scent" : "travel", label, `reach remembered ${type}`);
   else arrival(a);
 }
-function moveByLongMemory(a, type, label) { const m = (a.longMemory || []).filter((x) => x.type === type).sort((p, q) => q.confidence - p.confidence)[0]; if (!m) return false; const dx = Math.cos(m.bearing), dz = Math.sin(m.bearing); const moves = validMoves(a).sort((p, q) => ((q.x - a.x) * dx + (q.z - a.z) * dz) - ((p.x - a.x) * dx + (p.z - a.z) * dz)); applyMove(a, moves[0], `${label} (${m.distanceBand})`); m.bearing += (rand() - 0.5) * 0.12; return true; }
-function graze(a) { if (!canEat(a)) return rest(a, "resting while full"); const c = cellAt(a.x, a.z), shrub = (c.woodland || c.shrubland) && c.plantType === "shrub"; if ((c.woodland && !shrub) || c.rocky || c.sandy || c.wetland || c.water || c.biomass <= 0.02) return wander(a, "seeking grazeable grass"); const bite = Math.min(c.biomass, shrub ? 0.11 : 0.16); c.biomass -= bite; c.shrubBiomass = shrub ? c.biomass : 0; c.grazingPressure = clamp((c.grazingPressure || 0) + bite * 2.5, 0, 1.5); c.grassHeight = clamp((c.grassHeight || 0) - bite * 1.6, 0, 1); if (shrub && c.biomass < 0.06) { c.woodland = false; c.shrubland = false; c.plantType = "grass"; c.woodyStage = "none"; } a.energy = clamp(a.energy + bite * (shrub ? 48 : 42), 0, 120); a.stomach = clamp(a.stomach + bite * (shrub ? 40 : 35), 0, 100); a.lastMealTick = sim.tick; if ((c.plantStage === "reproductive" || c.seedStore > 0.45) && rand() < 0.35) a.seedLoad.push({ plantType: c.plantType, age: 0, viability: 0.65 + rand() * 0.3 }); a.currentAction = shrub ? "browsing shrub" : c.grassHeight > 0.65 ? "grazing long grass" : "grazing short grass"; }
-function drink(a) { const source = drinkableSource(a); if (source && a.hydration < 92) { a.hydration = clamp(a.hydration + 24, 0, 100); a.currentAction = `drinking at ${source.lakeLevel !== null ? "lake shore" : `${source.riverClass || "river"} bank`}`; } else if (a.hydration >= 92) { a.currentAction = "leaving water, thirst satisfied"; wander(a, a.currentAction); } else wander(a, "searching for a lake or river"); }
-function rest(a, label = "resting") {
+function moveByLongMemory(a, type, label) { const m = (a.longMemory || []).filter((x) => x.type === type).sort((p, q) => q.confidence - p.confidence)[0]; if (!m) return false; const dx = Math.cos(m.bearing), dz = Math.sin(m.bearing); const moves = validMoves(a).sort((p, q) => ((q.x - a.x) * dx + (q.z - a.z) * dz) - ((p.x - a.x) * dx + (p.z - a.z) * dz)); applyMove(a, moves[0], type === "preyTrail" ? "track-scent" : "travel", `${label} (${m.distanceBand})`, { intendedOutcome: `reach remembered ${type}` }); m.bearing += (rand() - 0.5) * 0.12; return true; }
+function graze(a) { if (!canEat(a)) return rest(a, "resting while full"); const c = cellAt(a.x, a.z), shrub = (c.woodland || c.shrubland) && c.plantType === "shrub"; if ((c.woodland && !shrub) || c.rocky || c.sandy || c.wetland || c.water || c.biomass <= 0.02) return wander(a, "search", "seeking grazeable grass"); const bite = Math.min(c.biomass, shrub ? 0.11 : 0.16); c.biomass -= bite; c.shrubBiomass = shrub ? c.biomass : 0; c.grazingPressure = clamp((c.grazingPressure || 0) + bite * 2.5, 0, 1.5); c.grassHeight = clamp((c.grassHeight || 0) - bite * 1.6, 0, 1); if (shrub && c.biomass < 0.06) { c.woodland = false; c.shrubland = false; c.plantType = "grass"; c.woodyStage = "none"; } markLandscapeCell(c, "terrain", "vegetation"); a.energy = clamp(a.energy + bite * (shrub ? 48 : 42), 0, 120); a.stomach = clamp(a.stomach + bite * (shrub ? 40 : 35), 0, 100); a.lastMealTick = sim.tick; if ((c.plantStage === "reproductive" || c.seedStore > 0.45) && rand() < 0.35) a.seedLoad.push({ plantType: c.plantType, age: 0, viability: 0.65 + rand() * 0.3 }); setAction(a, shrub ? "browse" : "graze", { label: shrub ? "browsing shrub" : c.grassHeight > 0.65 ? "grazing long grass" : "grazing short grass", intendedOutcome: "consume vegetation" }); }
+function drink(a) { const source = drinkableSource(a); if (source && a.hydration < 92) { a.hydration = clamp(a.hydration + 24, 0, 100); setAction(a, "drink", { label: `drinking at ${source.lakeLevel !== null ? "lake shore" : `${source.riverClass || "river"} bank`}`, destination: source, intendedOutcome: "restore hydration" }); } else if (a.hydration >= 92) wander(a, "wander", "leaving water, thirst satisfied"); else wander(a, "search", "searching for a lake or river"); }
+function rest(a, label = "resting", actionKey = "rest") {
   updateTrauma(a);
   const severeTrauma = (a.healthCap || 100) <= 60;
   const sheltered = a.fear < 24 && a.hydration > 30;
@@ -1470,33 +1579,35 @@ function rest(a, label = "resting") {
     label = `${label}; recovering`;
   }
   if (fuelRecovery > 0) label = `${label}; restoring energy`;
-  a.currentAction = label;
+  setAction(a, actionKey, { label, intendedOutcome: actionKey === "abandon-hunt" ? "recover after hunt" : "recover energy and fatigue" });
 }
 function turnInPlace(a, orientation, label) {
   const visual = visualState(a);
+  setAction(a, "listen", { label, intendedOutcome: "localise danger" });
   a.orientation = orientation;
   a.visualMove = { fromX: visual.x, fromZ: visual.z, toX: a.x, toZ: a.z, fromOrientation: visual.orientation, toOrientation: orientation, started: performance.now(), duration: clamp(430 / Math.max(1, requestedTicksPerSecond()), 80, 430) };
-  a.moveIntent = null; a.currentAction = label;
 }
 function fearfulListen(a, predator) {
   const bearing = Math.atan2(predator.z - a.z, predator.x - a.x);
   const scan = bearing + Math.sin(sim.tick * 1.7 + a.x * 0.13 + a.z * 0.17) * 0.72;
   turnInPlace(a, scan, "frozen and scanning for danger; listening");
 }
-function flee(a) { const predator = nearestMemory(a, "predator"); if (predator && a.fear > 54 && rand() < 0.34) return fearfulListen(a, predator); const moves = validMoves(a).sort((p, q) => (predator ? manhattan(q, predator) - manhattan(p, predator) : rand() - 0.5)); applyMove(a, moves[0], a.capabilities?.canSprint ? "sprinting from danger" : "fleeing"); }
-function wander(a, label = "exploring") { const moves = validMoves(a); applyMove(a, moves[Math.floor(rand() * moves.length)], label); }
-function moveToward(a, target, label) { a.actionTarget = target.id || target.targetId || `${target.x},${target.z}`; const moves = validMoves(a).sort((p, q) => manhattan(p, target) - manhattan(q, target)); applyMove(a, moves[0], label); }
-function visualState(a, now = performance.now()) {
+function flee(a) { const predator = nearestMemory(a, "predator"); if (predator && a.fear > 54 && rand() < 0.34) return fearfulListen(a, predator); const moves = validMoves(a).sort((p, q) => (predator ? manhattan(q, predator) - manhattan(p, predator) : rand() - 0.5)); applyMove(a, moves[0], "flee", a.capabilities?.canSprint ? "sprinting from danger" : "fleeing", { target: predator?.targetId, intendedOutcome: "increase distance from danger" }); }
+function wander(a, key = "wander", label = "exploring") { const moves = validMoves(a); applyMove(a, moves[Math.floor(rand() * moves.length)], key, label, { intendedOutcome: key === "search" ? "locate resource or entity" : "explore surroundings" }); }
+function moveToward(a, target, actionKey, label, intendedOutcome) { const moves = validMoves(a).sort((p, q) => manhattan(p, target) - manhattan(q, target)); applyMove(a, moves[0], actionKey, label, { target: target.id || target.targetId || `${target.x},${target.z}`, intendedOutcome }); }
+function visualState(a, now = performance.now(), target = {}) {
   // fx/fz are continuous surface coordinates. x/z remain the hidden ecology
   // grid location used for reproducible contacts, feeding and hydrology.
-  if (!a.visualMove) return { x: a.fx ?? a.x, z: a.fz ?? a.z, orientation: a.orientation || 0 };
+  if (!a.visualMove) { target.x = a.fx ?? a.x; target.z = a.fz ?? a.z; target.orientation = a.orientation || 0; return target; }
+  if (!running) { const completed = a.visualMove; a.visualMove = null; target.x = completed.toX; target.z = completed.toZ; target.orientation = completed.toOrientation; return target; }
   const move = a.visualMove, t = clamp((now - move.started) / move.duration, 0, 1);
+  if (t >= 1) { a.visualMove = null; target.x = move.toX; target.z = move.toZ; target.orientation = move.toOrientation; return target; }
   const turn = Math.atan2(Math.sin(move.toOrientation - move.fromOrientation), Math.cos(move.toOrientation - move.fromOrientation));
   // Translation stays linear across the whole tick. Easing every one-second
   // segment would make an organism decelerate and accelerate once per tick.
   // Rotation can ease without changing travel speed.
   const turnEase = t * t * (3 - 2 * t);
-  return { x: move.fromX + (move.toX - move.fromX) * t, z: move.fromZ + (move.toZ - move.fromZ) * t, orientation: move.fromOrientation + turn * turnEase };
+  target.x = move.fromX + (move.toX - move.fromX) * t; target.z = move.fromZ + (move.toZ - move.fromZ) * t; target.orientation = move.fromOrientation + turn * turnEase; return target;
 }
 function beginAnimalPresentation(starts, now = performance.now()) {
   const ticksPerSecond = requestedTicksPerSecond();
@@ -1525,15 +1636,15 @@ function beginAnimalPresentation(starts, now = performance.now()) {
     };
   }
 }
-function terrainNormal(x, z) {
+function terrainNormal(x, z, target = frameScratch.normal) {
   const e = 0.55, left = terrainHeight(x - e, z), right = terrainHeight(x + e, z), back = terrainHeight(x, z - e), front = terrainHeight(x, z + e);
-  return new THREE.Vector3(left - right, e * 2, back - front).normalize();
+  return target.set(left - right, e * 2, back - front).normalize();
 }
 function poseOnTerrain(object, visual) {
   object.position.set(visual.x, terrainHeight(visual.x, visual.z), visual.z);
-  const slope = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), terrainNormal(visual.x, visual.z));
-  const heading = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2 - visual.orientation);
-  object.quaternion.copy(slope).multiply(heading);
+  frameScratch.slope.setFromUnitVectors(frameScratch.up, terrainNormal(visual.x, visual.z, frameScratch.normal));
+  frameScratch.heading.setFromAxisAngle(frameScratch.up, Math.PI / 2 - visual.orientation);
+  object.quaternion.copy(frameScratch.slope).multiply(frameScratch.heading);
 }
 function currentPriority(a) { return a.priorities?.[0]?.drive || a.drive || "explore"; }
 const PRESENTATION_STYLES = {
@@ -1554,115 +1665,125 @@ function priorityCategory(priority) {
   return "unknown";
 }
 function actionPresentation(a) {
-  const text = String(a.currentAction || "").toLowerCase();
-  let key = a.moveIntent ? "travelling" : "idle", posture = a.moveIntent ? "travel" : "idle";
-  const rules = [[/sprint|fleeing|running from|escaping/, "fleeing", "flee"], [/backing away|retreating while watching/, "backing-away", "reverse"], [/stalk|moving quietly/, "stalking", "stalk"], [/chasing|pursuing|rushing to protect/, "chasing", "chase"], [/listening|frozen and scanning/, "listening", "listen"], [/searching|scanning|last known|last-known/, "searching", "scan"], [/tracking|scent/, "tracking-scent", "sniff"], [/guarding|defending|protect/, "guarding", "guard"], [/grazing|browsing|feeding/, "eating", "feed"], [/drinking/, "drinking", "drink"], [/resting|recovering|sleeping|digest/, "resting", "rest"], [/courtship/, "courtship", "court"], [/blocked|occupied|cannot reach/, "blocked", "blocked"]];
-  for (const [pattern, actionKey, actionPosture] of rules) if (pattern.test(text)) { key = actionKey; posture = actionPosture; break; }
-  return { key, posture, label: a.currentAction || "idle" };
+  const state = a.actionState || createActionState("idle", { label: a.currentAction || "Idle" });
+  const presentation = ACTION_PRESENTATION[state.key] || ACTION_PRESENTATION.idle;
+  return { key: state.key, posture: presentation.posture, label: state.label, intendedOutcome: state.intendedOutcome, reason: state.reason };
 }
-function knownContactFor(a, targetId) {
-  if (!targetId) return null;
-  return [...(a.sensoryBuffer || []), ...(a.memories || [])].filter((contact) => contact.targetId === targetId).sort((left, right) => (right.confidence || 0) - (left.confidence || 0))[0] || null;
+function recordedPresentationCause(a) {
+  const evidence = tracePrimaryEvidence(a.decisionTrace);
+  return evidence ? { ...evidence, label: evidenceCaption(evidence) } : null;
 }
-function presentationCause(a, category, action) {
-  if (category === "danger" && a.threatEvidence?.score > 0) return { kind: "threat", targetId: a.threatEvidence.sourceId || null, x: a.threatEvidence.x, z: a.threatEvidence.z, channel: a.threatEvidence.channel || "unknown", confidence: clamp(a.threatEvidence.score / 100, .2, 1), label: a.threatEvidence.explanation };
-  let targetId = typeof a.actionTarget === "string" && !a.actionTarget.includes(",") ? a.actionTarget : a.hunt?.targetId || null;
-  if (!targetId && category === "family") targetId = knownOffspringContact(a)?.targetId || a.motherId || null;
-  if (!targetId && category === "social") targetId = a.groupLeaderId || a.groupAlert?.source || null;
-  const contact = knownContactFor(a, targetId);
-  if (contact) return { kind: category, targetId, x: contact.x, z: contact.z, channel: contact.channel || "memory", confidence: clamp(contact.confidence ?? .5, .15, 1), label: `${contact.channel || "remembered"} evidence about ${targetId}` };
-  if (typeof a.actionTarget === "string" && a.actionTarget.includes(",")) { const [x, z] = a.actionTarget.split(",").map(Number); if (Number.isFinite(x) && Number.isFinite(z)) return { kind: category, targetId: null, x, z, channel: "memory", confidence: .55, label: "remembered destination" }; }
-  if (a.moveIntent && ["food", "water", "exploration", "scavenge"].includes(category)) return { kind: category, targetId: null, x: a.moveIntent.x, z: a.moveIntent.z, channel: /remember|vague/.test(action.label) ? "memory" : "intent", confidence: .65, label: "intended destination" };
-  return null;
+function syncVisualEvents(a, now = performance.now()) {
+  if (a.lastAttack?.tick != null) visualEvents.emit({ type: "attack", entityId: a.id, originTick: a.lastAttack.tick, minimumVisibleMs: 700, durationMs: 1100 });
+  if (a.lastHit?.tick != null) visualEvents.emit({ type: "injury-alert", entityId: a.id, originTick: a.lastHit.tick, minimumVisibleMs: 900, durationMs: 1500 });
+  if ((a.vocalUntil || 0) > sim.tick && a.socialSignal) visualEvents.emit({ type: "call", entityId: a.id, originTick: a.socialSignal.since, minimumVisibleMs: 650, durationMs: 1000 });
+  const priorityEvent = visualEvents.priority(a.id, currentPriority(a), sim.tick);
+  if (priorityEvent) visualEvents.emit({ type: "thought-transition", entityId: a.id, originTick: priorityEvent.originTick, minimumVisibleMs: 1200, durationMs: 2400, payload: priorityEvent.payload });
+  visualEvents.prune(now);
 }
-function deriveEntityPresentation(a, now = performance.now()) {
-  const priority = currentPriority(a), category = priorityCategory(priority), action = actionPresentation(a), visual = visualState(a, now), move = a.visualMove;
-  const vx = move?.duration ? (move.toX - move.fromX) / (move.duration / 1000) : 0, vz = move?.duration ? (move.toZ - move.fromZ) / (move.duration / 1000) : 0, speed = Math.hypot(vx, vz);
-  const movementDirection = speed > .001 ? Math.atan2(vz, vx) : null;
-  const intended = a.moveIntent || a.motionTarget;
+function hasVisualEvent(type, a, now = performance.now()) { return visualEvents.hasActive(type, a.id, now); }
+function accessModeFor(a) { return selectedId === a.id ? "selected-self" : selectedId ? "observable-other" : ui.labToggle?.checked ? "laboratory" : "strategic"; }
+function buildEntityPresentationSnapshot(a, accessMode, now = performance.now()) {
+  syncVisualEvents(a, now);
+  const privateStateVisible = accessMode === "selected-self" || accessMode === "laboratory";
+  const priority = privateStateVisible ? currentPriority(a) : "externally observable", category = privateStateVisible ? priorityCategory(priority) : "observable";
+  const actualAction = actionPresentation(a), action = privateStateVisible ? actualAction : { key: a.actionState?.moving ? "travel" : "idle", posture: actualAction.posture, label: a.actionState?.moving ? "moving" : "stationary", intendedOutcome: null, reason: null }, visual = visualState(a, now), move = a.visualMove;
+  const visibleSpeed = completedVisibleVelocity(move, now, !running) * 1000, movementAngle = visibleSpeed > .001 ? Math.atan2(move.toZ - move.fromZ, move.toX - move.fromX) : null;
+  const speed = visibleSpeed;
+  const movementDirection = movementAngle;
+  const intended = privateStateVisible ? a.actionState?.destination || a.motionTarget : null;
   let intendedDirection = intended ? Math.atan2(intended.z - visual.z, intended.x - visual.x) : movementDirection;
-  const cause = presentationCause(a, category, action);
+  const cause = privateStateVisible ? recordedPresentationCause(a) : null;
   if (category === "danger" && cause && !intended) intendedDirection = Math.atan2(visual.z - cause.z, visual.x - cause.x);
   const reverseDelta = movementDirection === null ? 0 : Math.atan2(Math.sin(movementDirection - visual.orientation), Math.cos(movementDirection - visual.orientation));
-  const state = { entityId: a.id, priority: { key: priority, category, score: a.priorities?.[0]?.score || 0 }, action, cause, movement: { facingDirection: visual.orientation, movementDirection, intendedDirection, speed, stationary: speed < .015, movingBackward: Math.abs(reverseDelta) > Math.PI * .65 }, expression: { key: emotionState(a) }, health: { percentage: clamp(a.health, 0, 100), cap: a.healthCap ?? 100, tier: healthTier(a) }, communication: animalCall(a) };
-  entityPresentationCache.set(a.id, state); return state;
+  const state = { entityId: a.id, accessMode, priority: { key: priority, category, score: privateStateVisible ? a.priorities?.[0]?.score || 0 : 0 }, action, cause, movement: { facingDirection: visual.orientation, movementDirection, intendedDirection, speed, stationary: speed < .015, movingBackward: Math.abs(reverseDelta) > Math.PI * .65 }, expression: { key: privateStateVisible ? emotionState(a) : "observable" }, health: healthPresentation(a.health, a.healthCap), communication: animalCall(a), permittedChannels: privateStateVisible ? ["body", "movement", "injury", "signals", "priority", "thought", "memory", "destination", "cause"] : ["body", "movement", "injury", "signals"] };
+  state.health.tier = state.health.acuteTier;
+  state.explanation = `${state.action.label} because ${evidencePhrase(state.cause)}, intending to ${intendedResult(state)}.`;
+  return state;
 }
+function buildPresentationSnapshots(now = performance.now()) { for (const a of sim.animals) if (a.alive) presentationSnapshots.build(a, sim.tick, accessModeFor(a), (animal, mode) => buildEntityPresentationSnapshot(animal, mode, now)); }
+function presentationSnapshot(a) { return presentationSnapshots.build(a, sim.tick, accessModeFor(a), (animal, mode) => buildEntityPresentationSnapshot(animal, mode)); }
 function evidencePhrase(cause) {
-  if (!cause) return "its internal state currently makes this the strongest option";
+  if (!cause) return "the recorded decision has no primary external evidence";
   if (cause.channel === "sight" || cause.channel === "visual-signal") return cause.targetId ? `it can see ${cause.targetId}` : "it can see the relevant location";
   if (cause.channel === "hearing") return cause.targetId ? `it heard ${cause.targetId}` : "it heard an uncertain nearby source";
   if (cause.channel === "smell") return cause.targetId ? `it detected ${cause.targetId}'s scent` : "it detected a relevant scent";
-  if (cause.channel === "memory") return cause.targetId ? `it remembers ${cause.targetId}'s last-known location` : "it is following a remembered location";
+  if (cause.channel === "memory") return cause.targetId ? `it remembers ${cause.targetId} from ${cause.originalChannel || "an earlier observation"}` : `it is using ${evidenceCaption(cause)}`;
   return cause.label || "it has relevant evidence";
 }
 function intendedResult(state) {
-  if (state.action.key === "fleeing") return "increase its distance from danger";
-  if (state.action.key === "backing-away") return "keep the threat in view while retreating";
-  if (state.action.key === "searching") return state.priority.category === "hunting" ? "reacquire its prey" : "find stronger evidence";
-  if (state.action.key === "stalking") return "approach prey without producing much noise";
-  if (state.action.key === "chasing") return state.priority.category === "family" ? "reach and protect its offspring" : "reach its target";
-  if (state.action.key === "guarding") return "keep the protected entity safe";
+  if (state.action.intendedOutcome) return state.action.intendedOutcome;
+  if (state.action.key === "flee") return "increase its distance from danger";
+  if (state.action.key === "search") return state.priority.category === "hunting" ? "reacquire its prey" : "find stronger evidence";
+  if (state.action.key === "stalk") return "approach prey without producing much noise";
+  if (["chase", "protect-offspring"].includes(state.action.key)) return state.priority.category === "family" ? "reach and protect its offspring" : "reach its target";
+  if (["guard", "defend"].includes(state.action.key)) return "keep the protected entity safe";
   if (state.action.key === "blocked") return "find another usable route";
   if (state.priority.category === "water") return "reach drinkable water";
   if (state.priority.category === "food") return "reach food";
   if (state.priority.category === "reproduction") return "reach a suitable mate";
   return "satisfy its current highest priority";
 }
-function causalExplanation(a, state = deriveEntityPresentation(a)) { return `${state.action.label} because ${evidencePhrase(state.cause)}, intending to ${intendedResult(state)}.`; }
-function updateEntityIndicators(rendered, a, now = performance.now()) {
+function causalExplanation(a, state = presentationSnapshot(a)) { return state.explanation; }
+function updateEntityIndicators(rendered, a, state, now = performance.now(), channels = new Set()) {
   let healthBar = rendered.userData.healthBar;
-  if (!healthBar) {
-    healthBar = new THREE.Sprite(healthBarMaterial(a));
+  if (!healthBar && channels.has("healthBars")) {
+    healthBar = new THREE.Sprite(healthBarMaterial(a, state.health));
     healthBar.renderOrder = 80; rendered.add(healthBar); rendered.userData.healthBar = healthBar;
+    rendered.userData.parts.health = healthBar;
   }
-  const scale = animalVisualScale(a), showHealth = a.health < 99.5;
+  const scale = animalVisualScale(a), showHealth = channels.has("healthBars") && (state.health.health < 99.5 || state.health.healthCap < 99.5);
+  if (!healthBar) return;
   healthBar.visible = showHealth;
   if (showHealth) {
-    healthBar.material = healthBarMaterial(a);
+    healthBar.material = healthBarMaterial(a, state.health);
     healthBar.position.set(0, 2.28 * scale, 0);
-    const pulse = healthTier(a) === "critical" ? 1 + Math.sin(now * .012) * .08 : 1;
+    const pulse = state.health.tier === "critical" ? 1 + Math.sin(now * .012) * .08 : 1;
     healthBar.scale.set(1.7 * scale * pulse, .43 * scale * pulse, 1);
   }
 
   let thought = rendered.userData.thoughtBubble;
-  if (!thought) {
-    thought = new THREE.Sprite(thoughtBubbleMaterial(a, currentPriority(a)).clone());
+  if (!thought && channels.has("thoughts")) {
+    thought = new THREE.Sprite(markResource(thoughtBubbleMaterial(a, currentPriority(a)).clone(), RESOURCE_OWNERSHIP.entity));
     thought.material.depthTest = false; thought.material.depthWrite = false; thought.renderOrder = 90;
     rendered.add(thought); rendered.userData.thoughtBubble = thought;
+    rendered.userData.parts.thought = thought;
   }
-  const priority = currentPriority(a);
-  let state = entityThoughtStates.get(a.id);
-  if (!state) { state = { priority, until: 0, started: 0 }; entityThoughtStates.set(a.id, state); }
-  else if (state.priority !== priority) {
-    state.priority = priority; state.started = now; state.until = now + 2400;
+  if (!thought) return;
+  const priority = state.priority.key;
+  let thoughtState = entityThoughtStates.get(a.id);
+  if (!thoughtState) { thoughtState = { priority, until: 0, started: 0 }; entityThoughtStates.set(a.id, thoughtState); }
+  else if (thoughtState.priority !== priority && hasVisualEvent("thought-transition", a, now)) {
+    thoughtState.priority = priority; thoughtState.started = now; thoughtState.until = visualEvents.firstActive("thought-transition", a.id, now)?.expiresAt || now;
     const source = thoughtBubbleMaterial(a, priority);
     thought.material.map = source.map; thought.material.needsUpdate = true;
   }
-  const visible = now < state.until;
-  const urgentImpact = (a.attackFlashUntil || 0) > sim.tick || (a.injuryFlashUntil || 0) > sim.tick;
+  const accessMode = state.accessMode;
+  const visible = channels.has("thoughts") && now < thoughtState.until && (accessMode === "selected-self" || accessMode === "laboratory");
+  const urgentImpact = hasVisualEvent("attack", a, now) || hasVisualEvent("injury-alert", a, now);
   thought.visible = visible && !urgentImpact;
   if (thought.visible) {
-    const elapsed = now - state.started, remaining = state.until - now;
+    const elapsed = now - thoughtState.started, remaining = thoughtState.until - now;
     thought.material.opacity = Math.min(1, elapsed / 180, remaining / 420);
     thought.position.set(.62 * scale, 3.18 * scale + Math.sin(now * .004) * .06, 0);
     thought.scale.set(2.25 * scale, 1.6 * scale, 1);
   }
   let sexMarker = rendered.userData.sexMarker;
-  if (!sexMarker) { sexMarker = new THREE.Sprite(sexBadgeMaterial(a.sex)); sexMarker.renderOrder = 72; rendered.add(sexMarker); rendered.userData.sexMarker = sexMarker; }
-  sexMarker.visible = selectedId === a.id || /reproduction|courtship|mate/.test(currentPriority(a)) || (a.courtshipUntil || 0) > sim.tick;
+  if (!sexMarker) { sexMarker = new THREE.Sprite(sexBadgeMaterial(a.sex)); sexMarker.renderOrder = 72; rendered.add(sexMarker); rendered.userData.sexMarker = sexMarker; rendered.userData.parts.sexMarker = sexMarker; }
+  sexMarker.visible = selectedId === a.id || state.priority.category === "reproduction" || (a.courtshipUntil || 0) > sim.tick;
   if (sexMarker.visible) { sexMarker.position.set(-.72 * scale, 1.35 * scale, 0); sexMarker.scale.set(.38 * scale, .38 * scale, .38 * scale); }
-  const action = actionPresentation(a), category = priorityCategory(currentPriority(a));
+  const action = state.action, category = state.priority.category;
   let actionBadge = rendered.userData.actionBadge;
-  if (!actionBadge) { actionBadge = new THREE.Sprite(actionBadgeMaterial(action.key, category)); actionBadge.renderOrder = 74; rendered.add(actionBadge); rendered.userData.actionBadge = actionBadge; }
-  const unusualAction = ["fleeing", "backing-away", "stalking", "chasing", "searching", "listening", "tracking-scent", "guarding", "blocked"].includes(action.key);
-  actionBadge.visible = unusualAction && !urgentImpact;
+  if (!actionBadge) { actionBadge = new THREE.Sprite(actionBadgeMaterial(action.key, category)); actionBadge.renderOrder = 74; rendered.add(actionBadge); rendered.userData.actionBadge = actionBadge; rendered.userData.parts.actionBadge = actionBadge; }
+  const unusualAction = BADGED_ACTIONS.has(action.key);
+  actionBadge.visible = channels.has("actionBadges") && unusualAction && !urgentImpact;
   if (actionBadge.visible) { actionBadge.material = actionBadgeMaterial(action.key, category); actionBadge.position.set(.72 * scale, 1.48 * scale, 0); actionBadge.scale.set(.4 * scale, .4 * scale, .4 * scale); }
 }
 function updateEntityPosture(rendered, state, now) {
   const parts = rendered.userData.parts;
   if (!parts) return;
   for (const part of Object.values(parts)) {
-    const rest = part?.userData.restTransform;
+    const rest = part?.userData?.restTransform;
     if (!rest) continue;
     part.position.copy(rest.position); part.rotation.copy(rest.rotation); part.scale.copy(rest.scale);
   }
@@ -1682,15 +1803,17 @@ function updateEntityPosture(rendered, state, now) {
 function ensureEntityIntent(a) {
   if (entityIntentCache.has(a.id)) return entityIntentCache.get(a.id);
   const root = new THREE.Group();
-  const halo = new THREE.Mesh(geos.ring, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .38, depthWrite: false, side: THREE.DoubleSide })); halo.rotation.x = -Math.PI / 2; halo.renderOrder = 26; root.add(halo);
+  const halo = new THREE.Mesh(geos.ring, markResource(new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .38, depthWrite: false, side: THREE.DoubleSide }), RESOURCE_OWNERSHIP.entity)); halo.rotation.x = -Math.PI / 2; halo.renderOrder = 26; root.add(halo);
   const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 1.5, 0xffffff, .42, .24); arrow.renderOrder = 27; root.add(arrow);
-  const connectorGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-  const connector = new THREE.Line(connectorGeometry, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .65, depthWrite: false })); connector.renderOrder = 25; root.add(connector);
-  const causeMarker = new THREE.Mesh(geos.marker, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .75, depthWrite: false })); causeMarker.renderOrder = 28; root.add(causeMarker);
-  const trail = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .3, depthWrite: false })); trail.renderOrder = 24; root.add(trail);
-  const callRing = new THREE.Mesh(geos.ring, communicationMat.clone()); callRing.rotation.x = -Math.PI / 2; callRing.renderOrder = 29; root.add(callRing);
+  const connectorGeometry = markResource(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), RESOURCE_OWNERSHIP.entity);
+  const connector = new THREE.Line(connectorGeometry, markResource(new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .65, depthWrite: false }), RESOURCE_OWNERSHIP.entity)); connector.renderOrder = 25; root.add(connector);
+  const causeMarker = new THREE.Mesh(geos.marker, markResource(new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .75, depthWrite: false }), RESOURCE_OWNERSHIP.entity)); causeMarker.renderOrder = 28; root.add(causeMarker);
+  const trailBuffer = new FixedTrailBuffer(16), trailGeometry = markResource(new THREE.BufferGeometry(), RESOURCE_OWNERSHIP.entity), trailAttribute = new THREE.BufferAttribute(trailBuffer.positions, 3);
+  trailGeometry.setAttribute("position", trailAttribute); trailGeometry.setDrawRange(0, 0);
+  const trail = new THREE.Line(trailGeometry, markResource(new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .3, depthWrite: false }), RESOURCE_OWNERSHIP.entity)); trail.renderOrder = 24; root.add(trail);
+  const callRing = new THREE.Mesh(geos.ring, markResource(communicationMat.clone(), RESOURCE_OWNERSHIP.entity)); callRing.rotation.x = -Math.PI / 2; callRing.renderOrder = 29; root.add(callRing);
   groups.intent.add(root);
-  const item = { root, halo, arrow, connector, causeMarker, trail, callRing };
+  const item = { root, halo, arrow, connector, causeMarker, trail, trailBuffer, trailAttribute, callRing };
   entityIntentCache.set(a.id, item); return item;
 }
 function connectorColour(state) {
@@ -1699,30 +1822,33 @@ function connectorColour(state) {
   if (state.cause?.channel === "memory") return 0x75a7ff;
   return PRESENTATION_STYLES[state.priority.category]?.colour ?? 0xd7ddd8;
 }
-function updateMotionTrail(a, state, item, now, visual) {
+function updateMotionTrail(a, state, item, now, visual, enabled = true) {
   let history = entityMotionHistory.get(a.id);
-  if (!history) { history = { sampledAt: 0, points: [] }; entityMotionHistory.set(a.id, history); }
-  if (now - history.sampledAt >= 120) { history.sampledAt = now; history.points.push({ x: visual.x, z: visual.z, time: now }); }
-  history.points = history.points.filter((point) => now - point.time <= 1600).slice(-16);
-  const important = a.id === selectedId || ["fleeing", "chasing", "stalking", "searching", "backing-away"].includes(state.action.key) || state.health.tier === "critical";
-  item.trail.visible = important && history.points.length > 1;
+  if (!history) { history = { sampledAt: 0, buffer: item.trailBuffer }; entityMotionHistory.set(a.id, history); }
+  let changed = history.buffer.expire(now - 1600);
+  if (now - history.sampledAt >= 120) { history.sampledAt = now; changed = history.buffer.sample(visual.x, terrainHeight(visual.x, visual.z) + .08, visual.z, now) || changed; }
+  if (changed) updateTrailGeometry(item.trail.geometry, item.trailAttribute, history.buffer);
+  const important = a.id === selectedId || ["flee", "chase", "stalk", "search", "protect-offspring"].includes(state.action.key) || state.health.tier === "critical";
+  item.trail.visible = enabled && important && history.buffer.count > 1;
   if (item.trail.visible) {
-    item.trail.geometry.dispose();
-    item.trail.geometry = new THREE.BufferGeometry().setFromPoints(history.points.map((point) => new THREE.Vector3(point.x, terrainHeight(point.x, point.z) + .08, point.z)));
     item.trail.material.color.set(PRESENTATION_STYLES[state.priority.category]?.colour ?? 0xd7ddd8);
-    item.trail.material.opacity = state.action.key === "stalking" ? .22 : state.action.key === "fleeing" ? .7 : .38;
+    item.trail.material.opacity = state.action.key === "stalk" ? .22 : state.action.key === "flee" ? .7 : .38;
   }
 }
-function updateWorldPresentation(a, state, now) {
-  const item = ensureEntityIntent(a), visual = visualState(a, now), style = PRESENTATION_STYLES[state.priority.category] || PRESENTATION_STYLES.unknown;
+function updateWorldPresentation(a, state, now, visual, channels = new Set()) {
+  const needsIntent = ["urgentHalos", "movementArrows", "connectors", "callRings", "trails"].some((channel) => channels.has(channel));
+  let item = entityIntentCache.get(a.id);
+  if (!needsIntent) { if (item) item.root.visible = false; return; }
+  item ||= ensureEntityIntent(a);
+  const style = PRESENTATION_STYLES[state.priority.category] || PRESENTATION_STYLES.unknown;
   item.root.visible = true; item.halo.position.set(visual.x, terrainHeight(visual.x, visual.z) + .08, visual.z);
-  const urgent = ["danger", "hunting", "reproduction", "family"].includes(state.priority.category) || ["searching", "blocked"].includes(state.action.key) || a.id === selectedId;
-  item.halo.visible = urgent; item.halo.material.color.set(style.colour); item.halo.material.opacity = state.priority.category === "danger" ? .55 : .3;
-  const haloPulse = state.priority.category === "danger" ? 1 + Math.sin(now * .012) * .1 : 1; item.halo.scale.setScalar((state.action.key === "searching" ? 1.22 : .92) * animalVisualScale(a) * haloPulse);
-  const angle = state.movement.intendedDirection, arrowOrigin = new THREE.Vector3(visual.x, terrainHeight(visual.x, visual.z) + .18, visual.z);
-  item.arrow.visible = angle !== null && (!state.movement.stationary || ["blocked", "searching"].includes(state.action.key) || a.id === selectedId);
-  if (item.arrow.visible) { const direction = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)); item.arrow.position.copy(arrowOrigin); item.arrow.setDirection(direction); item.arrow.setLength(state.action.key === "fleeing" ? 2.5 : 1.75, .48, .28); item.arrow.setColor(style.colour); }
-  const showConnector = Boolean(state.cause) && (a.id === selectedId || ["danger", "hunting", "reproduction", "family"].includes(state.priority.category));
+  const urgent = ["danger", "hunting", "reproduction", "family"].includes(state.priority.category) || ["search", "blocked"].includes(state.action.key) || a.id === selectedId;
+  item.halo.visible = channels.has("urgentHalos") && urgent; item.halo.material.color.set(style.colour); item.halo.material.opacity = state.priority.category === "danger" ? .55 : .3;
+  const haloPulse = state.priority.category === "danger" ? 1 + Math.sin(now * .012) * .1 : 1; item.halo.scale.setScalar((state.action.key === "search" ? 1.22 : .92) * animalVisualScale(a) * haloPulse);
+  const angle = state.movement.intendedDirection; frameScratch.origin.set(visual.x, terrainHeight(visual.x, visual.z) + .18, visual.z);
+  item.arrow.visible = channels.has("movementArrows") && angle !== null && (!state.movement.stationary || ["blocked", "search"].includes(state.action.key) || a.id === selectedId);
+  if (item.arrow.visible) { frameScratch.direction.set(Math.cos(angle), 0, Math.sin(angle)); item.arrow.position.copy(frameScratch.origin); item.arrow.setDirection(frameScratch.direction); item.arrow.setLength(state.action.key === "flee" ? 2.5 : 1.75, .48, .28); item.arrow.setColor(style.colour); }
+  const showConnector = channels.has("connectors") && Boolean(state.cause) && (a.id === selectedId || ["danger", "hunting", "reproduction", "family"].includes(state.priority.category));
   item.connector.visible = item.causeMarker.visible = showConnector;
   if (showConnector) {
     const colour = connectorColour(state), positions = item.connector.geometry.attributes.position.array;
@@ -1731,19 +1857,32 @@ function updateWorldPresentation(a, state, now) {
     item.causeMarker.material.color.set(colour); item.causeMarker.material.opacity = .35 + state.cause.confidence * .5; item.causeMarker.position.set(state.cause.x, terrainHeight(state.cause.x, state.cause.z) + .42, state.cause.z);
     const uncertainty = state.cause.channel === "hearing" ? 1.8 - state.cause.confidence : .45; item.causeMarker.scale.set(uncertainty, .25, uncertainty);
   }
-  item.callRing.visible = Boolean(state.communication);
+  item.callRing.visible = channels.has("callRings") && Boolean(state.communication);
   if (item.callRing.visible) { const phase = ((now / 900) % 1), radius = .5 + phase * 1.5; item.callRing.position.set(visual.x, terrainHeight(visual.x, visual.z) + .12, visual.z); item.callRing.scale.set(radius, radius, radius); item.callRing.material.opacity = .8 * (1 - phase); }
-  updateMotionTrail(a, state, item, now, visual);
+  updateMotionTrail(a, state, item, now, visual, channels.has("trails"));
+}
+function refreshFrameMovement(state, a, now) {
+  const move = a.visualMove, speed = completedVisibleVelocity(move, now, !running) * 1000;
+  state.movement.speed = speed; state.movement.stationary = speed < .015;
+  state.movement.movementDirection = speed > .001 && move ? Math.atan2(move.toZ - move.fromZ, move.toX - move.fromX) : null;
+  const delta = state.movement.movementDirection === null ? 0 : Math.atan2(Math.sin(state.movement.movementDirection - state.movement.facingDirection), Math.cos(state.movement.movementDirection - state.movement.facingDirection));
+  state.movement.movingBackward = Math.abs(delta) > Math.PI * .65;
 }
 function syncAnimalVisuals(now) {
   for (const [id, rendered] of animalRenderCache) {
     const a = animalById(id);
     if (!a?.alive || !rendered.visible) continue;
-    const state = deriveEntityPresentation(a, now);
-    poseOnTerrain(rendered, visualState(a, now));
+    const state = entityPresentationCache.get(a.id);
+    if (!state) continue;
+    refreshFrameMovement(state, a, now);
+    const visual = visualState(a, now, frameScratch.visual); state.movement.facingDirection = visual.orientation;
+    const channels = rendered.userData.presentationChannels || new Set();
+    updateAnimalTransientParts(rendered, a, state, now);
+    poseOnTerrain(rendered, visual);
     updateEntityPosture(rendered, state, now);
-    updateEntityIndicators(rendered, a, now);
-    updateWorldPresentation(a, state, now);
+    updateEntityIndicators(rendered, a, state, now, channels);
+    applyPresentationTier(rendered, rendered.userData.presentationTier || "close", channels);
+    updateWorldPresentation(a, state, now, visual, channels);
   }
 }
 function terrainTravelEffects(c, speciesId) {
@@ -1760,14 +1899,14 @@ function terrainTravelEffects(c, speciesId) {
   if (cover === "bareDirt") return { speed: .94, noise: 1.02, energy: 1.04, label: "crossing bare ground" };
   return { speed: 1, noise: 1, energy: 1, label: "moving across grassland" };
 }
-function applyMove(a, p, label) {
-  if (!p) return;
+function applyMove(a, p, actionKey, label, options = {}) {
+  if (!p) { setBlockedAction(a, "no valid traversable move", { label: `blocked while ${label}`, target: options.target, intendedOutcome: options.intendedOutcome }); return false; }
   a.fx ??= a.x; a.fz ??= a.z;
   const old = { x: a.x, z: a.z }, destination = cellAt(p.x, p.z);
   const moved = p.x !== old.x || p.z !== old.z;
-  const stalking = a.speciesId === "hunter" && /stalk|track|approach/.test(label);
-  const pace = label.includes("sprint") ? 1 : stalking ? 0.22 : label.includes("flee") ? 0.82 : 0.52;
-  if (!moved) { a.motionTarget = null; a.movementNoise = 0; a.currentAction = label; return; }
+  const stalking = a.speciesId === "hunter" && ["stalk", "track-scent"].includes(actionKey);
+  const pace = options.pace ?? (actionKey === "chase" ? 1 : stalking ? 0.22 : actionKey === "flee" ? 0.82 : 0.52);
+  if (!moved) { setBlockedAction(a, "chosen move has zero distance", { label: `blocked while ${label}`, target: options.target, intendedOutcome: options.intendedOutcome }); return false; }
   if (!a.motionTarget || a.motionTarget.x !== p.x || a.motionTarget.z !== p.z) a.motionTarget = { x: p.x, z: p.z };
   const dx = a.motionTarget.x - a.fx, dz = a.motionTarget.z - a.fz, remaining = Math.hypot(dx, dz);
   const desiredHeading = Math.atan2(dz, dx);
@@ -1786,16 +1925,20 @@ function applyMove(a, p, label) {
     a.fx = p.x; a.fz = p.z; sim.occupied?.delete(key(old)); sim.occupied?.set(key(p), a.id); a.x = p.x; a.z = p.z; a.motionTarget = null;
   }
   a.visualMove = null;
-  a.moveIntent = { x: p.x, z: p.z, label, pace };
+  a.moveIntent = arrived ? null : { x: p.x, z: p.z, label, pace };
   const coverNoise = terrainEffect.noise;
   a.movementNoise = clamp(pace * coverNoise * (arrived ? 1 : 0.72), 0, 1.4);
   a.energy -= ((0.22 / Math.max(0.18, (a.capabilities?.speed || 1) * (stalking ? 0.48 : 1))) * travelled * (wading ? 1.5 : 1) + climbing * 0.36 + footing * travelled) * terrainEffect.energy;
-  a.fatigue += (((a.lifeStage === "old" ? 2.2 : label.includes("sprint") ? 3.6 : stalking ? 0.55 : 1.4) * travelled) + climbing * 0.8 + footing) * terrainEffect.energy;
-  a.currentAction = climbing > 0.15 ? `${label}; climbing surface` : wading ? `${label}; wading shallow water` : stalking ? `${label}; moving quietly through cover` : terrainEffect.label !== "moving across grassland" ? `${label}; ${terrainEffect.label}` : footing ? `${label}; difficult footing` : label;
+  a.fatigue += (((a.lifeStage === "old" ? 2.2 : actionKey === "chase" ? 3.6 : stalking ? 0.55 : 1.4) * travelled) + climbing * 0.8 + footing) * terrainEffect.energy;
+  const displayLabel = climbing > 0.15 ? `${label}; climbing surface` : wading ? `${label}; wading shallow water` : stalking ? `${label}; moving quietly through cover` : terrainEffect.label !== "moving across grassland" ? `${label}; ${terrainEffect.label}` : footing ? `${label}; difficult footing` : label;
+  const actionOptions = { label: displayLabel, target: options.target, intendedOutcome: options.intendedOutcome };
+  if (arrived) completeActionArrival(a, actionKey, actionOptions);
+  else setAction(a, actionKey, { ...actionOptions, destination: p, moving: true });
+  return true;
 }
 
-function die(a, cause, ownerId = null) { if (!a.alive) return; a.alive = false; sim.occupied?.delete(key(a)); a.deathTick = sim.tick; sim.deaths += 1; sim.corpses.push({ id: `corpse-${a.id}`, sourceId: a.id, ownerId, x: a.x, z: a.z, biomass: a.bodyMass * 0.52, initialBiomass: a.bodyMass * 0.52, age: 0, cause, deathDay: sim.day, lived: a.age, speciesId: a.speciesId, sex: a.sex, lifeStage: a.lifeStage, offspring: a.offspringIds.length, finalEnergy: a.energy, finalHydration: a.hydration, timeline: [...a.timeline, `died day ${sim.day}: ${cause}`] }); addEvent(`${a.id} died: ${cause}`); for (const child of sim.animals.filter((o) => o.motherId === a.id && o.alive)) child.energy -= 28; for (const parent of sim.animals) if (parent.offspringIds) parent.offspringIds = parent.offspringIds.filter((id) => id !== a.id); }
-function decayCorpses() { for (const corpse of sim.corpses) { corpse.age += 1; const t = localTemperatureAt(corpse); const rotLimit = t > 25 ? 60 : t < 5 ? 120 : 84; if (corpse.biomass > 0) corpse.biomass = Math.max(0, corpse.biomass - corpse.initialBiomass / rotLimit); if (corpse.biomass <= 0.03 || corpse.age >= rotLimit) { corpse.biomass = 0; corpse.eaten = true; corpse.skeletonAge = (corpse.skeletonAge || 0) + 1; } const c = cellAt(corpse.x, corpse.z); c.fertility = clamp(c.fertility + 0.0015, 0, 1); } sim.corpses = sim.corpses.filter((c) => !c.eaten || c.skeletonAge < 365 * 24); }
+function die(a, cause, ownerId = null) { if (!a.alive) return; a.alive = false; sim.occupied?.delete(key(a)); a.deathTick = sim.tick; sim.deaths += 1; const corpse = { id: `corpse-${a.id}`, sourceId: a.id, ownerId, x: a.x, z: a.z, biomass: a.bodyMass * 0.52, initialBiomass: a.bodyMass * 0.52, age: 0, cause, deathDay: sim.day, lived: a.age, speciesId: a.speciesId, sex: a.sex, lifeStage: a.lifeStage, offspring: a.offspringIds.length, finalEnergy: a.energy, finalHydration: a.hydration, timeline: [...a.timeline, `died day ${sim.day}: ${cause}`] }; sim.corpses.push(corpse); sim.entityIndex?.insertCorpse(corpse); addEvent(`${a.id} died: ${cause}`); for (const child of sim.animals.filter((o) => o.motherId === a.id && o.alive)) child.energy -= 28; for (const parent of sim.animals) if (parent.offspringIds) parent.offspringIds = parent.offspringIds.filter((id) => id !== a.id); }
+function decayCorpses() { for (const corpse of sim.corpses) { corpse.age += 1; const t = localTemperatureAt(corpse); const rotLimit = t > 25 ? 60 : t < 5 ? 120 : 84; if (corpse.biomass > 0) corpse.biomass = Math.max(0, corpse.biomass - corpse.initialBiomass / rotLimit); if (corpse.biomass <= 0.03 || corpse.age >= rotLimit) { corpse.biomass = 0; corpse.eaten = true; corpse.skeletonAge = (corpse.skeletonAge || 0) + 1; } const c = cellAt(corpse.x, corpse.z); c.fertility = clamp(c.fertility + 0.0015, 0, 1); } const retained = []; for (const corpse of sim.corpses) { if (!corpse.eaten || corpse.skeletonAge < 365 * 24) retained.push(corpse); else sim.entityIndex?.removeCorpse(corpse.id); } sim.corpses = retained; }
 function reproductionDrive(a) { const mod = seasonMods[sim.season].breed; const cycle = fertilityCycle(a); if (!(a.capabilities?.canMate) || mod <= 0 || a.postpartum > 0) return 0; if (a.sex === "F" && !cycle.fertile) return 0; const readiness = 55 + (a.energy - species[a.speciesId].reproductionEnergy) * 0.8; return (a.sex === "F" ? readiness + 30 : readiness * 0.38) * mod; }
 function mature(a) { return a.lifeStage === "adult" || a.lifeStage === "old"; }
 function stageForAge(s, age, motherId) { if (motherId) return "dependent"; if (age < s.matureAge * 0.45) return "juvenile"; if (age < s.matureAge) return "subadult"; if (age > s.oldAge) return "old"; return "adult"; }
@@ -1812,43 +1955,64 @@ function terrainDetailStride() {
 
 function renderAll() { return profiler.measure("animal presentation rebuild/update", renderAllWork); }
 function renderAllWork() {
+  buildPresentationSnapshots(performance.now());
   const observer = selectedAnimal();
   const entityFocus = Boolean(observer && ui.overlayEntityFocus?.checked);
   groups.plants.visible = !entityFocus;
   groups.water.visible = !entityFocus;
-  profiler.measure("fog", () => updateKnowledgeFog(observer));
+  updateLandscapeChunkVisibility(entityFocus);
+  profiler.measure("display.fog", () => profiler.measure("fog", () => updateKnowledgeFog(observer)));
   const detail = terrainDetailStride();
-  const observerKey = observer ? `${observer.id}:${observer.x},${observer.z}:${Math.round((observer.orientation || 0) * 8)}` : "laboratory";
   if (detail !== lastTerrainDetail) { lastTerrainDetail = detail; landscapeDirty = true; }
-  const refreshLandscape = landscapeDirty || lastLandscapeTick < 0 || observerKey !== lastTerrainObserverKey;
+  const refreshLandscape = landscapeDirty || lastLandscapeTick < 0 || landscapeDirtyState.vegetation.size > 0;
   if (refreshLandscape) {
-    profiler.measure("vegetation rebuild", () => {
-      clear(groups.plants);
+    profiler.measure("display.vegetation", () => profiler.measure("vegetation rebuild", () => {
+      if (landscapeDirty) landscapeDirtyState.markAll("vegetation");
+      const dirtyVegetation = new Set(landscapeDirtyState.take("vegetation"));
+      for (const key of dirtyVegetation) clear(vegetationRootFor(key));
       updateTerrainColours();
-      drawTerrainFields(observer, detail);
-      drawVegetationRegions(detail, observer);
-    });
+      drawTerrainFields(null, detail);
+      drawVegetationRegions(detail, null, dirtyVegetation);
+    }));
     landscapeDirty = false;
     lastLandscapeTick = sim.tick;
-    lastTerrainObserverKey = observerKey;
+    lastTerrainObserverKey = "data-only";
   }
+  updateLandscapeChunkVisibility(entityFocus);
   const aliveIds = new Set(sim.animals.filter((a) => a.alive).map((a) => a.id));
-  for (const [id, group] of animalRenderCache) if (!aliveIds.has(id)) { groups.animals.remove(group); animalRenderCache.delete(id); const intent = entityIntentCache.get(id); if (intent) groups.intent.remove(intent.root); entityIntentCache.delete(id); entityPresentationCache.delete(id); entityMotionHistory.delete(id); entityThoughtStates.delete(id); }
+  for (const id of animalRenderCache.keys()) if (!aliveIds.has(id)) removeAnimalVisual(id);
   for (const group of animalRenderCache.values()) group.visible = false;
   for (const item of entityIntentCache.values()) item.root.visible = false;
-  clear(groups.overlays); clear(groups.corpses); pickables.clear();
+  clear(groups.overlays); corpseRenderCache.hideAll(); pickables.clear();
   profiler.measure("overlays", () => { if (!entityFocus && ui.overlayPheromone.checked) drawScentTrails(observer); });
-  profiler.measure("corpse rendering", () => { if (!entityFocus) for (const corpse of sim.corpses) { if (observer && dist(observer, corpse) > awarenessRange(observer)) continue; drawRemains(corpse); } });
+  profiler.measure("corpse rendering", () => {
+    const liveCorpseIds = new Set(sim.corpses.map((corpse) => corpse.id)); corpseRenderCache.retain(liveCorpseIds);
+    camera.updateMatrixWorld(); corpseFrustum.setFromProjectionMatrix(corpseFrustumMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    const cameraCullDistance = clamp(camera.position.distanceTo(controls.target) * 1.25, 100, 260), cameraCullDistance2 = cameraCullDistance * cameraCullDistance;
+    if (!entityFocus) for (const corpse of sim.corpses) {
+      const dx = corpse.x - camera.position.x, dz = corpse.z - camera.position.z;
+      if (dx * dx + dz * dz > cameraCullDistance2) continue;
+      corpseCullPoint.set(corpse.x, terrainHeight(corpse.x, corpse.z), corpse.z);
+      if (!corpseFrustum.containsPoint(corpseCullPoint)) continue;
+      if (observer && selectedId !== corpse.id && !(observer.sensoryBuffer || []).some((contact) => contact.type === "carcass" && contact.targetId === corpse.id)) continue;
+      drawRemains(corpse);
+    }
+  });
   const cameraDistance = camera.position.distanceTo(controls.target);
   const strategicMap = !observer && cameraDistance > 260;
-  const groupMap = !observer && cameraDistance > 110;
   // Rendering only nearby organisms is presentation culling: every organism
   // continues to simulate, but objects well outside the current view do not
   // consume scene-update work.
   const drawRadius = clamp(cameraDistance * 0.72, 78, 190);
-  const displayAnimals = sim.animals.filter((x) => x.alive && !strategicMap && !groupMap && (!observer ? Math.hypot(x.x - controls.target.x, x.z - controls.target.z) <= drawRadius : x.id === observer.id || observer.sensoryBuffer.some((m) => m.targetId === x.id && m.channel === "sight")));
+  const displayAnimals = sim.animals.filter((x) => x.alive && !strategicMap && (!observer ? Math.hypot(x.x - controls.target.x, x.z - controls.target.z) <= drawRadius : x.id === observer.id || observer.sensoryBuffer.some((m) => m.targetId === x.id && m.channel === "sight")));
+  const candidates = displayAnimals.map((animal) => {
+    const state = presentationSnapshot(animal), distance = Math.hypot(animal.x - controls.target.x, animal.z - controls.target.z);
+    const tier = resolvePresentationTier({ selected: animal.id === selectedId, strategic: strategicMap, distance, cameraDistance });
+    return { id: animal.id, tier, distance, selected: animal.id === selectedId, immediateThreat: state.permittedChannels.includes("cause") && state.priority.category === "danger", urgent: state.health.tier === "critical" || state.priority.category === "danger", permittedChannels: state.permittedChannels };
+  });
+  const channelAllocations = presentationBudgets.allocate(candidates);
   renderedAnimalCount = displayAnimals.length;
-  for (const a of displayAnimals) drawAnimal(a);
+  for (let index = 0; index < displayAnimals.length; index += 1) drawAnimal(displayAnimals[index], candidates[index].tier, channelAllocations.get(displayAnimals[index].id));
   profiler.measure("overlays", () => {
     drawReproductiveHighlights();
     if (!observer) drawMapMarkers();
@@ -1909,7 +2073,30 @@ function hexMaterialIndexAt(x, z) {
 
 function drawTerrainFields() { sim.plantCount = sim.cells.reduce((count, c) => count + (!c.water && c.biomass > 0.2 ? 1 : 0), 0); }
 
-function drawRemains(corpse) { const y = terrainHeight(corpse.x, corpse.z); if (!corpse.eaten) { const mesh = new THREE.Mesh(geos.corpse, mats.corpse); const amount = clamp(corpse.biomass / Math.max(1, corpse.initialBiomass), 0.25, 1); mesh.scale.set(0.75 + amount * 0.5, 0.7 + amount * 0.4, 0.75 + amount * 0.5); mesh.position.set(corpse.x, y + 0.16, corpse.z); mesh.userData.id = corpse.id; groups.corpses.add(mesh); pickables.set(corpse.id, mesh); return; } const bones = new THREE.Group(); for (let i = 0; i < 3; i++) { const bone = new THREE.Mesh(geos.bone, mats.skeleton); bone.rotation.y = i * Math.PI / 3; bone.position.y = 0.1 + i * 0.025; bones.add(bone); if (i === 0) { bone.userData.id = corpse.id; pickables.set(corpse.id, bone); } } const skull = new THREE.Mesh(geos.marker, mats.skeleton); skull.scale.set(1.7, 1.3, 1.4); skull.position.set(0.5, 0.16, 0); bones.add(skull); bones.position.set(corpse.x, y, corpse.z); groups.corpses.add(bones); }
+function landscapeChunkKey(cell) { return chunkKeyAt(cell.x, cell.z, HALF, DEFAULT_LANDSCAPE_CHUNK_SIZE); }
+function markLandscapeCell(cell, ...kinds) { if (!cell || !landscapeChunkCells.size) return; const key = landscapeChunkKey(cell); for (const kind of kinds) landscapeDirtyState.mark(kind, key); }
+function initialiseLandscapeChunks() {
+  landscapeDirtyState.clear(); landscapeChunkCells.clear();
+  for (const cell of sim.cells) { const key = landscapeChunkKey(cell), cells = landscapeChunkCells.get(key) || []; cells.push(cell); landscapeChunkCells.set(key, cells); landscapeDirtyState.register(key); }
+  landscapeDirtyState.markAll("terrain"); landscapeDirtyState.markAll("water"); landscapeDirtyState.markAll("vegetation");
+}
+function vegetationRootFor(key) { let root = vegetationChunkRoots.get(key); if (!root) { root = new THREE.Group(); root.userData.resourceOwnership = RESOURCE_OWNERSHIP.chunk; root.userData.chunkKey = key; vegetationChunkRoots.set(key, root); groups.plants.add(root); } return root; }
+function updateLandscapeChunkVisibility(entityFocus) { const radius = clamp(camera.position.distanceTo(controls.target) * .9, 90, 260), radius2 = (radius + DEFAULT_LANDSCAPE_CHUNK_SIZE) ** 2; for (const [key, root] of vegetationChunkRoots) { const [gx, gz] = key.split(",").map(Number), x = -HALF + (gx + .5) * DEFAULT_LANDSCAPE_CHUNK_SIZE, z = -HALF + (gz + .5) * DEFAULT_LANDSCAPE_CHUNK_SIZE, dx = x - controls.target.x, dz = z - controls.target.z; root.visible = !entityFocus && dx * dx + dz * dz <= radius2; } }
+function resetLandscapeChunks() { for (const root of vegetationChunkRoots.values()) clear(root); vegetationChunkRoots.clear(); landscapeChunkCells.clear(); landscapeDirtyState.clear(); }
+
+function createCorpseVisual(corpse, stage) {
+  if (stage !== "skeleton") { const mesh = new THREE.Mesh(geos.corpse, mats.corpse); mesh.userData.id = corpse.id; groups.corpses.add(mesh); return mesh; }
+  const bones = new THREE.Group();
+  for (let i = 0; i < 3; i++) { const bone = new THREE.Mesh(geos.bone, mats.skeleton); bone.rotation.y = i * Math.PI / 3; bone.position.y = 0.1 + i * 0.025; bones.add(bone); if (i === 0) { bone.userData.id = corpse.id; bones.userData.pickMesh = bone; } }
+  const skull = new THREE.Mesh(geos.marker, mats.skeleton); skull.scale.set(1.7, 1.3, 1.4); skull.position.set(0.5, 0.16, 0); bones.add(skull); groups.corpses.add(bones); return bones;
+}
+function updateCorpseVisual(root, corpse, stage) {
+  const y = terrainHeight(corpse.x, corpse.z); root.visible = true; root.position.set(corpse.x, y + (stage === "skeleton" ? 0 : 0.16), corpse.z);
+  if (stage !== "skeleton") { const amount = clamp(corpse.biomass / Math.max(1, corpse.initialBiomass), 0.25, 1); root.scale.set(0.75 + amount * 0.5, 0.7 + amount * 0.4, 0.75 + amount * 0.5); }
+  pickables.set(corpse.id, root.userData.pickMesh || root);
+}
+function disposeCorpseVisual(root) { groups.corpses.remove(root); resourceCounters.ownedResourcesDisposed += disposeOwnedTree(root); }
+function drawRemains(corpse) { corpseRenderCache.update(corpse, createCorpseVisual, updateCorpseVisual); }
 
 function drawClimateZones() { if (sim.season !== "Winter" && sim.season !== "Summer") return; const north = sim.season === "Winter"; const zone = new THREE.Mesh(new THREE.PlaneGeometry(WORLD, WORLD * 0.45), north ? climateMats.snow : climateMats.heat); zone.rotation.x = -Math.PI / 2; zone.position.set(-0.5, 0.035, north ? -WORLD * 0.275 : WORLD * 0.275); groups.overlays.add(zone); }
 function drawScentTrails(observer = null) { const known = observer ? new Set([...(observer.sensoryBuffer || []), ...(observer.memories || [])].filter((m) => m.type === "preyTrail" || m.type === "predator").map((m) => `${m.x},${m.z}`)) : null; const trails = { grazer: [], hunter: [] }; for (const k of Object.keys(sim.activeScent || {})) { if (known && !known.has(k)) continue; const [x, z] = k.split(",").map(Number), c = cellAt(x, z); if (!c) continue; const grazer = c.scent?.grazer || 0, hunter = c.scent?.hunter || 0, kind = grazer >= hunter ? "grazer" : "hunter", strength = Math.max(grazer, hunter); if (strength >= 0.22) trails[kind].push({ c, strength }); } const dummy = new THREE.Object3D(); for (const kind of ["grazer", "hunter"]) { const marks = trails[kind]; if (!marks.length) continue; const mesh = new THREE.InstancedMesh(geos.marker, scentMats[kind], marks.length); marks.forEach(({ c, strength }, i) => { const size = 2.2 + clamp(strength / 5, 0.08, 0.55) * 3.2; dummy.position.set(c.x, terrainHeight(c.x, c.z) + 0.25, c.z); dummy.scale.set(size, size * 0.42, size); dummy.updateMatrix(); mesh.setMatrixAt(i, dummy.matrix); }); mesh.instanceMatrix.needsUpdate = true; groups.overlays.add(mesh); } }
@@ -1994,9 +2181,10 @@ function terrainRenderHeight(x, z) {
   return terrainHeight(x, z);
 }
 
-function buildTerrain() { return profiler.measure("terrain rebuild", buildTerrainWork); }
+function buildTerrain() { return profiler.measure("display.terrain", () => profiler.measure("terrain rebuild", buildTerrainWork)); }
 function buildTerrainWork() {
   clear(groups.terrain); clear(groups.water);
+  if (!landscapeChunkCells.size) initialiseLandscapeChunks();
   const world = sim.hexWorld, positions = [], indices = [], vertexMap = new Map(), groupsByClass = [];
   const add = (x, z, height) => { x = clamp(x, -HALF, HALF); z = clamp(z, -HALF, HALF); const k = `${Math.round(x * 1000)},${Math.round(z * 1000)}`; if (vertexMap.has(k)) return vertexMap.get(k); const id = positions.length / 3; positions.push(x, height, z); vertexMap.set(k, id); return id; };
   for (const c of world.cells) {
@@ -2067,20 +2255,61 @@ function buildTerrainWork() {
   for (const [x, z] of [[-HALF, -HALF], [HALF, -HALF], [HALF, HALF], [-HALF, HALF], [-HALF, -HALF]]) edge.push(x, terrainHeight(x, z) + 0.32, z);
   const edgeGeo = new THREE.BufferGeometry(); edgeGeo.setAttribute("position", new THREE.Float32BufferAttribute(edge, 3));
   groups.terrain.add(new THREE.Line(edgeGeo, new THREE.LineBasicMaterial({ color: 0x90bd7d, transparent: true, opacity: 0.6 })));
+  landscapeDirtyState.take("terrain"); landscapeDirtyState.take("water");
 }
-function drawAnimal(a) {
-  const courting = (a.courtshipIconUntil || a.courtshipUntil || 0) > sim.tick;
-  const rejecting = (a.mateRejectUntil || 0) > sim.tick;
-  const emotion = emotionState(a);
-  const attacking = (a.attackFlashUntil || 0) > sim.tick;
-  const injured = (a.injuryFlashUntil || 0) > sim.tick || (a.injuries || []).length > 0;
-  const signalKind = a.socialSignal?.until > sim.tick ? a.socialSignal.kind : "";
-  const visualKey = `${a.speciesId}|${a.sex}|${a.lifeStage}|${Boolean(a.pregnant)}|${a.health < 45}|${courting}|${rejecting}|${attacking}|${injured}|${emotion}|${signalKind}`;
+function createAnimalTransientParts(group, a, scale) {
+  const pregnancy = new THREE.Mesh(geos.ring, pregnancyMat); pregnancy.rotation.x = -Math.PI / 2; pregnancy.position.y = .08; group.add(pregnancy);
+  const pregnantIcon = new THREE.Sprite(a.speciesId === "hunter" ? iconMaterials.pregnantHunter : iconMaterials.pregnantGrazer); group.add(pregnantIcon);
+  const courtshipHearts = [0, 1].map((index) => { const heart = new THREE.Sprite(courtshipHeartMaterial()); heart.position.set((index - .5) * .34, 1.75 * scale + index * .3, 0); heart.scale.set(.42, .42, .42); group.add(heart); return heart; });
+  const rejection = new THREE.Sprite(mateRejectionMaterial()); group.add(rejection);
+  const attackEffect = new THREE.Mesh(geos.ring, attackRingMat); attackEffect.rotation.x = -Math.PI / 2; attackEffect.position.y = .08; group.add(attackEffect);
+  const attackIcon = new THREE.Sprite(attackMaterial()); group.add(attackIcon);
+  const wound = new THREE.Mesh(geos.ring, woundRingMat); wound.rotation.x = -Math.PI / 2; wound.position.y = .065; group.add(wound);
+  const injuryAlert = new THREE.Sprite(attackMaterial()); group.add(injuryAlert);
+  const signal = new THREE.Sprite(socialSignalMaterial("lost")); group.add(signal);
+  const face = new THREE.Sprite(emotionFaceMaterial("calm", a.speciesId)); group.add(face);
+  return { pregnancy, pregnantIcon, courtshipHearts, rejection, attackEffect, attackIcon, wound, injuryAlert, signal, status: signal, face };
+}
+function updateAnimalTransientParts(group, a, state, now = performance.now()) {
+  const parts = group.userData.parts, scale = animalVisualScale(a), courting = (a.courtshipIconUntil || a.courtshipUntil || 0) > sim.tick, rejecting = (a.mateRejectUntil || 0) > sim.tick, attacking = hasVisualEvent("attack", a, now), injured = hasVisualEvent("injury-alert", a, now) || (a.injuries || []).length > 0, signalKind = a.socialSignal?.until > sim.tick ? a.socialSignal.kind : "";
+  group.userData.createdScale ||= scale; group.scale.setScalar(scale / group.userData.createdScale);
+  const bodyMat = animalMaterial(a); for (const part of [parts.body, parts.head, parts.tail]) if (part) part.material = bodyMat;
+  parts.face.material = emotionFaceMaterial(state.expression.key, a.speciesId); parts.face.position.set(0, 1.35 * scale, 0); parts.face.scale.set(.72, .72, .72);
+  parts.pregnancy.visible = parts.pregnantIcon.visible = Boolean(a.pregnant); parts.pregnancy.scale.setScalar(.68 * scale); parts.pregnantIcon.position.set(.55 * scale, 1.75 * scale, 0); parts.pregnantIcon.scale.set(.62, .62, .62);
+  for (const heart of parts.courtshipHearts) heart.visible = courting;
+  parts.rejection.visible = rejecting; parts.rejection.position.set(0, 1.85 * scale, 0); parts.rejection.scale.set(.38, .38, .38);
+  parts.attackEffect.visible = attacking; parts.attackEffect.scale.setScalar(1.35 * scale); parts.attackIcon.visible = false;
+  parts.wound.visible = injured; parts.wound.scale.setScalar(1.12 * scale);
+  parts.injuryAlert.visible = hasVisualEvent("injury-alert", a, now); parts.injuryAlert.position.set(.76 * scale, 2.08 * scale, 0); parts.injuryAlert.scale.set(.4, .4, .4);
+  parts.signal.visible = Boolean(signalKind && !(signalKind === "courtship" && courting)); if (parts.signal.visible) { parts.signal.material = socialSignalMaterial(signalKind); parts.signal.position.set(-.48 * scale, 1.92 * scale, 0); parts.signal.scale.set(.46, .46, .46); }
+}
+function applyPresentationTier(group, tier, channels) {
+  const parts = group.userData.parts;
+  if (!parts) return;
+  const visibility = presentationPartVisibility(tier);
+  if (parts.head) parts.head.visible = visibility.head;
+  if (parts.tail) parts.tail.visible = visibility.tail;
+  if (parts.face) parts.face.visible = visibility.face;
+  for (const eye of parts.eyes || []) eye.visible = visibility.eyes;
+  for (const part of [parts.youngMarker, parts.babyIcon]) if (part) part.visible = visibility.lifeStageMarker;
+  if (tier === "selected" || tier === "close") return;
+  const hide = (part) => { if (part) part.visible = false; };
+  for (const part of [parts.face, parts.sexMarker, parts.actionBadge, parts.thought, parts.pregnancy, parts.pregnantIcon, parts.rejection, parts.attackIcon, parts.signal]) hide(part);
+  for (const heart of parts.courtshipHearts || []) hide(heart);
+  if (tier === "distant") {
+    for (const part of [parts.wound, parts.injuryAlert, parts.attackEffect, parts.health]) hide(part);
+  } else if (!channels.has("urgent")) {
+    for (const part of [parts.wound, parts.injuryAlert, parts.attackEffect]) hide(part);
+  }
+}
+function drawAnimal(a, tier = "close", channels = new Set()) {
+  const visualKey = animalStructureKey(a), state = presentationSnapshot(a);
   const cached = animalRenderCache.get(a.id);
-  if (cached?.userData.visualKey === visualKey) { const visual = visualState(a); cached.visible = true; poseOnTerrain(cached, visual); updateEntityIndicators(cached, a); pickables.set(a.id, cached.userData.pickMesh); if (selectedId === a.id) ringAt(a, 0.9, mats.selected); return; }
-  if (cached) { groups.animals.remove(cached); animalRenderCache.delete(a.id); }
+  if (cached?.userData.visualKey === visualKey) { const visual = visualState(a); cached.visible = true; cached.userData.presentationTier = tier; cached.userData.presentationChannels = channels; updateAnimalTransientParts(cached, a, state); poseOnTerrain(cached, visual); updateEntityIndicators(cached, a, state, performance.now(), channels); applyPresentationTier(cached, tier, channels); pickables.set(a.id, cached.userData.pickMesh); if (selectedId === a.id) ringAt(a, 0.9, mats.selected); return; }
+  if (cached) removeAnimalVisual(a.id);
   const group = new THREE.Group();
-  let head = null, tail = null;
+  resourceCounters.animalRootsCreated += 1;
+  let head = null, tail = null, youngMarker = null, babyIcon = null; const eyes = [];
   const scale = animalVisualScale(a);
   const bodyMat = animalMaterial(a);
   // Both silhouettes face local +Z. Group rotation then makes the head point
@@ -2100,7 +2329,7 @@ function drawAnimal(a) {
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(geos.eye, mats.eye);
       eye.position.set(side * 0.14 * scale, 0.57 * scale, 0.79 * scale);
-      group.add(eye);
+      group.add(eye); eyes.push(eye);
     }
   } else {
     // Low hunter body, forward-pointing wedge muzzle and trailing tail make its direction unambiguous.
@@ -2117,7 +2346,7 @@ function drawAnimal(a) {
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(geos.eye, mats.eye);
       eye.position.set(side * 0.13 * scale, 0.43 * scale, 0.71 * scale);
-      group.add(eye);
+      group.add(eye); eyes.push(eye);
     }
   }
 
@@ -2126,60 +2355,28 @@ function drawAnimal(a) {
   // an alert, while it is not essential to following behaviour in the world.
 
   if (a.lifeStage === "dependent" || a.lifeStage === "juvenile") {
-    const youngMarker = new THREE.Mesh(geos.ring, mats.selected);
+    youngMarker = new THREE.Mesh(geos.ring, mats.selected);
     youngMarker.rotation.x = -Math.PI / 2;
     youngMarker.scale.set(0.42 * scale, 0.42 * scale, 0.42 * scale);
     youngMarker.position.y = 0.04;
     group.add(youngMarker);
-    if (a.lifeStage === "dependent") { const babyIcon = new THREE.Sprite(a.speciesId === "hunter" ? iconMaterials.infantHunter : iconMaterials.infantGrazer); babyIcon.position.set(-0.46 * scale, 1.65 * scale, 0); babyIcon.scale.set(0.46, 0.46, 0.46); group.add(babyIcon); }
+    if (a.lifeStage === "dependent") { babyIcon = new THREE.Sprite(a.speciesId === "hunter" ? iconMaterials.infantHunter : iconMaterials.infantGrazer); babyIcon.position.set(-0.46 * scale, 1.65 * scale, 0); babyIcon.scale.set(0.46, 0.46, 0.46); group.add(babyIcon); }
   }
 
-  if (a.pregnant) {
-    const pregnancy = new THREE.Mesh(geos.ring, pregnancyMat);
-    pregnancy.rotation.x = -Math.PI / 2;
-    pregnancy.scale.set(0.68 * scale, 0.68 * scale, 0.68 * scale);
-    pregnancy.position.y = 0.08;
-    group.add(pregnancy);
-    const pregnantIcon = new THREE.Sprite(a.speciesId === "hunter" ? iconMaterials.pregnantHunter : iconMaterials.pregnantGrazer);
-    pregnantIcon.position.set(0.55 * scale, 1.75 * scale, 0);
-    pregnantIcon.scale.set(0.62, 0.62, 0.62);
-    group.add(pregnantIcon);
-  }
-
-  if (courting) {
-    for (let i = 0; i < 2; i++) { const heart = new THREE.Sprite(courtshipHeartMaterial()); heart.position.set((i - 0.5) * 0.34, 1.75 * scale + i * 0.3, 0); heart.scale.set(0.42, 0.42, 0.42); group.add(heart); }
-  }
-  if (rejecting) { const icon = new THREE.Sprite(mateRejectionMaterial()); icon.position.set(0, 1.85 * scale, 0); icon.scale.set(0.38, 0.38, 0.38); group.add(icon); }
-  if (attacking) {
-    const strike = new THREE.Mesh(geos.ring, new THREE.MeshBasicMaterial({ color: 0xff4d4d, transparent: true, opacity: 0.95, side: THREE.DoubleSide }));
-    strike.rotation.x = -Math.PI / 2; strike.scale.set(1.35 * scale, 1.35 * scale, 1.35 * scale); strike.position.y = 0.08; group.add(strike);
-    const icon = new THREE.Sprite(attackMaterial()); icon.position.set(0.78 * scale, 2.12 * scale, 0); icon.scale.set(0.52, 0.52, 0.52); group.add(icon);
-  }
-  if (injured) {
-    const wound = new THREE.Mesh(geos.ring, new THREE.MeshBasicMaterial({ color: 0xff7168, transparent: true, opacity: 0.82, side: THREE.DoubleSide }));
-    wound.rotation.x = -Math.PI / 2; wound.scale.set(1.12 * scale, 1.12 * scale, 1.12 * scale); wound.position.y = 0.065; group.add(wound);
-    if ((a.injuryFlashUntil || 0) > sim.tick) { const icon = new THREE.Sprite(attackMaterial()); icon.position.set(0.76 * scale, 2.08 * scale, 0); icon.scale.set(0.4, 0.4, 0.4); group.add(icon); }
-  }
-  if (signalKind && !(signalKind === "courtship" && courting)) {
-    const status = new THREE.Sprite(socialSignalMaterial(signalKind));
-    status.position.set(-0.48 * scale, 1.92 * scale, 0);
-    status.scale.set(0.46, 0.46, 0.46);
-    group.add(status);
-  }
-
-  const icon = new THREE.Sprite(emotionFaceMaterial(emotion, a.speciesId));
-  icon.position.set(0, 1.35 * scale, 0);
-  icon.scale.set(0.72, 0.72, 0.72);
-  group.add(icon);
+  const transientParts = createAnimalTransientParts(group, a, scale);
 
   const visual = visualState(a);
   poseOnTerrain(group, visual);
   group.userData.id = a.id;
   group.userData.pickMesh = body;
   group.userData.visualKey = visualKey;
-  group.userData.parts = { body, head, tail };
-  for (const part of Object.values(group.userData.parts)) if (part) part.userData.restTransform = { position: part.position.clone(), rotation: part.rotation.clone(), scale: part.scale.clone() };
-  updateEntityIndicators(group, a);
+  group.userData.presentationTier = tier;
+  group.userData.presentationChannels = channels;
+  group.userData.parts = { body, head, eyes, tail, youngMarker, babyIcon, ...transientParts };
+  for (const part of [body, head, tail]) if (part) part.userData.restTransform = { position: part.position.clone(), rotation: part.rotation.clone(), scale: part.scale.clone() };
+  updateAnimalTransientParts(group, a, state);
+  updateEntityIndicators(group, a, state, performance.now(), channels);
+  applyPresentationTier(group, tier, channels);
   groups.animals.add(group);
   animalRenderCache.set(a.id, group);
   pickables.set(a.id, body);
@@ -2193,6 +2390,9 @@ function animalMaterial(a) {
   if (a.speciesId === "hunter") return a.sex === "M" ? mats.carnivoreMale : mats.carnivoreFemale;
   return a.sex === "M" ? mats.herbivoreMale : mats.herbivoreFemale;
 }
+
+function removeIntentVisual(id) { const item = entityIntentCache.get(id); if (!item) return; resourceCounters.ownedResourcesDisposed += disposeOwnedTree(item.root); groups.intent.remove(item.root); entityIntentCache.delete(id); entityMotionHistory.delete(id); }
+function removeAnimalVisual(id) { const root = animalRenderCache.get(id); if (root) { resourceCounters.ownedResourcesDisposed += disposeOwnedTree(root); groups.animals.remove(root); resourceCounters.animalRootsRemoved += 1; } animalRenderCache.delete(id); removeIntentVisual(id); entityPresentationCache.delete(id); entityThoughtStates.delete(id); pickables.delete(id); }
 
 function animalVisualScale(a) {
   const base = bodyScale(species[a.speciesId], a.age);
@@ -2226,7 +2426,7 @@ function focusMember(id) {
   landscapeDirty = true; renderAll(); updateUI();
 }
 function selectedCorpse() { return sim.corpses.find((c) => c.id === selectedId) || null; }
-function reproductionFocused(a) { return Boolean(a && (a.drive === "reproduction" || (a.courtshipUntil || 0) > sim.tick || /mate|courtship|rejected/.test(a.currentAction || ""))); }
+function reproductionFocused(a) { return Boolean(a && (a.drive === "reproduction" || (a.courtshipUntil || 0) > sim.tick || ["courtship", "reject"].includes(a.actionState?.key))); }
 function drawReproductiveHighlights() {
   const selected = selectedAnimal();
   if (!selected) return;
@@ -2242,20 +2442,19 @@ function followSelected() {
   const a = selectedAnimal();
   if (a) {
     const visual = visualState(a);
-    return controls.target.lerp(new THREE.Vector3(visual.x, terrainHeight(visual.x, visual.z), visual.z), 0.08);
+    frameScratch.target.set(visual.x, terrainHeight(visual.x, visual.z), visual.z); return controls.target.lerp(frameScratch.target, 0.08);
   }
   const group = selectedGroupMembers();
   if (!group.length) return;
-  const visuals = group.map((member) => visualState(member));
-  const x = visuals.reduce((sum, visual) => sum + visual.x, 0) / visuals.length;
-  const z = visuals.reduce((sum, visual) => sum + visual.z, 0) / visuals.length;
-  controls.target.lerp(new THREE.Vector3(x, terrainHeight(x, z), z), 0.08);
+  let x = 0, z = 0; for (const member of group) { const visual = visualState(member, performance.now(), frameScratch.visual); x += visual.x; z += visual.z; }
+  x /= group.length; z /= group.length; frameScratch.target.set(x, terrainHeight(x, z), z); controls.target.lerp(frameScratch.target, 0.08);
 }
 function resetCamera() { camera.position.set(175, 230, 190); controls.target.set(0, 0, 0); }
-function clearEntityPresentation() { clear(groups.intent); animalRenderCache.clear(); entityThoughtStates.clear(); entityPresentationCache.clear(); entityIntentCache.clear(); entityMotionHistory.clear(); }
+function clearEntityPresentation() { for (const id of [...animalRenderCache.keys()]) removeAnimalVisual(id); for (const id of [...entityIntentCache.keys()]) removeIntentVisual(id); entityThoughtStates.clear(); presentationSnapshots.clear(); entityMotionHistory.clear(); visualEvents.clear(); presentationBudgets.reset(); minimapInvalidation.reset(); realityTerrainCache = { key: "", html: "" }; }
+function clearCorpsePresentation() { corpseRenderCache.clear(); clear(groups.corpses); }
 function readLocalList(key) { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } }
 function writeLocalList(key, items) { try { localStorage.setItem(key, JSON.stringify(items)); } catch { addEvent("Browser storage is unavailable"); } }
-function snapshotWorld() { const snapshot = { ...sim, animals: sim.animals.map(({ visualMove, ...animal }) => animal), worldSchema: WORLD_SCHEMA, savedAt: new Date().toISOString() }; delete snapshot.occupied; delete snapshot.entityIndex; delete snapshot.hexWorld; delete snapshot.cells; return snapshot; }
+function snapshotWorld() { const snapshot = { ...sim, animals: sim.animals.map(({ visualMove, rss, ...animal }) => animal), worldSchema: WORLD_SCHEMA, savedAt: new Date().toISOString() }; delete snapshot.occupied; delete snapshot.entityIndex; delete snapshot.hexWorld; delete snapshot.cells; return snapshot; }
 function openProgressDb() { return new Promise((resolve, reject) => { if (!window.indexedDB) return reject(new Error("IndexedDB unavailable")); const request = indexedDB.open(AUTOSAVE_DB, 1); request.onupgradeneeded = () => request.result.createObjectStore(AUTOSAVE_STORE); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
 async function writeSnapshot(slot, snapshot = snapshotWorld()) { const db = await openProgressDb(); return new Promise((resolve, reject) => { const tx = db.transaction(AUTOSAVE_STORE, "readwrite"); tx.objectStore(AUTOSAVE_STORE).put(snapshot, slot); tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => { db.close(); reject(tx.error); }; }); }
 async function deleteSnapshot(slot) { const db = await openProgressDb(); return new Promise((resolve, reject) => { const tx = db.transaction(AUTOSAVE_STORE, "readwrite"); tx.objectStore(AUTOSAVE_STORE).delete(slot); tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => { db.close(); reject(tx.error); }; }); }
@@ -2264,9 +2463,20 @@ function activateSnapshot(snapshot, label) {
   if (!snapshot?.animals || !Number.isFinite(snapshot.seed)) throw new Error("not a valid world save");
   if (snapshot.worldSchema !== WORLD_SCHEMA) throw new Error("This save uses the retired square-world format and cannot be loaded into the hex-world redesign.");
   sim = { ...createWorld(snapshot.seed, snapshot.worldSetup || worldSetup), ...snapshot }; sim.worldSchema = WORLD_SCHEMA; sim.worldSetup = { ...worldSetup }; sim.activeScent ||= {}; sim.weatherSystems ||= [];
+  for (const animal of sim.animals) {
+    migrateActionState(animal); clearFrameMotion(animal);
+    animal.decisionTrace ||= null;
+    animal.mapReveals ||= [];
+    animal.heardEvents ||= (animal.communicationReveals || []).map((item) => ({ ...item, legacy: true }));
+    animal.receivedSignals ||= [];
+    animal.threatAssessment ||= animal.threatEvidence ? { overallConfidence: clamp((animal.threatEvidence.score || 0) / 100, 0, 1), contributors: [], explanation: animal.threatEvidence.explanation || "legacy threat assessment" } : null;
+    animal.memories = (animal.memories || []).map((item) => item.channel === "memory" ? item : { ...item, channel: "memory", provenance: "memory", originalChannel: item.originalChannel || item.channel || "unknown" });
+    delete animal.communicationReveals; delete animal.threatEvidence;
+  }
+  sim.nextDecisionOrder = assignDecisionOrder(sim.animals, snapshot.nextDecisionOrder || 0);
   syncWorldSetupInputs();
   enforceWorldBoundary(); sim.occupied = new Map(sim.animals.filter((a) => a.alive).map((a) => [key(a), a.id])); buildEntityIndex();
-  clear(groups.terrain); clear(groups.plants); clear(groups.water); clear(groups.animals); clear(groups.corpses); clear(groups.fog); clear(groups.overlays); clearEntityPresentation(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false;
+  clearEntityPresentation(); clearCorpsePresentation(); disposeFogBuffer(); resetLandscapeChunks(); clear(groups.terrain); clear(groups.plants); clear(groups.water); clear(groups.animals); clear(groups.overlays); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false;
   buildTerrain(); addEvent(label); renderAll(); updateUI();
 }
 async function saveProgress(silent = false) { try { await writeSnapshot("resume"); if (!silent) { addEvent("Quick save created"); updateUI(); } } catch { if (!silent) { addEvent("Quick save failed: browser storage is full or unavailable"); updateUI(); } } }
@@ -2279,25 +2489,27 @@ async function deleteNamedSlot(name) { if (!window.confirm(`Delete the save “$
 function exportProgress() { try { const blob = new Blob([JSON.stringify(snapshotWorld())], { type: "application/json" }); const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `rss-living-laboratory-day-${sim.day}-seed-${sim.seed}.json`; link.click(); URL.revokeObjectURL(url); addEvent("Save file exported"); updateUI(); } catch { addEvent("Export failed"); updateUI(); } }
 function exportSlotShortcut() { const slots = savedSlotMetadata(); if (!slots.length) { addEvent("Create a named save slot before exporting its game shortcut"); updateUI(); return; } const name = window.prompt(`Shortcut for which save?\n${slots.map((slot) => `${slot.name} — seed ${slot.seed}, day ${slot.day}`).join("\n")}`, slots[0].name)?.trim(); if (!name || !slots.some((slot) => slot.name === name)) return; const base = `${window.location.protocol}//${window.location.host}${window.location.pathname}`; const blob = new Blob([`[InternetShortcut]\nURL=${base}?slot=${encodeURIComponent(name)}\n`], { type: "text/url" }); const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `${name.replace(/[^a-z0-9_-]+/gi, "-")}-rss-save.url`; link.click(); URL.revokeObjectURL(url); addEvent(`Game shortcut exported for ${name}`); updateUI(); }
 function importProgress(event) { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { activateSnapshot(JSON.parse(reader.result), `Imported save: ${file.name}`); } catch { addEvent("Import failed: that file is not a compatible simulation save"); updateUI(); } }; reader.readAsText(file); }
-function loadSeedWorld(seed, setup = worldSetup) { sim = createWorld(seed, setup); clear(groups.terrain); buildTerrain(); clear(groups.animals); clear(groups.fog); clearEntityPresentation(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false; running = true; ui.playPause.textContent = "Pause"; ui.runState.textContent = "Running"; resetCamera(); addEvent(`Generated world seed ${seed}`); renderAll(); updateUI(); }
+function loadSeedWorld(seed, setup = worldSetup) { clearEntityPresentation(); clearCorpsePresentation(); disposeFogBuffer(); resetLandscapeChunks(); clear(groups.animals); clear(groups.intent); clear(groups.overlays); clear(groups.terrain); clear(groups.plants); clear(groups.water); sim = createWorld(seed, setup); buildTerrain(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false; running = true; ui.playPause.textContent = "Pause"; ui.runState.textContent = "Running"; resetCamera(); addEvent(`Generated world seed ${seed}`); renderAll(); updateUI(); }
 function dominantDrive(a) { const vals = [["hunger", 100 - a.energy], ["thirst", 100 - a.hydration], ["fear", a.fear], ["fatigue", a.fatigue], ["reproduction", reproductionDrive(a)]]; vals.sort((x, y) => y[1] - x[1]); return vals[0][0]; }
 function relationText(a) { const parts = []; if (a.motherId) parts.push(`dependent of ${a.motherId}`); if (a.caregiverIds?.length) parts.push(`adults: ${a.caregiverIds.join(", ")}`); if (a.offspringIds.length) parts.push(`${a.offspringIds.length} offspring`); if (a.groupId) parts.push(`${a.groupId}${a.groupGoal ? ` — ${a.groupGoal}` : ""}`); return parts.join("; ") || "none"; }
 function mateHistoryText(a) { const entries = (a.mateHistory || []).slice(0, 3); return entries.length ? entries.map((entry) => `${entry.status} with ${entry.partnerId} (day ${entry.day})`).join("; ") : "no mating history"; }
 function addEvent(text) { sim.events.push(`Day ${sim.day}: ${text}`); if (sim.events.length > 80) sim.events.shift(); }
 
-function remember(a, m) { const old = a.memories.find((x) => x.type === m.type && x.x === m.x && x.z === m.z && x.targetId === m.targetId); if (old) Object.assign(old, m); else a.memories.push({ ...m }); if ((m.type === "food" || m.type === "water") && m.confidence > 0.38) { a.longMemory ||= []; const bearing = Math.atan2(m.z - a.z, m.x - a.x); const distanceBand = manhattan(a, m) < 5 ? "near" : manhattan(a, m) < 14 ? "moderate" : "far"; const lm = a.longMemory.find((x) => x.type === m.type); const vague = { type: m.type, bearing, distanceBand, confidence: m.confidence * 0.78, age: 0, learnedFrom: m.communicatedBy || m.channel }; if (lm) Object.assign(lm, vague); else a.longMemory.push(vague); } }
+function remember(a, m) { const remembered = { ...memoryEvidence(m, sim.tick) }; const old = a.memories.find((x) => x.type === remembered.type && x.x === remembered.x && x.z === remembered.z && x.targetId === remembered.targetId); if (old) Object.assign(old, remembered); else a.memories.push(remembered); if ((remembered.type === "food" || remembered.type === "water") && remembered.confidence > 0.38) { a.longMemory ||= []; const bearing = Math.atan2(remembered.z - a.z, remembered.x - a.x); const distanceBand = manhattan(a, remembered) < 5 ? "near" : manhattan(a, remembered) < 14 ? "moderate" : "far"; const lm = a.longMemory.find((x) => x.type === remembered.type); const vague = { type: remembered.type, bearing, distanceBand, confidence: remembered.confidence * 0.78, age: 0, learnedFrom: remembered.communicatedBy || remembered.originalChannel }; if (lm) Object.assign(lm, vague); else a.longMemory.push(vague); } }
 function nearestMemory(a, type) { return a.memories.filter((m) => m.type === type).sort((p, q) => manhattan(a, p) - manhattan(a, q))[0]; }
-function nearbyCells(a, range) { const cells = []; const r = Math.ceil(range); for (let z = Math.max(-HALF, a.z - r); z < Math.min(HALF, a.z + r + 1); z++) for (let x = Math.max(-HALF, a.x - r); x < Math.min(HALF, a.x + r + 1); x++) if (Math.abs(x - a.x) + Math.abs(z - a.z) <= range) cells.push(cellAt(x, z)); return cells; }
+function collectNearbyCells(a, range, include = () => true) { nearbyCellBuffer.length = 0; visitNearbyCells(a, range, HALF, cellAt, (cell) => { if (include(cell)) nearbyCellBuffer.push(cell); }); return nearbyCellBuffer; }
 function validMoves(a) { return neighbors(a).filter((p) => { const c = inside(p.x, p.z) ? cellAt(p.x, p.z) : null; return c && !(c.waterDepth > 0.45) && c.plantType !== "tree" && ((p.x === a.x && p.z === a.z) || !sim.occupied?.has(key(p))); }); }
 function enforceWorldBoundary() {
   if (!sim?.animals) return;
   const lo = -HALF, hi = HALF, visualLo = lo + 0.2, visualHi = hi - 0.2;
   for (const a of sim.animals) {
     if (!a.alive) continue;
+    const beforeX = a.x, beforeZ = a.z, beforeFx = a.fx, beforeFz = a.fz;
     a.x = clamp(a.x, lo, hi); a.z = clamp(a.z, lo, hi);
     a.fx = clamp(Number.isFinite(a.fx) ? a.fx : a.x, visualLo, visualHi);
     a.fz = clamp(Number.isFinite(a.fz) ? a.fz : a.z, visualLo, visualHi);
-    if (a.motionTarget && !inside(a.motionTarget.x, a.motionTarget.z)) a.motionTarget = null;
+    if (a.x !== beforeX || a.z !== beforeZ || a.fx !== beforeFx || a.fz !== beforeFz) clearFrameMotion(a);
+    else if (a.motionTarget && !inside(a.motionTarget.x, a.motionTarget.z)) { clearFrameMotion(a); setAction(a, "blocked", { label: "blocked at world boundary", reason: "destination outside world", intendedOutcome: a.actionState?.intendedOutcome }); }
   }
 }
 function nearestFree(a) { return validMoves(a)[0] || { x: a.x, z: a.z }; }
@@ -2384,11 +2596,20 @@ function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 function rand() { sim.rngState = (sim.rngState + 0x6d2b79f5) | 0; let t = sim.rngState; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
 function mulberry32(seed) { return function () { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 function clear(group) {
+  const sharedGeometries = new Set([...Object.values(geos), ...visionGeometries.values()]);
+  const sharedMaterials = new Set([...Object.values(mats), pregnancyMat, attackRingMat, woundRingMat, mateLinkMat, communicationMat, ...Object.values(climateMats), ...Object.values(scentMats), ...Object.values(fogMats), ...Object.values(senseMats), ...Object.values(iconMaterials), ...mapBadgeMaterials.values(), ...socialSignalMaterials.values(), ...sexBadgeMaterials.values(), ...emotionFaceMaterials.values(), ...healthBarMaterials.values(), ...thoughtBubbleMaterials.values(), ...actionBadgeMaterials.values()]);
+  const ownership = group.userData.resourceOwnership || RESOURCE_OWNERSHIP.temporary;
   while (group.children.length) {
     const child = group.children[0];
     // Instanced meshes own GPU instance buffers even when their geometry/material
     // are shared. Dispose those buffers before replacing a visual projection.
-    child.traverse?.((node) => { if (node.isInstancedMesh) node.dispose?.(); });
+    child.traverse?.((node) => {
+      if (node.isInstancedMesh) node.dispose?.();
+      if (node.geometry && !sharedGeometries.has(node.geometry)) markResource(node.geometry, ownership);
+      for (const material of Array.isArray(node.material) ? node.material : [node.material]) if (material && !sharedMaterials.has(material)) { markResource(material, ownership); if (material.map) markResource(material.map, ownership); }
+    });
+    resourceCounters.ownedResourcesDisposed += disposeOwnedTree(child);
+    child.traverse?.((node) => { for (const material of Array.isArray(node.material) ? node.material : [node.material]) if (material?.map?.__resourceOwnership === ownership) { material.map.dispose?.(); resourceCounters.ownedResourcesDisposed += 1; } });
     group.remove(child);
   }
 }
@@ -2433,7 +2654,7 @@ function updateTrauma(a) {
   // to the best cap the animal retained before being critically hurt.
   if (a.health < 25 && a.healthCap > 60) a.healthCap = 60;
   else if (a.health < 50 && a.healthCap > 75) a.healthCap = 75;
-  a.health = Math.min(a.health, a.healthCap);
+  clampAnimalHealth(a);
 }
 
 function updateInjuries(a) {
@@ -2443,6 +2664,7 @@ function updateInjuries(a) {
     a.health -= Math.max(0, injury.severity - 0.75) * 0.01;
   }
   a.injuries = a.injuries.filter((i) => i.severity > 0.05);
+  clampAnimalHealth(a);
 }
 
 function strikeAnimal(attacker, target, damage, type = "bite") {
@@ -2488,7 +2710,7 @@ function reseedCell(cell) {
 }
 
 function disperseSeed(cell) {
-  const options = nearbyCells(cell, 2).filter((c) => !c.water && !c.rocky && !c.sandy && c.biomass < 0.2);
+  const options = collectNearbyCells(cell, 2, (c) => !c.water && !c.rocky && !c.sandy && c.biomass < 0.2);
   const target = options[Math.floor(rand() * options.length)];
   if (!target) return;
   target.plantType = target.woodland ? (cell.plantType === "grass" ? "shrub" : cell.plantType) : "grass";
@@ -2509,12 +2731,13 @@ function removeRelationship(a, b, type) {
 }
 
 function buildEntityIndex() {
-  const cellSize = 12, buckets = new Map(), byId = new Map();
-  for (const a of sim.animals) { if (!a.alive) continue; const k = `${Math.floor((a.x + HALF) / cellSize)},${Math.floor((a.z + HALF) / cellSize)}`; if (!buckets.has(k)) buckets.set(k, []); buckets.get(k).push(a); byId.set(a.id, a); }
-  sim.entityIndex = { cellSize, buckets, byId };
+  const index = sim.entityIndex instanceof MultiEntitySpatialIndex ? sim.entityIndex : new MultiEntitySpatialIndex({ cellSize: 12, offset: HALF });
+  index.offset = HALF; index.rebuildAnimals(sim.animals); index.rebuildCorpses(sim.corpses); sim.entityIndex = index;
 }
-function nearbyAnimals(a, range) { const index = sim.entityIndex; if (!index) return sim.animals; const radius = Math.ceil(range / index.cellSize), gx = Math.floor((a.x + HALF) / index.cellSize), gz = Math.floor((a.z + HALF) / index.cellSize), found = []; for (let z = gz - radius; z <= gz + radius; z++) for (let x = gx - radius; x <= gx + radius; x++) { const bucket = index.buckets.get(`${x},${z}`); if (bucket) found.push(...bucket); } return found; }
-function animalById(id) { return sim.entityIndex?.byId.get(id) || sim.animals.find((a) => a.id === id); }
+function nearbyAnimals(a, range) { return sim.entityIndex?.queryAnimals(a, range) || sim.animals; }
+function nearbyCorpses(a, range) { const found = sim.entityIndex?.queryCorpses(a, range) || sim.corpses; spatialQueryCounters.corpseQueries += 1; spatialQueryCounters.corpseCandidates += found.length; return found; }
+function animalById(id) { return sim.entityIndex?.byAnimalId.get(id) || sim.animals.find((a) => a.id === id); }
+function corpseById(id) { return sim.entityIndex?.byCorpseId.get(id) || sim.corpses.find((c) => c.id === id); }
 
 
 
@@ -2547,7 +2770,7 @@ function vulnerability(a) {
 
 
 
-function drawVegetationRegions(stride = 2, observer = null) {
+function drawVegetationRegions(stride = 2, observer = null, dirtyKeys = null) {
   // The ecological grid remains invisible.  Presentation uses one connected
   // coloured ground mesh plus a sparse hex water skin and vegetation assets;
   // this removes the old stack of independently floating square tiles.
@@ -2560,7 +2783,7 @@ function drawVegetationRegions(stride = 2, observer = null) {
   const hexTrees = [], bareTrees = [], fallenTrees = [], hexBushes = [], variation = (x, z) => { const n = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return n - Math.floor(n); };
   const woodyStride = Math.max(2, stride * 2);
   for (let z = -HALF; z < HALF; z += woodyStride) for (let x = -HALF; x < HALF; x += woodyStride) {
-    const c = cellAt(x, z); if (!(c?.woodland || c?.shrubland) || (observer && !hasMapVision(observer, c, visionForHex))) continue;
+    const c = cellAt(x, z); if (!(c?.woodland || c?.shrubland) || (dirtyKeys && !dirtyKeys.has(landscapeChunkKey(c))) || (observer && !hasMapVision(observer, c, visionForHex))) continue;
     const n = variation(x, z), matureTree = c.plantType === "tree" && c.soilDepth > 0.58 && c.moisture > 0.48;
     const hasTree = c.plantType === "tree" && (c.fallenTreeUntil > sim.tick || (matureTree && n > clamp(0.72 - (worldSetup.trees ?? 1) * 0.54, 0.04, 0.84)));
     if (hasTree && c.fallenTreeUntil > sim.tick) fallenTrees.push(c);
@@ -2573,8 +2796,9 @@ function drawVegetationRegions(stride = 2, observer = null) {
   }
   const drawHexWoody = (items, geo, material, scale, height, fallen = false) => {
     if (!items.length) return;
-    const mesh = new THREE.InstancedMesh(geo, material, items.length), dummy = new THREE.Object3D();
-    items.forEach((c, i) => {
+    const byChunk = new Map(); for (const item of items) { const key = landscapeChunkKey(item), list = byChunk.get(key) || []; list.push(item); byChunk.set(key, list); }
+    for (const [key, chunkItems] of byChunk) { const mesh = new THREE.InstancedMesh(geo, material, chunkItems.length), dummy = new THREE.Object3D();
+    chunkItems.forEach((c, i) => {
       // Every transform is a pure function of its source terrain cell.  Rebuilds
       // can change the list order without making existing plants slide around.
       const sx = c.sourceX ?? c.x, sz = c.sourceZ ?? c.z;
@@ -2584,7 +2808,7 @@ function drawVegetationRegions(stride = 2, observer = null) {
       dummy.rotation.set(fallen ? Math.PI / 2 : 0, yaw, fallen ? Math.PI / 2 : 0);
       dummy.scale.set(scale, scale * size, scale); dummy.updateMatrix(); mesh.setMatrixAt(i, dummy.matrix);
     });
-    mesh.instanceMatrix.needsUpdate = true; groups.plants.add(mesh);
+    mesh.instanceMatrix.needsUpdate = true; vegetationRootFor(key).add(mesh); }
   };
   drawHexWoody(hexBushes, geos.bush, mats.bushAsset, 0.92, 0.48);
   drawHexWoody(hexTrees, geos.tree, mats.treeAsset, 1.05, 1.25);
@@ -2592,8 +2816,9 @@ function drawVegetationRegions(stride = 2, observer = null) {
   drawHexWoody(bareTrees, geos.tree, mats.bareTree, 0.68, 1.08);
   drawHexWoody(bareTrees, geos.trunk, mats.trunk, 1, 0.42);
   drawHexWoody(fallenTrees, geos.fallenTree, mats.trunk, 1, 0.22, true);
-  const lilies = sim.cells.filter((c) => c.water && !c.waterChannel && c.waterDepth > 0.025 && c.waterDepth <= 0.45 && c.temperature > 8 && c.shoreExposure < .62 && ((c.id * 17 + sim.seed) % 11 === 0));
-  if (lilies.length) { const mesh = new THREE.InstancedMesh(geos.marker, mats.lily, lilies.length), dummy = new THREE.Object3D(); lilies.forEach((c, i) => { dummy.position.set(c.x, (c.waterSurface || c.elevation) + .045, c.z); dummy.scale.set(.9, .14, .9); dummy.updateMatrix(); mesh.setMatrixAt(i, dummy.matrix); }); mesh.instanceMatrix.needsUpdate = true; groups.plants.add(mesh); }
+  const lilies = sim.cells.filter((c) => (!dirtyKeys || dirtyKeys.has(landscapeChunkKey(c))) && c.water && !c.waterChannel && c.waterDepth > 0.025 && c.waterDepth <= 0.45 && c.temperature > 8 && c.shoreExposure < .62 && ((c.id * 17 + sim.seed) % 11 === 0));
+  const liliesByChunk = new Map(); for (const lily of lilies) { const key = landscapeChunkKey(lily), list = liliesByChunk.get(key) || []; list.push(lily); liliesByChunk.set(key, list); }
+  for (const [key, chunkLilies] of liliesByChunk) { const mesh = new THREE.InstancedMesh(geos.marker, mats.lily, chunkLilies.length), dummy = new THREE.Object3D(); chunkLilies.forEach((c, i) => { dummy.position.set(c.x, (c.waterSurface || c.elevation) + .045, c.z); dummy.scale.set(.9, .14, .9); dummy.updateMatrix(); mesh.setMatrixAt(i, dummy.matrix); }); mesh.instanceMatrix.needsUpdate = true; vegetationRootFor(key).add(mesh); }
   return;
   // All visible terrain classes—including water—are batched square instances.
   const patches = { grass: [], longGrass: [], forest: [], dirt: [], sand: [], mud: [], wetland: [], rock: [], snow: [], water: [], lakeBedMud: [], lakeBedRock: [] };
@@ -2674,11 +2899,11 @@ function localFoodBonus(a) {
 function seekWater(a) {
   const known = nearestMemory(a, "water");
   if (known) {
-    if (manhattan(a, known) > 0) return moveToward(a, known, "seeking remembered water");
+    if (manhattan(a, known) > 0) return moveToward(a, known, "travel", "seeking remembered water", "reach drinkable water");
     return drink(a);
   }
   if (moveByLongMemory(a, "water", "travelling by vague long-term water memory")) return;
-  socialWander(a, "searching for water without privileged coordinates");
+  socialWander(a, "searching for water without privileged coordinates", "search");
 }
 
 
@@ -2700,13 +2925,13 @@ function knownCarcass(a) {
 
 function scavenge(a) {
   const corpse = knownCarcass(a);
-  if (!corpse) { const memory = nearestMemory(a, "carcass"); return memory ? moveToward(a, memory, "following remembered carcass scent") : hunt(a); }
-  if (dist(a, corpse) > 1.2) return moveToward(a, corpse, "moving to carcass");
+  if (!corpse) { const memory = nearestMemory(a, "carcass"); return memory ? moveToward(a, memory, "track-scent", "following remembered carcass scent", "reach carcass") : hunt(a); }
+  if (dist(a, corpse) > 1.2) return moveToward(a, corpse, "scavenge", "moving to carcass", "feed from carcass");
   const rivals = sim.animals.filter((o) => o.alive && o.speciesId === "hunter" && o.id !== a.id && dist(o, corpse) <= 1.5);
   const stronger = rivals.sort((p, q) => (q.bodyMass || 0) - (p.bodyMass || 0))[0];
   const urgent = carcassFamilyUrgency(a) + driveLevels(a).hunger;
   if (stronger && stronger.bodyMass > a.bodyMass * (0.9 + rand() * 0.25) && rand() > clamp(0.12 + urgent / 220 + a.aggression * 0.25, 0.12, 0.86)) {
-    a.currentAction = `yielding carcass to ${stronger.id}`;
+    setAction(a, "yield-carcass", { label: `yielding carcass to ${stronger.id}`, target: stronger.id, intendedOutcome: "avoid losing carcass contest" });
     if (rand() < 0.14 + urgent / 700) { maybeInjure(a, 0.7); maybeInjure(stronger, 0.25); addEvent(`${a.id} fought ${stronger.id} over ${corpse.sourceId}`); }
     return fleeFromPoint(a, corpse, "retreating from carcass contest");
   }
@@ -2719,12 +2944,12 @@ function scavenge(a) {
   a.stomach = clamp(a.stomach + meal * 8, 0, 100);
   a.lastMealTick = sim.tick;
   a.fatigue = clamp(a.fatigue - 2, 0, 100);
-  a.currentAction = rivals.length ? "feeding while guarding carcass" : "feeding from carcass";
+  setAction(a, rivals.length ? "guard" : "feed-carcass", { label: rivals.length ? "feeding while guarding carcass" : "feeding from carcass", target: corpse.id, intendedOutcome: "consume carcass" });
 }
 
 function carcassFamilyUrgency(a) { return (a.offspringIds || []).reduce((score, id) => { const child = animalById(id); return score + (child?.alive && (child.energy < 55 || child.hydration < 45) ? 80 : 0); }, 0); }
 
-function fleeFromPoint(a, point, label) { const moves = validMoves(a).sort((p, q) => manhattan(q, point) - manhattan(p, point)); applyMove(a, moves[0], label); }
+function fleeFromPoint(a, point, label) { const moves = validMoves(a).sort((p, q) => manhattan(q, point) - manhattan(p, point)); applyMove(a, moves[0], "flee", label, { target: point.id || null, intendedOutcome: "increase distance from danger" }); }
 
 function localPreyScentBonus(a) {
   return (a.sensoryBuffer || []).filter((m) => m.type === "preyTrail" && m.channel === "smell").reduce((best, m) => Math.max(best, m.confidence), 0) * 22;
@@ -2736,14 +2961,14 @@ function localPreyScentBonus(a) {
 
 function orientFlatToHeading(object, heading) {
   // q = yaw × lay-flat: local +X becomes (cos(heading), 0, sin(heading)).
-  object.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -heading);
-  object.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2));
+  object.quaternion.setFromAxisAngle(frameScratch.up, -heading);
+  frameScratch.direction.set(1, 0, 0); frameScratch.flat.setFromAxisAngle(frameScratch.direction, -Math.PI / 2); object.quaternion.multiply(frameScratch.flat);
 }
 function drawSelectedOverlays() {
   const a = selectedAnimal();
   if (!a) return;
-  const visual = visualState(a), origin = new THREE.Vector3(visual.x, terrainHeight(visual.x, visual.z) + 0.45, visual.z);
-  const heading = new THREE.Vector3(Math.cos(visual.orientation), 0, Math.sin(visual.orientation));
+  const visual = visualState(a), origin = frameScratch.origin.set(visual.x, terrainHeight(visual.x, visual.z) + 0.45, visual.z);
+  const heading = frameScratch.direction.set(Math.cos(visual.orientation), 0, Math.sin(visual.orientation));
   // The white arrow is facing/attention. The coloured ground arrow maintained
   // by the presentation layer is intended travel, so reverse movement and
   // looking toward a threat while retreating remain visually distinct.
@@ -2786,7 +3011,7 @@ function drawSelectedOverlays() {
       }
       if (understood) ringAt(sound, 0.65 + certainty * 1.15, communicationMat);
     }
-    if (ui.overlayCalls?.checked) for (const r of a.communicationReveals || []) {
+    if (ui.overlayCalls?.checked) for (const r of a.receivedSignals || []) {
       const certainty = r.noun ? 0.9 : 0.45;
       const marker = new THREE.Mesh(geos.memoryArrow, communicationMat);
       orientFlatToHeading(marker, Math.atan2(r.z - a.z, r.x - a.x));
@@ -2834,33 +3059,47 @@ function drawSelectedOverlays() {
   }
 }
 
+function ensureFogBuffer() {
+  if (fogMesh) return;
+  const radius = 3.2, rows = Math.ceil((HALF + radius) / (radius * 1.5)) * 2 + 1, columns = Math.ceil((HALF + radius) / (Math.sqrt(3) * radius) + rows * 0.25) * 2 + 1;
+  fogPositionBuffer = new ReusablePositionBuffer(rows * columns * 18);
+  const geometry = new THREE.BufferGeometry(); fogPositionAttribute = new THREE.BufferAttribute(fogPositionBuffer.array, 3); fogPositionAttribute.setUsage(THREE.DynamicDrawUsage); geometry.setAttribute("position", fogPositionAttribute); geometry.setDrawRange(0, 0); markResource(geometry, RESOURCE_OWNERSHIP.chunk);
+  fogMesh = new THREE.Mesh(geometry, fogMats.unknown); fogMesh.renderOrder = 20; groups.fog.add(fogMesh);
+}
+function disposeFogBuffer() { if (fogMesh) { groups.fog.remove(fogMesh); resourceCounters.ownedResourcesDisposed += disposeOwnedTree(fogMesh); } fogMesh = null; fogPositionBuffer = null; fogPositionAttribute = null; fogCacheKey = ""; }
 function updateKnowledgeFog(a) {
   groups.fog.visible = Boolean(a);
-  if (!a) { if (groups.fog.children.length) clear(groups.fog); fogCacheKey = ""; return; }
+  if (!a) { if (fogMesh) fogMesh.visible = false; fogCacheKey = ""; return; }
+  ensureFogBuffer(); fogMesh.visible = true;
   const range = visionRangeFor(a);
-  const revealKey = (a.communicationReveals || []).map((r) => `${r.x},${r.z},${Math.round(r.until || 0)}`).join(";");
+  const revealKey = (a.mapReveals || []).map((r) => `${r.x},${r.z},${Math.round(r.until || 0)}`).join(";");
   const cacheKey = `${a.id}|${Math.round(a.x)}|${Math.round(a.z)}|${Math.round((a.orientation || 0) * 12)}|${range}|${Object.keys(a.explored || {}).length}|${revealKey}`;
   if (fogCacheKey === cacheKey) return;
-  clear(groups.fog);
-  const unknown = [];
-  const reveals = a.communicationReveals || [];
+  const reveals = a.mapReveals || [];
+  const radius = 3.2;
+  const revealSpan = radius * 1.2, revealBuckets = new Map(), revealBucketKey = (x, z) => `${Math.floor(x / revealSpan)},${Math.floor(z / revealSpan)}`;
+  for (const reveal of reveals) { const key = revealBucketKey(reveal.x, reveal.z), list = revealBuckets.get(key) || []; list.push(reveal); revealBuckets.set(key, list); }
+  fogPositionBuffer.reset();
   // Entity view uses the same hex lattice as the terrain. The outer hexes are
   // clipped to the hard square map edge.
-  const radius = 3.2, root3 = Math.sqrt(3), extent = HALF + radius;
+  const root3 = Math.sqrt(3), extent = HALF + radius;
   const rowLimit = Math.ceil(extent / (radius * 1.5)), colLimit = Math.ceil(extent / (root3 * radius) + rowLimit * 0.5);
   for (let row = -rowLimit; row <= rowLimit; row++) for (let col = -colLimit; col <= colLimit; col++) {
     const x = clamp(root3 * radius * (col + row * 0.5), -HALF, HALF - 1), z = clamp(radius * 1.5 * row, -HALF, HALF - 1);
     const point = { x, z };
     const visible = hasMapVision(a, point, range) || (Math.abs(x - a.x) <= radius * 0.5 && Math.abs(z - a.z) <= radius * 0.5);
-    const communicated = reveals.some((r) => Math.abs(x - r.x) + Math.abs(z - r.z) <= radius * 1.2);
+    const bx = Math.floor(x / revealSpan), bz = Math.floor(z / revealSpan); let communicated = false;
+    for (let dz = -1; dz <= 1 && !communicated; dz++) for (let dx = -1; dx <= 1 && !communicated; dx++) communicated = (revealBuckets.get(`${bx + dx},${bz + dz}`) || []).some((r) => Math.abs(x - r.x) + Math.abs(z - r.z) <= revealSpan);
     const explored = Boolean(a.explored?.[exploreKey(point)]);
-    if (!visible && !communicated && !explored) unknown.push(point);
+    if (!visible && !communicated && !explored) {
+      const y = terrainHeight(x, z) + 1.05;
+      for (let n = 0; n < 6; n++) { const a0 = Math.PI / 6 + n * Math.PI / 3, a1 = Math.PI / 6 + (n + 1) * Math.PI / 3, x0 = clamp(x + Math.cos(a0) * radius, -HALF, HALF - 1), z0 = clamp(z + Math.sin(a0) * radius, -HALF, HALF - 1), x1 = clamp(x + Math.cos(a1) * radius, -HALF, HALF - 1), z1 = clamp(z + Math.sin(a1) * radius, -HALF, HALF - 1); fogPositionBuffer.push(x, y, z); fogPositionBuffer.push(x0, terrainHeight(x0, z0) + 1.05, z0); fogPositionBuffer.push(x1, terrainHeight(x1, z1) + 1.05, z1); }
+    }
   }
-  const draw = (cells, material) => { if (!cells.length) return; const vertices = []; for (const p of cells) { const y = terrainHeight(p.x, p.z) + 1.05; for (let n = 0; n < 6; n++) { const a0 = Math.PI / 6 + n * Math.PI / 3, a1 = Math.PI / 6 + (n + 1) * Math.PI / 3; const x0 = clamp(p.x + Math.cos(a0) * radius, -HALF, HALF - 1), z0 = clamp(p.z + Math.sin(a0) * radius, -HALF, HALF - 1), x1 = clamp(p.x + Math.cos(a1) * radius, -HALF, HALF - 1), z1 = clamp(p.z + Math.sin(a1) * radius, -HALF, HALF - 1); vertices.push(p.x, y, p.z, x0, terrainHeight(x0, z0) + 1.05, z0, x1, terrainHeight(x1, z1) + 1.05, z1); } } const geometry = new THREE.BufferGeometry(); geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3)); const mesh = new THREE.Mesh(geometry, material); mesh.renderOrder = 20; groups.fog.add(mesh); };
   // Previously explored ground remains visually dark through the entity's own
   // memory overlay, not as a second layer of brown square tiles.  The fog mesh
   // now only masks genuinely unknown land.
-  draw(unknown, fogMats.unknown);
+  fogPositionAttribute.needsUpdate = true; fogMesh.geometry.setDrawRange(0, fogPositionBuffer.vertices);
   fogCacheKey = cacheKey;
 }
 
@@ -2885,38 +3124,34 @@ function recordCausalLoop(a, before) {
   // RSS comparison is laboratory instrumentation only. It must never grant an
   // organism direct simulator truth or rewrite its memories.
   const corrected = 0;
-  const consequence = `ΔE ${(a.energy - before.energy).toFixed(2)}, ΔH₂O ${(a.hydration - before.hydration).toFixed(2)}, Δhealth ${(a.health - before.health).toFixed(2)}`;
+  const feedback = received ? "diagnostic return observed; entity memory unchanged" : mode === "suppressed" ? "suppressed" : "not yet returned";
+  const record = { tick: sim.tick, contacts: a.sensoryBuffer.length, primary: signal ? { channel: signal.channel, type: signal.type, confidence: signal.confidence } : null, drive: dominantDrive(a), actionKey: a.actionState?.key || "idle", deltas: { energy: a.energy - before.energy, hydration: a.hydration - before.hydration, health: a.health - before.health }, entityIndicator, viability, mismatch, feedback, capabilityFlags: (a.capabilities.canHunt ? 1 : 0) | (a.capabilities.canMate ? 2 : 0) | (a.capabilities.canSprint ? 4 : 0) };
   a.rss = {
     entityIndicator, viability, mismatch, received, corrected,
-    trace: [
-      `Interface: vision, smell, hearing, interoception`,
-      `Contact: ${a.sensoryBuffer.length} environmental contacts`,
-      `Signal: ${signal ? `${signal.channel} / ${signal.type} (${signal.confidence.toFixed(2)})` : "none"}`,
-      `Processing: attention + ${dominantDrive(a)} drive`,
-      `State: energy ${a.energy.toFixed(0)}, hydration ${a.hydration.toFixed(0)}, fear ${a.fear.toFixed(0)}`,
-      `Representation: ${a.memories.length ? `${a.memories.length} fallible memories` : "absent (reactive control)"}`,
-      `Capability: speed ${a.capabilities.speed.toFixed(2)}, hunt ${a.capabilities.canHunt ? "yes" : "no"}, mate ${a.capabilities.canMate ? "yes" : "no"}`,
-      `Action: ${a.currentAction}`,
-      `Consequence: ${consequence}`,
-      `Feedback: ${received ? "diagnostic return observed; entity memory unchanged" : mode === "suppressed" ? "suppressed" : "not yet returned"}`
-    ]
+    current: record, history: compactTrace(record, a.rss?.history)
   };
 }
 
 function drawMinimap() { return profiler.measure("minimap", drawMinimapWork); }
 function drawMinimapWork() {
-  if (sim.tick - lastMinimapTick < 18 && !selectedAnimal()) return;
+  const selected = selectedAnimal(), selectionKey = selected?.id || "none";
+  const dynamicKey = `${Math.floor(sim.tick / 6)}:${selectionKey}:${ui.minimapMode?.value || "combined"}`;
+  if (sim.tick - lastMinimapTick < 6 && !minimapInvalidation.needsDynamic(dynamicKey)) return;
   lastMinimapTick = sim.tick;
   const canvas = ui.minimap, c = canvas.getContext("2d"), size = canvas.width;
   const mode = ui.minimapMode?.value || "combined";
-  c.fillStyle = "#152119"; c.fillRect(0, 0, size, size);
+  minimapStaticCanvas ||= document.createElement("canvas"); minimapStaticCanvas.width = minimapStaticCanvas.height = size;
+  const staticKey = `${WORLD}:${sim.seed}:${mode}:${landscapeDirtyState.versions.terrain}:${landscapeDirtyState.versions.water}:${landscapeDirtyState.versions.vegetation}`;
+  if (minimapInvalidation.needsStatic(staticKey)) profiler.measure("UI.minimap.static", () => {
+    const background = minimapStaticCanvas.getContext("2d"); background.fillStyle = "#152119"; background.fillRect(0, 0, size, size);
+    const stride = Math.max(2, Math.ceil(WORLD / size * 2));
+    const colour = (cell) => cell.water ? "#3d8fd1" : cell.terrainClass === "snow" ? "#dce9e7" : cell.rocky ? "#69716d" : cell.sandy ? "#bca35e" : cell.wetland ? "#416a4c" : cell.woodland ? "#24503a" : cell.shrubland ? "#376c3d" : cell.terrainClass === "dryGrass" ? "#96834e" : (cell.grassHeight || 0) > 0.68 ? "#3c7441" : cell.biomass > 0.12 ? "#4c8651" : "#765b3e";
+    if (mode !== "organisms") for (let z = -HALF; z < HALF; z += stride) for (let x = -HALF; x < HALF; x += stride) { const cell = cellAt(x, z); background.fillStyle = colour(cell); const px = (x + HALF) / WORLD * size, pz = (z + HALF) / WORLD * size, d = Math.ceil(stride / WORLD * size) + 1; background.fillRect(px, pz, d, d); }
+    minimapInvalidation.markStatic(staticKey);
+  });
+  c.clearRect(0, 0, size, size); c.drawImage(minimapStaticCanvas, 0, 0);
   // Draw the world itself first.  This makes the minimap a navigator rather
   // than a nearly empty field of organism dots.
-  const stride = Math.max(2, Math.ceil(WORLD / size * 2));
-  const colour = (cell) => cell.water ? "#3d8fd1" : cell.terrainClass === "snow" ? "#dce9e7" : cell.rocky ? "#69716d" : cell.sandy ? "#bca35e" : cell.wetland ? "#416a4c" : cell.woodland ? "#24503a" : cell.shrubland ? "#376c3d" : cell.terrainClass === "dryGrass" ? "#96834e" : (cell.grassHeight || 0) > 0.68 ? "#3c7441" : cell.biomass > 0.12 ? "#4c8651" : "#765b3e";
-  if (mode !== "organisms") for (let z = -HALF; z < HALF; z += stride) for (let x = -HALF; x < HALF; x += stride) {
-    const cell = cellAt(x, z); c.fillStyle = colour(cell); const px = (x + HALF) / WORLD * size, pz = (z + HALF) / WORLD * size, d = Math.ceil(stride / WORLD * size) + 1; c.fillRect(px, pz, d, d);
-  }
   const point = (a, colour, radius) => { c.fillStyle = colour; c.beginPath(); c.arc((a.x + HALF) / WORLD * size, (a.z + HALF) / WORLD * size, radius, 0, Math.PI * 2); c.fill(); };
   if (mode !== "terrain") {
     if (mode === "groups") {
@@ -2928,7 +3163,8 @@ function drawMinimapWork() {
       for (const a of sim.animals.filter((a) => a.alive && a.offspringIds?.some((id) => animalById(id)?.alive))) point(a, "#e6bc52", 2.3);
     }
   }
-  const selected = selectedAnimal(); if (selected) { c.strokeStyle = "#ffffff"; c.lineWidth = 1.5; c.beginPath(); c.arc((selected.x + HALF) / WORLD * size, (selected.z + HALF) / WORLD * size, 4, 0, Math.PI * 2); c.stroke(); }
+  if (selected) { c.strokeStyle = "#ffffff"; c.lineWidth = 1.5; c.beginPath(); c.arc((selected.x + HALF) / WORLD * size, (selected.z + HALF) / WORLD * size, 4, 0, Math.PI * 2); c.stroke(); }
+  minimapInvalidation.markDynamic(dynamicKey);
 }
 
 function updateUI() { return profiler.measure("DOM/UI", updateUIWork); }
@@ -3057,10 +3293,10 @@ function updateUIWork() {
     ui.selectedMemory.textContent = `${selected.memories.length} detailed short-term; ${(selected.longMemory || []).length} vague long-term; ${(selected.injuries || []).length} injuries`;
     ui.selectedTarget.textContent = selected.actionTarget || selected.hunt?.targetId || "none";
     const listening = (selected.stationaryTicks || 0) >= 2 ? "focused listening ×5" : "moving/ordinary listening";
-    ui.selectedAwareness.textContent = `${selected.sensoryBuffer.length} contacts; sound ${hearingRangeFor(selected)} cells (${listening}); ${Object.keys(selected.explored || {}).length} map cells explored; ${(selected.communicationReveals || []).length} communicated reveals`;
+    ui.selectedAwareness.textContent = `${selected.sensoryBuffer.length} contacts; sound ${hearingRangeFor(selected)} cells (${listening}); ${Object.keys(selected.explored || {}).length} map cells explored; ${(selected.mapReveals || []).length} explicit map reveals`;
     ui.priorityList.innerHTML = (selected.priorities || []).map((p, i) => `<li>${i + 1}. ${escapeHtml(p.drive)} — ${p.score}</li>`).join("");
     const rss = selected.rss;
-    ui.rssTrace.innerHTML = (rss?.trace || ["Waiting for the next organism update…"]).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
+    ui.rssTrace.innerHTML = formatTrace(rss?.current).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
     ui.entityIndicator.textContent = rss ? rss.entityIndicator.toFixed(2) : "-";
     ui.physicalViability.textContent = rss ? rss.viability.toFixed(2) : "-";
     ui.mismatch.textContent = rss ? rss.mismatch.toFixed(2) : "-";
@@ -3087,26 +3323,17 @@ function updateUIWork() {
 }
 
 function observerMemberSummary(a) {
-  const pregnancy = a.pregnant ? " · pregnant" : "";
   const sex = a.sex === "F" ? "female" : "male";
-  return `<li><button type="button" class="observer-member" data-member-focus="${escapeHtml(a.id)}"><strong>${escapeHtml(a.id)}</strong> · ${sex} · ${escapeHtml(a.lifeStage)}${pregnancy}${a.id === a.groupLeaderId ? " · leader" : ""}<span>Energy ${Math.round(a.energy)} · Water ${Math.round(a.hydration)} · Health ${Math.round(a.health)}%</span></button></li>`;
+  const movement = a.actionState?.moving ? "moving" : "stationary";
+  const injury = a.injuries?.length ? ` · ${a.injuries.length} visible injur${a.injuries.length === 1 ? "y" : "ies"}` : "";
+  return `<li><button type="button" class="observer-member" data-member-focus="${escapeHtml(a.id)}"><strong>${escapeHtml(a.id)}</strong> · ${sex} · ${escapeHtml(a.lifeStage)}${a.id === a.groupLeaderId ? " · leader" : ""}<span>${movement} · Health ${Math.round(a.health)}%${injury}</span></button></li>`;
 }
 
 function renderObserverDetail(selected, group) {
   if (!ui.hudDetail) return;
   if (group.length && !selected) {
     const leader = group.find((a) => a.id === group[0].groupLeaderId) || group[0];
-    if (observerDetailTab === "view") {
-      ui.hudDetail.innerHTML = observerOverlayControls();
-    } else if (observerDetailTab === "priorities") {
-      const alert = leader.groupAlert?.until > sim.tick ? leader.groupAlert : null;
-      ui.hudDetail.innerHTML = `<div class="observer-detail-title">Group purpose</div><ol class="observer-list"><li><strong>${escapeHtml(alert?.goal || leader.groupGoal || "travelling")}</strong> is the current shared goal${alert ? ` — alert confidence ${Math.round(alert.score)}%` : ""}.</li>${group.map((a) => `<li>${escapeHtml(a.id)}: ${escapeHtml(a.drive || dominantDrive(a))}</li>`).join("")}</ol>`;
-    } else if (observerDetailTab === "trace") {
-      const trace = leader.rss?.trace || ["Waiting for the leader's next update…"];
-      ui.hudDetail.innerHTML = `<div class="observer-detail-title">Leader causal trace · ${escapeHtml(leader.id)}</div><ol class="observer-list">${trace.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol>`;
-    } else {
-      ui.hudDetail.innerHTML = `<div class="observer-detail-title">Members · ${group.length}</div><ul class="observer-list observer-members">${group.slice().sort((a, b) => Number(b.id === leader.id) - Number(a.id === leader.id)).map(observerMemberSummary).join("")}</ul>`;
-    }
+    ui.hudDetail.innerHTML = `<div class="observer-detail-title">Strategic view · externally observable members</div><ul class="observer-list observer-members">${group.slice().sort((a, b) => Number(b.id === leader.id) - Number(a.id === leader.id)).map(observerMemberSummary).join("")}</ul>`;
     return;
   }
   if (!selected) { ui.hudDetail.innerHTML = ""; return; }
@@ -3114,14 +3341,14 @@ function renderObserverDetail(selected, group) {
     ui.hudDetail.innerHTML = observerOverlayControls();
   } else if (observerDetailTab === "priorities") {
     const priorities = selected.priorities || [];
-    const threat = selected.threatEvidence;
+    const threat = selected.threatAssessment;
     const strongestSignal = (selected.receivedSignals || []).sort((a, b) => b.confidence - a.confidence)[0];
-    const evidence = threat?.score ? `Threat: ${escapeHtml(threat.explanation)} — ${Math.round(threat.score)}%.` : "No predator evidence — ordinary priorities continue.";
+    const evidence = threat?.overallConfidence ? `Threat: ${escapeHtml(threat.explanation)} — ${Math.round(threat.overallConfidence * 100)}%.` : "No predator evidence — ordinary priorities continue.";
     const signal = strongestSignal ? ` Strongest received signal: ${escapeHtml(socialSignalLabel(strongestSignal.signalKind || strongestSignal.type))} via ${escapeHtml(strongestSignal.channel)} (${Math.round(strongestSignal.confidence * 100)}%).` : "";
     const hunterReason = huntDecisionExplanation(selected);
     ui.hudDetail.innerHTML = `<div class="observer-detail-title">Current priority chain</div><p class="observer-overlay-hint">${evidence}${signal}${hunterReason ? ` ${hunterReason}` : ""}</p><ol class="observer-list">${priorities.length ? priorities.map((p, i) => `<li>${i + 1}. ${escapeHtml(p.drive)} <strong>${p.score}</strong></li>`).join("") : "<li>Waiting for the next decision.</li>"}</ol>`;
   } else if (observerDetailTab === "trace") {
-    const trace = selected.rss?.trace || ["Waiting for the next organism update…"];
+    const trace = formatTrace(selected.rss?.current);
     ui.hudDetail.innerHTML = `<div class="observer-detail-title">Live RSS causal trace</div><ol class="observer-list">${trace.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol>`;
   } else {
     const relation = relationText(selected);
@@ -3130,7 +3357,7 @@ function renderObserverDetail(selected, group) {
     const status = signalKind ? `${socialSignalIcon(signalKind)} ${socialSignalLabel(signalKind)} (${selected.socialSignal.urgency}% urgency)` : "no outward signal";
     const signalMeaning = signalKind ? socialSignalMeaning(signalKind) : "No world symbol is currently emitted.";
     const expression = emotionExplanation(selected);
-    const threat = selected.threatEvidence?.score ? `${selected.threatEvidence.explanation} (${Math.round(selected.threatEvidence.score)}%)` : "no predator evidence";
+    const threat = selected.threatAssessment?.overallConfidence ? `${selected.threatAssessment.explanation} (${Math.round(selected.threatAssessment.overallConfidence * 100)}%)` : "no predator evidence";
     ui.hudDetail.innerHTML = `<div class="observer-detail-title">Identity and state</div><dl class="observer-detail-grid"><div><dt>Sex / stage</dt><dd>${selected.sex} · ${escapeHtml(selected.lifeStage)}</dd></div><div><dt>Pregnancy</dt><dd>${pregnancy}</dd></div><div class="observer-wide"><dt>Face / expression</dt><dd>${escapeHtml(expression)}</dd></div><div class="observer-wide"><dt>World symbol</dt><dd>${escapeHtml(status)} — ${escapeHtml(signalMeaning)}</dd></div><div><dt>Threat evidence</dt><dd>${escapeHtml(threat)}</dd></div><div><dt>Food state</dt><dd>${escapeHtml(feedingState(selected))} (${Math.round(selected.stomach)}%)</dd></div><div><dt>Relations</dt><dd>${escapeHtml(relation)}</dd></div><div><dt>Target</dt><dd>${escapeHtml(selected.actionTarget || selected.hunt?.targetId || "none")}</dd></div><div><dt>Memory</dt><dd>${selected.memories.length} short-term · ${(selected.longMemory || []).length} long-term</dd></div></dl>`;
   }
 }
@@ -3142,7 +3369,7 @@ function observerOverlayControls() {
 
 function updateObserverHud(selected, herb, carn) {
   const group = selectedGroupMembers();
-  ui.hudMode.textContent = selected ? "Entity observer" : group.length ? "Group observer" : "World observer";
+  ui.hudMode.textContent = selected ? "Selected-self observer" : group.length ? "Strategic observer" : ui.labToggle?.checked ? "Laboratory diagnostic" : "Strategic overview";
   ui.hudDay.textContent = `Day ${sim.day} · ${sim.season} · ${sim.weather.type}`;
   ui.hudPlay.textContent = running ? "Pause" : "Play";
   ui.hudEvent.textContent = sim.events.at(-1) || `${herb.length} herbivores · ${carn.length} carnivores`;
@@ -3174,19 +3401,29 @@ function updateObserverHud(selected, herb, carn) {
   renderObserverDetail(selected, []);
 }
 
-function updateRealityPanel() {
-  const terrain = { shortGrass: 0, longGrass: 0, shrubland: 0, woodland: 0, water: 0, soil: 0, sand: 0, rock: 0, mud: 0, snow: 0 };
-  for (const cell of sim.cells) {
-    if (cell.water) terrain.water += 1; else if (cell.terrainClass === "snow") terrain.snow += 1; else if (cell.rocky) terrain.rock += 1; else if (cell.sandy) terrain.sand += 1; else if (cell.wetland) terrain.mud += 1;
-    else if (cell.woodland && cell.plantType === "tree") terrain.woodland += 1; else if (cell.woodland || cell.shrubland) terrain.shrubland += 1; else if ((cell.grassHeight || 0) > 0.68) terrain.longGrass += 1; else if (cell.biomass > 0.2) terrain.shortGrass += 1; else terrain.soil += 1;
-  }
+function updateRealityPanel(force = false, now = performance.now()) {
+  if (!shouldRunBoundedUpdate({ visible: !ui.realityPanel.hidden, now, lastRun: lastRealityUpdate, interval: REALITY_UPDATE_INTERVAL_MS, force })) return;
+  lastRealityUpdate = now;
+  return profiler.measure("UI.reality", () => updateRealityPanelWork());
+}
+function updateRealityPanelWork() {
   const alive = sim.animals.filter((a) => a.alive), count = (fn) => alive.filter(fn).length;
   const item = (name, value) => `<div>${name}<strong>${value}</strong></div>`;
-  ui.realityTerrain.innerHTML = [item("Short grass", terrain.shortGrass), item("Long grass", terrain.longGrass), item("Shrubland", terrain.shrubland), item("Tree woodland", terrain.woodland), item("Water", terrain.water), item("Soil / dirt", terrain.soil), item("Sand", terrain.sand), item("Rock", terrain.rock), item("Wetland / mud", terrain.mud), item("Snow", terrain.snow)].join("");
-  ui.realityPopulation.innerHTML = [item("All organisms", alive.length), item("Herbivores", count((a) => a.speciesId === "grazer")), item("Carnivores", count((a) => a.speciesId === "hunter")), item("Dependent babies", count((a) => a.lifeStage === "dependent")), item("Juveniles", count((a) => a.lifeStage === "juvenile" || a.lifeStage === "subadult")), item("Adults", count((a) => a.lifeStage === "adult")), item("Old", count((a) => a.lifeStage === "old")), item("Pregnant", count((a) => Boolean(a.pregnant)))].join("");
+  const mutateHTML = (node, value) => { if (node.dataset.renderedHtml !== value) { node.innerHTML = value; node.dataset.renderedHtml = value; } };
+  const terrainKey = `${sim.seed}:${landscapeDirtyState.versions.terrain}:${landscapeDirtyState.versions.water}:${landscapeDirtyState.versions.vegetation}`;
+  if (realityTerrainCache.key !== terrainKey) {
+    const terrain = { shortGrass: 0, longGrass: 0, shrubland: 0, woodland: 0, water: 0, soil: 0, sand: 0, rock: 0, mud: 0, snow: 0 };
+    for (const cell of sim.cells) {
+      if (cell.water) terrain.water += 1; else if (cell.terrainClass === "snow") terrain.snow += 1; else if (cell.rocky) terrain.rock += 1; else if (cell.sandy) terrain.sand += 1; else if (cell.wetland) terrain.mud += 1;
+      else if (cell.woodland && cell.plantType === "tree") terrain.woodland += 1; else if (cell.woodland || cell.shrubland) terrain.shrubland += 1; else if ((cell.grassHeight || 0) > 0.68) terrain.longGrass += 1; else if (cell.biomass > 0.2) terrain.shortGrass += 1; else terrain.soil += 1;
+    }
+    realityTerrainCache = { key: terrainKey, html: [item("Short grass", terrain.shortGrass), item("Long grass", terrain.longGrass), item("Shrubland", terrain.shrubland), item("Tree woodland", terrain.woodland), item("Water", terrain.water), item("Soil / dirt", terrain.soil), item("Sand", terrain.sand), item("Rock", terrain.rock), item("Wetland / mud", terrain.mud), item("Snow", terrain.snow)].join("") };
+  }
+  mutateHTML(ui.realityTerrain, realityTerrainCache.html);
+  mutateHTML(ui.realityPopulation, [item("All organisms", alive.length), item("Herbivores", count((a) => a.speciesId === "grazer")), item("Carnivores", count((a) => a.speciesId === "hunter")), item("Dependent babies", count((a) => a.lifeStage === "dependent")), item("Juveniles", count((a) => a.lifeStage === "juvenile" || a.lifeStage === "subadult")), item("Adults", count((a) => a.lifeStage === "adult")), item("Old", count((a) => a.lifeStage === "old")), item("Pregnant", count((a) => Boolean(a.pregnant)))].join(""));
   const groups = new Map();
   for (const a of alive) if (a.groupId) { const g = groups.get(a.groupId) || { id: a.groupId, kind: a.speciesId, goal: a.groupGoal || "travelling", leader: a.groupLeaderId, members: [] }; g.members.push(a); groups.set(a.groupId, g); }
   const active = [...groups.values()].filter((g) => g.members.length >= 2).sort((a, b) => b.members.length - a.members.length);
-  ui.realityGroups.innerHTML = active.length ? active.map((g) => `<button type="button" class="reality-group" data-group-focus="${escapeHtml(g.id)}"><strong>${g.members.length} ${g.kind === "hunter" ? "hunters" : "grazers"}</strong><br>Goal: ${escapeHtml(g.goal)} · leader: ${escapeHtml(g.leader || "none")}<span>Focus group</span></button>`).join("") : `<p class="hint">No multi-organism groups currently formed.</p>`;
+  mutateHTML(ui.realityGroups, active.length ? active.map((g) => `<button type="button" class="reality-group" data-group-focus="${escapeHtml(g.id)}"><strong>${g.members.length} ${g.kind === "hunter" ? "hunters" : "grazers"}</strong><br>Goal: ${escapeHtml(g.goal)} · leader: ${escapeHtml(g.leader || "none")}<span>Focus group</span></button>`).join("") : `<p class="hint">No multi-organism groups currently formed.</p>`);
 }
 

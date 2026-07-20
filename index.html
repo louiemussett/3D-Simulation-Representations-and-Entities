@@ -7,6 +7,15 @@
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
   <body>
+    <script>
+      window.addEventListener("error", (event) => {
+        const banner = document.createElement("pre");
+        banner.id = "startup-error";
+        banner.style.cssText = "position:fixed;z-index:10000;inset:16px auto auto 16px;max-width:min(760px,calc(100vw - 32px));padding:14px;background:#3b1111;color:#ffd7d7;border:1px solid #ff7777;white-space:pre-wrap";
+        banner.textContent = `Simulation startup failed\n${event.message || "Unknown JavaScript error"}\n${event.filename || ""}:${event.lineno || ""}`;
+        document.body.appendChild(banner);
+      }, { once: true });
+    </script>
     <main class="app">
       <section id="viewport" aria-label="3D ecosystem viewport">
         <section id="observer-hud" aria-label="Observer controls">

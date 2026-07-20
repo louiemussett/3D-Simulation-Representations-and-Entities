@@ -1,10 +1,10 @@
 const DEFAULT_SAMPLE_LIMIT = 240;
 
 export const PROFILE_CATEGORIES = Object.freeze([
-  "frame presentation update", "Three.js render", "controls/camera", "weather/hydrology",
-  "vegetation simulation", "animal perception", "decision/action", "causal trace capture",
-  "corpse processing", "terrain rebuild", "vegetation rebuild", "animal presentation rebuild/update",
-  "corpse rendering", "fog", "overlays", "minimap", "DOM/UI"
+  "frame.total", "frame presentation update", "Three.js render", "controls/camera", "weather/hydrology",
+  "vegetation simulation", "animal perception", "tick.perception", "tick.total", "decision/action", "causal trace capture",
+  "corpse processing", "tick.corpses", "terrain rebuild", "vegetation rebuild", "animal presentation rebuild/update",
+  "corpse rendering", "fog", "display.fog", "display.terrain", "display.vegetation", "overlays", "minimap", "UI.minimap.static", "UI.reality", "DOM/UI"
 ]);
 
 export class FixedRingBuffer {
@@ -72,7 +72,7 @@ export class DevelopmentProfiler {
 }
 
 const PRESENTATION_KEYS = new Set([
-  "visualMove", "savedAt", "occupied", "entityIndex", "hexWorld"
+  "visualMove", "currentAction", "savedAt", "occupied", "entityIndex", "hexWorld"
 ]);
 
 function authoritativeValue(value, seen) {
@@ -93,7 +93,8 @@ function authoritativeValue(value, seen) {
   const result = {};
   for (const key of Object.keys(value).sort()) {
     if (PRESENTATION_KEYS.has(key)) continue;
-    const item = authoritativeValue(value[key], seen);
+    const source = key === "actionState" && value[key] ? { ...value[key], label: undefined } : value[key];
+    const item = authoritativeValue(source, seen);
     if (item !== undefined) result[key] = item;
   }
   seen.delete(value); return result;
