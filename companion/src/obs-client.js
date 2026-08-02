@@ -1,0 +1,17 @@
+import { createHash, randomUUID } from "node:crypto";
+
+const sha256 = value => createHash("sha256").update(value).digest("base64");
+const waitForMessage = (socket, predicate, timeoutMs = 4000) => new Promise((resolve, reject) => { const timer = setTimeout(() => done(reject, new Error("obs-timeout")), timeoutMs); const listener = event => { let message; try { message = JSON.parse(event.data); } catch { return; } if (predicate(message)) done(resolve, message); }; const error = () => done(reject, new Error("obs-connection-error")); function done(callback, value) { clearTimeout(timer); socket.removeEventListener("message", listener); socket.removeEventListener("error", error); callback(value); } socket.addEventListener("message", listener); socket.addEventListener("error", error, { once: true }); });
+
+export class ObsClient {
+  constructor(config) { this.config = config; this.socket = null; this.connectPromise = null; this.requestQueue = Promise.resolve(); }
+  async connect() { if (!this.config.enabled) return { status: "disabled" }; if (typeof WebSocket === "undefined") return { status: "unsupported" }; if (this.socket?.readyState === WebSocket.OPEN) return { status: "ready" }; if (this.connectPromise) return this.connectPromise; this.connectPromise = (async () => { this.socket?.close(); const socket = new WebSocket(this.config.url); this.socket = socket; const hello = await waitForMessage(socket, message => message.op === 0, this.config.timeoutMs); const identify = { op: 1, d: { rpcVersion: 1 } }; if (hello.d?.authentication) { const { challenge, salt } = hello.d.authentication, secret = sha256(`${this.config.password}${salt}`); identify.d.authentication = sha256(`${secret}${challenge}`); } socket.send(JSON.stringify(identify)); await waitForMessage(socket, message => message.op === 2, this.config.timeoutMs); return { status: "ready", negotiatedRpcVersion: hello.d?.rpcVersion || 1 }; })(); try { return await this.connectPromise; } finally { this.connectPromise = null; }
+  }
+  request(requestType, requestData = {}) { const operation = this.requestQueue.then(async () => { if (!this.socket || this.socket.readyState !== WebSocket.OPEN) await this.connect(); const requestId = randomUUID(); this.socket.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } })); const response = await waitForMessage(this.socket, message => message.op === 7 && message.d?.requestId === requestId, this.config.timeoutMs); if (!response.d?.requestStatus?.result) throw new Error(response.d?.requestStatus?.comment || `OBS ${requestType} failed`); return response.d.responseData || {}; }); this.requestQueue = operation.catch(() => {}); return operation;
+  }
+  startRecording() { return this.request("StartRecord"); }
+  stopRecording() { return this.request("StopRecord"); }
+  recordingStatus() { return this.request("GetRecordStatus"); }
+  async health() { try { const [status, stats] = await Promise.all([this.recordingStatus(), this.request("GetStats")]); return { status: "ready", recording: Boolean(status.outputActive), outputTimecode: status.outputTimecode || null, outputPath: status.outputPath || null, outputBytes: status.outputBytes || 0, renderSkippedFrames: stats.renderSkippedFrames || 0, outputSkippedFrames: stats.outputSkippedFrames || 0 }; } catch (error) { return { status: this.config.enabled ? "offline" : "disabled", error: error.message }; } }
+  close() { this.socket?.close(); this.socket = null; }
+}

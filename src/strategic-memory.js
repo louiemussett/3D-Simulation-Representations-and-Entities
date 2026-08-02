@@ -1,0 +1,23 @@
+const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+const AREA_SIZE = 8;
+
+export function migrateStrategicMemory(animal = {}) { animal.areaKnowledge = animal.areaKnowledge && typeof animal.areaKnowledge === "object" ? animal.areaKnowledge : {}; animal.groupHistory = Array.isArray(animal.groupHistory) ? animal.groupHistory : []; animal.groupNeeds = animal.groupNeeds && typeof animal.groupNeeds === "object" ? animal.groupNeeds : { losses: 0, desiredSize: 0 }; return animal; }
+
+export function observeEntityArea(observer, observation = {}, tick = 0) {
+  if (!observer || !Number.isFinite(observation.x) || !Number.isFinite(observation.z)) return null;
+  migrateStrategicMemory(observer); const areaX = Math.floor(observation.x / AREA_SIZE), areaZ = Math.floor(observation.z / AREA_SIZE), key = `${areaX}:${areaZ}`;
+  const area = observer.areaKnowledge[key] || { key, x: (areaX + .5) * AREA_SIZE, z: (areaZ + .5) * AREA_SIZE, preyCount: 0, predatorCount: 0, estimatedCalories: 0, confidence: 0, observations: 0 };
+  const previous = observation.targetId ? observer.entityKnowledge?.[observation.targetId]?.lastKnown : null, elapsed = previous && tick > previous.tick ? tick - previous.tick : 0;
+  const vx = elapsed ? (observation.x - previous.x) / elapsed : 0, vz = elapsed ? (observation.z - previous.z) / elapsed : 0, confidence = clamp(observation.confidence ?? 1, 0, 1), prey = observation.relationship === "prey";
+  area.preyCount = area.preyCount * .72 + (prey ? 1 : 0); area.predatorCount = area.predatorCount * .72 + (observation.relationship === "predator" ? 1 : 0); area.estimatedCalories = area.estimatedCalories * .72 + (prey ? Math.max(0, observation.estimatedCalories || 0) : 0);
+  area.headingX = (area.headingX || 0) * .55 + vx * .45; area.headingZ = (area.headingZ || 0) * .55 + vz * .45; area.confidence = Math.max(area.confidence * .85, confidence); area.observations += 1; area.lastObservedTick = tick; area.age = 0;
+  observer.areaKnowledge[key] = area; observer.areaKnowledge = Object.fromEntries(Object.values(observer.areaKnowledge).sort((a, b) => strategicAreaValue(b) - strategicAreaValue(a)).slice(0, 24).map((item) => [item.key, item])); return area;
+}
+
+export function ageStrategicMemory(animal, hours = 1) { migrateStrategicMemory(animal); for (const area of Object.values(animal.areaKnowledge)) { area.age = (area.age || 0) + hours; area.confidence *= Math.pow(.998, hours); area.preyCount *= Math.pow(.999, hours); area.predatorCount *= Math.pow(.999, hours); area.estimatedCalories *= Math.pow(.999, hours); } animal.areaKnowledge = Object.fromEntries(Object.values(animal.areaKnowledge).filter((area) => area.age < 60 * 24 && area.confidence > .1).map((area) => [area.key, area])); }
+export function strategicAreaValue(area = {}, options = {}) { return ((area.preyCount || 0) * 65 + (area.estimatedCalories || 0) / 180 - (area.predatorCount || 0) * (options.herbivore ? 180 : 22)) * (area.confidence || 0) - (area.age || 0) * .025; }
+export function bestStrategicArea(animal, options = {}) { return Object.values(animal?.areaKnowledge || {}).filter((area) => (area.confidence || 0) > .12).sort((a, b) => strategicAreaValue(b, options) - strategicAreaValue(a, options))[0] || null; }
+export function mostDangerousArea(animal) { return Object.values(animal?.areaKnowledge || {}).filter((area) => (area.predatorCount || 0) > .15 && (area.confidence || 0) > .12).sort((a, b) => (b.predatorCount * b.confidence) - (a.predatorCount * a.confidence))[0] || null; }
+
+export function rememberGroupEvent(animal, event = {}, tick = 0) { if (!animal || !event.kind) return null; migrateStrategicMemory(animal); const record = { kind: event.kind, memberId: event.memberId || null, sourceId: event.sourceId || null, reason: event.reason || null, x: event.x ?? null, z: event.z ?? null, directionX: event.directionX || 0, directionZ: event.directionZ || 0, groupId: event.groupId || animal.groupId || null, sizeBefore: event.sizeBefore || null, sizeAfter: event.sizeAfter || null, tick, age: 0, confidence: event.confidence ?? 1 }; animal.groupHistory.unshift(record); animal.groupHistory = animal.groupHistory.slice(0, 24); if (["member-lost", "member-departed", "dependent-abandoned"].includes(event.kind)) { animal.groupNeeds.losses = (animal.groupNeeds.losses || 0) + 1; animal.groupNeeds.desiredSize = Math.max(animal.groupNeeds.desiredSize || 0, event.sizeBefore || 0); animal.groupNeeds.lastLossTick = tick; } return record; }
+export function groupRecoveryPressure(animal, currentSize = 1) { migrateStrategicMemory(animal); const deficit = Math.max(0, (animal.groupNeeds.desiredSize || currentSize) - currentSize); return clamp(deficit * 18 + (animal.groupNeeds.losses || 0) * 7, 0, 100); }

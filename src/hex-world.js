@@ -24,6 +24,8 @@ export class HexWorld {
     for (let i = 0; i < 120; i++) this._hydrologyStep(1, true);
     this._finaliseChannels(); this._cacheRiverWidths();
     this._hydrologyStep(1, false);
+    this._seedPuddleSites();
+    this._applyPuddles();
     this._deriveEcology(); this._indexBuckets();
   }
   _makeCells() {
@@ -229,6 +231,28 @@ export class HexWorld {
       this.riverDiagnostics.push({ id: route.id, dryGaps, cells: route.cells.map(c => ({ id: c.id, currentDischarge: c.discharge, effectiveDischarge: c.meanDischarge, rawChannelWidth: c.channelWidthRaw, channelWidth: c.channelWidth, waterWidth: c.waterWidth, upstreamChannelCount: c.upstreamChannelCount, wet: c.waterChannel })) });
     }
   }
+  _seedPuddleSites() {
+    const abundance = clamp(((this.settings.lakes ?? 1) * .45 + (this.settings.rainfall ?? 1) * .55) - .45, 0, 2.4);
+    const target = Math.round(Math.sqrt(this.cells.length) * .055 * abundance);
+    const nearWater = this.cells.filter(c => !c.water && !c.rocky && c.slope < .16 &&
+      (c.neighbours.some(n => n.water) || c.neighbours.some(n => n.neighbours.some(nn => nn.water))));
+    nearWater.sort((a, b) => {
+      const score = c => c.ecoMoisture * .35 + c.groundwater / 160 + (1 - c.slope) * .2 + hash(c.id ^ (this.seed + 1709)) * .25;
+      return score(b) - score(a) || a.id - b.id;
+    });
+    this.puddleSites = [];
+    for (const candidate of nearWater) {
+      if (this.puddleSites.length >= target) break;
+      if (this.puddleSites.some(c => Math.hypot(c.x - candidate.x, c.z - candidate.z) < this.radius * 3.5)) continue;
+      candidate.puddle = true; this.puddleSites.push(candidate);
+    }
+  }
+  _applyPuddles() {
+    for (const c of this.puddleSites || []) {
+      c.water = c.drinkable = true; c.waterDepth = .035 + hash(c.id ^ this.seed) * .055;
+      c.waterLevel = c.waterDepth; c.waterSurface = c.elevation + c.waterDepth; c.waterBodyId = `puddle-${c.id}`;
+    }
+  }
   _deriveEcology() {
     const s = this.settings;
     const initialiseWoody = !this.woodyInitialised, woodlandCandidates = [], shrubCandidates = [];
@@ -327,7 +351,7 @@ export class HexWorld {
       c.landCover = c.water ? (c.waterDepth > .45 ? 'deepLake' : c.waterChannel ? 'river' : 'shallowPond') : snowy ? 'snow' : c.rocky ? (c.elevation > 12 ? 'alpineRock' : 'rock') : c.wetland ? (c.floodFrequency > .55 ? 'swamp' : 'wetMeadow') : c.lakeBasin && c.daysDry < 18 ? 'mudflat' : c.sandy ? 'sand' : c.woodland ? (c.canopyCover > .65 ? 'matureForest' : 'youngWoodland') : c.shrubland ? (c.ecoMoisture < .48 ? 'dryScrub' : 'bushland') : c.soilDepth < .28 && c.ecoMoisture < .38 ? 'heath' : c.grassHeight > .68 ? 'longGrass' : c.biomass < .18 ? 'bareDirt' : 'shortGrass';
     }
   }
-  update(day, season, weather = null) { this._seasonalTemperature = season === 'Winter' ? -7 : season === 'Summer' ? 5 : season === 'Autumn' ? -2 : 1; this._hydrologyStep(1, false, weather); this._deriveEcology(); this._indexBuckets(); }
+  update(day, season, weather = null) { this._seasonalTemperature = season === 'Winter' ? -7 : season === 'Summer' ? 5 : season === 'Autumn' ? -2 : 1; this._hydrologyStep(1, false, weather); this._applyPuddles(); this._deriveEcology(); this._indexBuckets(); }
   _indexBuckets() { this.buckets.clear(); const step = Math.max(2, this.radius * 2.2); this.bucketStep = step; for (const c of this.cells) { const k = `${Math.floor((c.x + this.half) / step)},${Math.floor((c.z + this.half) / step)}`; if (!this.buckets.has(k)) this.buckets.set(k, []); this.buckets.get(k).push(c); } }
   lookup(x, z) { const bx = Math.floor((x + this.half) / this.bucketStep), bz = Math.floor((z + this.half) / this.bucketStep); let best = null, bestD = Infinity; for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) for (const c of this.buckets.get(`${bx + dx},${bz + dz}`) || []) { const d = (c.x - x) ** 2 + (c.z - z) ** 2; if (d < bestD) { bestD = d; best = c; } } return best || this.cells[0]; }
   corners(c) { const out = []; for (let i = 0; i < 6; i++) { const a = Math.PI / 180 * (60 * i - 30); out.push({ x: c.x + this.radius * Math.cos(a), z: c.z + this.radius * Math.sin(a) }); } return out; }

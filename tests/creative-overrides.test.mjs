@@ -1,0 +1,4 @@
+import test from "node:test"; import assert from "node:assert/strict";
+import { allowedCreativeOverrides, applyCreativeProtection } from "../src/creative-overrides.js"; import { difficultyProfile } from "../src/embodiment-capabilities.js";
+test("creative protections are unavailable at other difficulties",()=>assert.deepEqual(allowedCreativeOverrides(difficultyProfile("easy"),{disableDeath:true}),{}));
+test("creative protection restores only requested organism state",()=>{const a={alive:false,health:0,hydration:10,stomach:2,energy:3,age:5,injuries:[]},before={health:80,hydration:90,stomach:70,energy:60,age:4,injuries:[]};applyCreativeProtection(a,before,{disableDeath:true,disableThirst:true});assert.equal(a.alive,true);assert.equal(a.health,1);assert.equal(a.hydration,90);assert.equal(a.stomach,2);});

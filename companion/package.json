@@ -1,0 +1,15 @@
+{
+  "name": "living-laboratory-documentary-companion",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/websocket-server.js && node --check src/session-manager.js",
+    "test": "node --test tests/*.test.mjs",
+    "preflight": "node src/preflight.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
