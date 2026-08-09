@@ -240,8 +240,15 @@ const singlePanelProfile = (scales, paddingPx, publicPanel, settings = {}) => {
   const attachmentCount = Number(thoughtEnabled) + Number(forecastEnabled);
   const availableWidth = Math.max(36, publicPanel.panel.width - paddingPx * 2 - (attachmentCount === 2 ? gap : 0));
   const bayWidth = attachmentCount === 2 ? availableWidth / 2 : availableWidth;
-  const thoughtWidth = thoughtEnabled ? bayWidth * scales.thought : 0;
-  const predictionWidth = forecastEnabled ? bayWidth * scales.prediction : 0;
+  const rawThoughtWidth = thoughtEnabled ? bayWidth * scales.thought : 0;
+  const rawPredictionWidth = forecastEnabled ? bayWidth * scales.prediction : 0;
+  // Attachments belong to the selected panel. A relative bubble scale may
+  // redistribute unused room, but two enabled bubbles must never exceed the
+  // panel-owned width or overlap one another.
+  const rawCombinedWidth = rawThoughtWidth + rawPredictionWidth;
+  const attachmentFit = rawCombinedWidth > availableWidth ? availableWidth / rawCombinedWidth : 1;
+  const thoughtWidth = rawThoughtWidth * attachmentFit;
+  const predictionWidth = rawPredictionWidth * attachmentFit;
   const thoughtSize = {
     width: thoughtWidth,
     height: thoughtWidth * PRIVATE_BUBBLE_ART.height / PRIVATE_BUBBLE_ART.width
@@ -472,17 +479,14 @@ const instrumentProfile = (scales, paddingPx, publicPanel, settings, style = "fu
   const attachmentInset = Math.max(paddingPx, 4 * panelScale);
   const attachmentCount = Number(settings.thoughtAttachmentEnabled) + Number(settings.forecastAttachmentEnabled);
   const attachmentBayWidth = Math.max(0, (width - attachmentInset * 2 - (attachmentCount === 2 ? attachmentGap : 0)) / Math.max(1, attachmentCount));
-  const bubbleSize = (enabled, scale) => {
-    if (!enabled) return { width: 0, height: 0 };
-    // The bay—not the old source bitmap—is authoritative. One cloud spans
-    // the panel; a pair receives two near-half-width bays. The optional bubble
-    // scale is relative to that authored allocation and may deliberately grow
-    // beyond it for readability at marker-sized panel scales.
-    const width = attachmentBayWidth * scale;
-    return { width, height: width * PRIVATE_BUBBLE_ART.height / PRIVATE_BUBBLE_ART.width };
-  };
-  const thoughtSize = bubbleSize(settings.thoughtAttachmentEnabled, scales.thought);
-  const predictionSize = bubbleSize(settings.forecastAttachmentEnabled, scales.prediction);
+  const rawThoughtWidth = settings.thoughtAttachmentEnabled ? attachmentBayWidth * scales.thought : 0;
+  const rawPredictionWidth = settings.forecastAttachmentEnabled ? attachmentBayWidth * scales.prediction : 0;
+  const availableAttachmentWidth = Math.max(0, width - attachmentInset * 2 - (attachmentCount === 2 ? attachmentGap : 0));
+  const rawAttachmentWidth = rawThoughtWidth + rawPredictionWidth;
+  const attachmentFit = rawAttachmentWidth > availableAttachmentWidth ? availableAttachmentWidth / rawAttachmentWidth : 1;
+  const bubbleSize = width => ({ width, height: width * PRIVATE_BUBBLE_ART.height / PRIVATE_BUBBLE_ART.width });
+  const thoughtSize = bubbleSize(rawThoughtWidth * attachmentFit);
+  const predictionSize = bubbleSize(rawPredictionWidth * attachmentFit);
   const attachmentWidth = thoughtSize.width + predictionSize.width + (attachmentCount === 2 ? attachmentGap : 0);
   const attachmentLeft = -attachmentWidth / 2;
   const attachmentBottom = panel.top - attachmentGap;

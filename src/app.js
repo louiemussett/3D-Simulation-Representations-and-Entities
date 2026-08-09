@@ -781,9 +781,22 @@ function updateOwnershipPanelSprite(sprite, animal, layout, cardProfile) {
     const identityLeft = identityCell.left + Math.min(20, identityCell.width * .16), identityRight = identityCell.right - Math.min(12, identityCell.width * .1), identityX = (identityLeft + identityRight) / 2, identityWidth = Math.max(12, identityRight - identityLeft);
     if (geometry.settings?.identityVisible !== false) {
       c.fillStyle = "#f3f8f4"; c.textAlign = "center"; c.textBaseline = "middle";
-      if (geometry.variant === "identity-mast") {
-        const rows = [name, identity.sexGlyph, identity.lifeStageCode, ...(pregnancy ? ["P"] : [])].filter(Boolean), rowHeight = identityCell.height / Math.max(1, rows.length);
-        c.font = `800 ${Math.max(12, Math.min(22, rowHeight * .58)) * identityScale}px system-ui`; rows.forEach((row, index) => c.fillText(row, identityX, identityCell.top + rowHeight * (index + .5), identityWidth));
+      if (geometry.variant === "identity-mast" || geometry.variant === "status-mast") {
+        // Both mast designs own a narrow vertical identity bay. Never feed
+        // that bay the horizontal rail label: it collapses into unreadable
+        // strokes once the authored width is scaled down.
+        const rows = geometry.variant === "identity-mast"
+          ? [name, identity.sexGlyph, identity.lifeStageCode, ...(pregnancy ? ["P"] : [])].filter(Boolean)
+          : [name, [identity.sexGlyph, identity.lifeStageCode].filter(Boolean).join(" · "), ...(pregnancy ? ["P"] : [])].filter(Boolean);
+        const rowHeight = identityCell.height / Math.max(1, rows.length);
+        let fontSize = Math.max(8, Math.min(geometry.variant === "identity-mast" ? 22 : 15, rowHeight * .58)) * identityScale;
+        c.font = `800 ${fontSize}px system-ui`;
+        rows.forEach((row, index) => {
+          let rowFontSize = fontSize;
+          c.font = `800 ${rowFontSize}px system-ui`;
+          while (rowFontSize > 7 && c.measureText(row).width > identityWidth) { rowFontSize -= .5; c.font = `800 ${rowFontSize}px system-ui`; }
+          c.fillText(row, identityX, identityCell.top + rowHeight * (index + .5), identityWidth);
+        });
       } else {
         let fontSize = Math.min(32, identityCell.height * .34) * identityScale; c.font = `800 ${fontSize}px system-ui`; while (fontSize > 10 && c.measureText(identityText).width > identityWidth) { fontSize -= 1; c.font = `800 ${fontSize}px system-ui`; }
         c.fillText(identityText, identityX, identityCell.y - (pregnancy ? identityCell.height * .12 : 0), identityWidth);
@@ -7685,8 +7698,11 @@ function currentEntityConstellationCardProfile() {
   }
   const value = entityConstellationCardProfileCache.value;
   const styleUsesInstrumentSurface = ["context-ribbon", "vital-strip", "full-instrument"].includes(style);
-  const enabledBandsNeedInstrumentSurface = healthVisible || decisionContextVisible || metabolicVisible || performanceVisible;
-  return { ...value, public: value.panel, selected: styleUsesInstrumentSurface || enabledBandsNeedInstrumentSurface ? value.instrument : value.panel };
+  // Design chooses the physical surface; the information preset only chooses
+  // which modules that surface may show. Enabling health or physiology must
+  // never silently replace a mast, capsule, classic rail or predictive rail
+  // with the full instrument.
+  return { ...value, public: value.panel, selected: styleUsesInstrumentSurface ? value.instrument : value.panel };
 }
 function constellationResolverProfile(profile, uniformScale = 1) {
   const scale = clamp(Number(uniformScale) || 1, .1, 1.5);
@@ -7930,7 +7946,12 @@ function applyEntityConstellationLayout(rendered, a, state) {
   root.visible = showEntitySymbols || instrumentVisualAllowed;
   const cue = observableConstellationCue(a, state), heldExpression = presentationChannelHolds.snapshot(a.id, "expression").displayed, expressionGlyph = facialExpressionSymbol(heldExpression?.key || state.expression.key).glyph;
   const identityAllowed = integratedInstrument ? instrumentVisualAllowed : showEntitySymbols && showcaseChannel("identity") && (!movieState.active || movieFeaturedAnimal(a));
-  const cardProfile = currentEntityConstellationCardProfile(), projection = rendered.userData.constellationProjection, panelProfile = projection?.instrumentOwner ? cardProfile.selected : cardProfile.public;
+  const cardProfile = currentEntityConstellationCardProfile(), projection = rendered.userData.constellationProjection;
+  // Resolve artwork from the layout surface actually admitted this frame.
+  // Projection ownership can change while a settings-driven layout is being
+  // rebuilt; using it here mixed panel and instrument geometries and produced
+  // doubled/nested panels during design switches.
+  const panelProfile = integratedInstrument ? cardProfile.selected : cardProfile.public;
   // `layout.panelScale` is the camera-wheel distance response. The settings
   // multiplier belongs to the complete authored surface, so combine the two
   // once and use that same result for the rail/instrument and every child.

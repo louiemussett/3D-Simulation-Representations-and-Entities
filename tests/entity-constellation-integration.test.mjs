@@ -90,8 +90,7 @@ test("an animal selection exclusively admits its integrated instrument and suppr
   assert.match(resolver, /if \(panelFocus\.exclusive\) budgetOptions\.exclusiveFocusId = panelFocus\.ownerId/);
   assert.match(resolver, /selectEntityConstellationBudget\(onScreenProjected, budgetOptions\)/);
   assert.match(resolver, /reason: panelFocus\.reason/);
-  assert.match(applier, /panelProfile = projection\?\.instrumentOwner \? cardProfile\.selected : cardProfile\.public/);
-  assert.match(applier, /panelProfile = projection\?\.instrumentOwner \? cardProfile\.selected : cardProfile\.public/);
+  assert.match(applier, /panelProfile = integratedInstrument \? cardProfile\.selected : cardProfile\.public/);
   assert.match(applier, /layout\.detailLevel === "instrument"/);
 });
 
@@ -212,7 +211,9 @@ test("one canonical card profile drives geometry while panel and text scales rem
   assert.match(profile, /physiologyTextScale: 1\.15/);
   assert.doesNotMatch(profile, /entityPanelTextScale/);
   for (const legacySetting of ["graphicsSettings.entityIdentityScale", "graphicsSettings.entityExpressionScale", "graphicsSettings.entityIconScale", "graphicsSettings.thoughtScale", "graphicsSettings.predictionScale", "graphicsSettings.diagnosticScale", "graphicsSettings.diagnosticTextScale"]) assert.doesNotMatch(profile, new RegExp(legacySetting.replaceAll(".", "\\.")), legacySetting);
-  assert.match(applier, /panelProfile = projection\?\.instrumentOwner \? cardProfile\.selected : cardProfile\.public/);
+  assert.match(profile, /styleUsesInstrumentSurface \? value\.instrument : value\.panel/);
+  assert.doesNotMatch(profile, /enabledBandsNeedInstrumentSurface/);
+  assert.match(applier, /panelProfile = integratedInstrument \? cardProfile\.selected : cardProfile\.public/);
   assert.match(applier, /uniformPanelScale = graphicsSettings\.entityPanelScale/);
   assert.match(applier, /panelScale = layout\.panelDimensions\?\.width > 0 \? layout\.panelDimensions\.width \/ panelProfile\.screenSize\.width : requestedPanelScale/);
   assert.match(app, /const sideCells = panelProfile\.sideCells/);

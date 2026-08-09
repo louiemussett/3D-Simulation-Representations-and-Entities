@@ -172,7 +172,8 @@ test("private attachment settings never resize the thick public panel", () => {
   assert.deepEqual(large.panel.screenSize, small.panel.screenSize);
   assert.deepEqual(large.panel.panel, small.panel.panel);
   assert.ok(large.panel.selectedFootprint.height > small.panel.selectedFootprint.height);
-  assert.ok(large.panel.selectedFootprint.width > small.panel.selectedFootprint.width);
+  assert.ok(large.panel.selectedFootprint.width <= large.panel.panel.width);
+  assert.ok(small.panel.selectedFootprint.width <= small.panel.panel.width);
 });
 
 test("selected instrument is one fixed root with the required vertical hierarchy", () => {
@@ -274,7 +275,7 @@ test("private clouds attach to every compact style independently of rail scale",
   }
 });
 
-test("transparent attachments are selected-only slots outside the root and never resize it", () => {
+test("transparent attachments stay inside their selected panel width and never resize the root", () => {
   const small = entityConstellationCardProfile({ thoughtScale: .75, predictionScale: .75 }).instrument;
   const large = entityConstellationCardProfile({ thoughtScale: 2, predictionScale: 2 }).instrument;
   assert.deepEqual(large.panel, small.panel);
@@ -282,9 +283,10 @@ test("transparent attachments are selected-only slots outside the root and never
   assert.ok(small.thought.y < small.panel.top);
   assert.ok(small.prediction.y < small.panel.top);
   assert.ok(small.thought.x + small.thought.width / 2 < small.prediction.x - small.prediction.width / 2);
-  // Bubble scale is independent from panel scale. Oversized private channels
-  // therefore expand the selected collision footprint instead of clipping.
-  assert.ok(large.selectedFootprint.width > small.selectedFootprint.width);
+  // A larger requested bubble scale can increase height, but the pair remains
+  // constrained to its panel-owned row and cannot overlap or widen the root.
+  assert.ok(large.attachmentBounds.width <= large.panel.width);
+  closeTo(large.selectedFootprint.width, large.panel.width);
   assert.ok(large.selectedFootprint.height > small.selectedFootprint.height);
   closeTo(small.attachmentTargets.thought.y, small.panel.top);
   closeTo(small.attachmentTargets.prediction.y, small.panel.top);
