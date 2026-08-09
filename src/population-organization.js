@@ -1,14 +1,20 @@
+import { spatialEcology } from "./species-registry.js";
+
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const distance = (a, b) => Math.hypot((a.x || 0) - (b.x || 0), (a.z || 0) - (b.z || 0));
 
 export function organizationProfile(species = {}) {
   const diet = species.diet || "omnivore", sociality = clamp(species.herdTendency ?? species.sociality ?? .4, 0, 1);
+  const spatial = spatialEcology(species.id);
   return {
     diet, sociality,
     coalitionKind: species.coalitionKind || (diet === "plants" ? "herd" : diet === "meat" ? "pack" : "band"),
     permitsMixedSpecies: species.permitsMixedSpecies ?? diet !== "meat",
-    territoriality: clamp(species.territoriality ?? (diet === "meat" ? .72 : diet === "plants" ? .2 : .48), 0, 1),
-    territoryRadius: species.territoryRadius || (diet === "meat" ? 14 : diet === "plants" ? 9 : 11)
+    spatialMode: spatial.mode,
+    territoriality: clamp(species.territoriality ?? spatial.territoriality, 0, 1),
+    territoryRadius: species.territoryRadius || spatial.radius,
+    breedingMultiplier: spatial.breedingMultiplier || 1,
+    resourceMultiplier: spatial.resourceMultiplier || 1
   };
 }
 
@@ -51,18 +57,24 @@ function movementAndPurposeCompatible(left, right) {
 }
 
 export function updateTerritoryClaims(priorClaims = {}, owners = [], speciesById = {}, tick = 0, context = {}) {
-  if ((context.worldSize || 0) < 120 || (context.population || 0) < 35) return { claims: {}, disputes: [] };
   const claims = {};
   for (const owner of owners.slice(0, context.maximumClaims || 128)) {
     const profile = organizationProfile(speciesById[owner.speciesId] || {});
     if (profile.territoriality < .35 || owner.count > 1 && owner.type === "migration-group") continue;
-    const radius = profile.territoryRadius * (1 + Math.log2(Math.max(1, owner.count)) * .18), previous = priorClaims[owner.id];
-    claims[owner.id] = { ownerId: owner.id, speciesId: owner.speciesId, x: owner.centroid.x, z: owner.centroid.z, radius, strength: clamp(profile.territoriality * .55 + Math.log2(Math.max(1, owner.count)) * .12, 0, 1.5), establishedTick: previous?.establishedTick ?? tick, updatedTick: tick };
+    const previous = priorClaims[owner.id];
+    const remainedLocal = previous && distance(previous, owner.centroid) <= profile.territoryRadius * .35;
+    const stableTicks = remainedLocal ? (previous.stableTicks || 0) + 1 : 1;
+    const establishment = clamp(stableTicks / Math.max(1, context.establishmentTicks || 3), 0, 1);
+    const seasonal = context.breedingSeason ? profile.breedingMultiplier : 1;
+    const resource = context.resourceConcentration ? 1 + (profile.resourceMultiplier - 1) * clamp(context.resourceConcentration, 0, 1) : 1;
+    const radius = profile.territoryRadius * (1 + Math.log2(Math.max(1, owner.count)) * .18) * seasonal;
+    const established = establishment >= 1;
+    claims[owner.id] = { ownerId: owner.id, speciesId: owner.speciesId, mode: profile.spatialMode, x: owner.centroid.x, z: owner.centroid.z, radius, strength: clamp((profile.territoriality * .55 + Math.log2(Math.max(1, owner.count)) * .12) * establishment * resource, 0, 1.5), stableTicks, established, establishedTick: previous?.establishedTick ?? (established ? tick : null), updatedTick: tick };
   }
   const list = Object.values(claims), disputes = [];
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
     const left = list[i], right = list[j], overlap = left.radius + right.radius - distance(left, right);
-    if (overlap <= 0 || left.ownerId === right.ownerId) continue;
+    if (!left.established || !right.established || overlap <= 0 || left.ownerId === right.ownerId) continue;
     const intensity = clamp(overlap / Math.min(left.radius, right.radius) * Math.min(left.strength, right.strength), 0, 1);
     if (intensity >= .12) disputes.push({ id: [left.ownerId, right.ownerId].sort().join("|"), owners: [left.ownerId, right.ownerId], intensity, x: (left.x + right.x) / 2, z: (left.z + right.z) / 2, tick });
   }

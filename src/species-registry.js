@@ -36,7 +36,55 @@ export const SPECIES = freeze({
 });
 
 export const SPECIES_IDS = freeze(Object.keys(SPECIES));
+
+// Explicit trophic preferences keep the 22 species ecologically distinct.
+// Values are relative choice/assimilation weights: >= 1 preferred, .2-.99
+// tolerated, and < .2 avoided except during genuine starvation.
+export const FOOD_ECOLOGY = freeze({
+  grazer: freeze({ plants: freeze({ grass: 1.15, shrub: .08, tree: 0 }), carrion: freeze({}) }),
+  hunter: freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ grazer: 1.15, "dryland-runner": 1, "waterline-grazer": .9, "armoured-browser": .12 }) }),
+  "meadow-nibbler": freeze({ plants: freeze({ grass: 1.25, shrub: .12, tree: 0 }), carrion: freeze({}) }),
+  "great-plains-grazer": freeze({ plants: freeze({ grass: 1.2, shrub: .06, tree: 0 }), carrion: freeze({}) }),
+  "woodland-browser": freeze({ plants: freeze({ grass: .08, shrub: 1.2, tree: .72 }), carrion: freeze({}) }),
+  "brush-fox": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "meadow-nibbler": 1.25, "brush-nibbler": 1.15, "shieldback-colony": .18, "great-plains-grazer": .08 }) }),
+  "shadow-stalker": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "woodland-browser": 1.2, grazer: 1, "meadow-nibbler": .7, "great-plains-grazer": .15 }) }),
+  "great-omnivore": freeze({ plants: freeze({ grass: .55, shrub: 1, tree: .55 }), carrion: freeze({ "meadow-nibbler": 1.05, "brush-nibbler": 1, grazer: .7, "pack-breaker": .12 }) }),
+  "dryland-runner": freeze({ plants: freeze({ grass: 1.2, shrub: .16, tree: 0 }), carrion: freeze({}) }),
+  "highland-grazer": freeze({ plants: freeze({ grass: 1.05, shrub: .42, tree: .08 }), carrion: freeze({}) }),
+  "armoured-browser": freeze({ plants: freeze({ grass: .5, shrub: 1.15, tree: .65 }), carrion: freeze({}) }),
+  "pack-breaker": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "great-plains-grazer": 1.3, "armoured-browser": 1.05, "northern-shaggy-grazer": 1.2, "meadow-nibbler": .08 }) }),
+  "carrion-runner": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ grazer: 1, hunter: .8, "great-plains-grazer": 1.15, "sunscale-ambusher": .2 }) }),
+  "waterline-grazer": freeze({ plants: freeze({ grass: 1.15, shrub: .35, tree: 0 }), carrion: freeze({}) }),
+  "brush-nibbler": freeze({ plants: freeze({ grass: .15, shrub: 1.25, tree: .38 }), carrion: freeze({}) }),
+  "waterline-ambusher": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "waterline-grazer": 1.3, "dryland-runner": .8, "highland-grazer": .35, "sunscale-ambusher": .1 }) }),
+  "northern-shaggy-grazer": freeze({ plants: freeze({ grass: 1, shrub: .72, tree: .22 }), carrion: freeze({}) }),
+  "highland-prowler": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "highland-grazer": 1.3, "dryland-runner": .75, "waterline-grazer": .25 }) }),
+  "little-opportunist": freeze({ plants: freeze({ grass: .72, shrub: 1.05, tree: .25 }), carrion: freeze({ "meadow-nibbler": 1.15, "brush-nibbler": 1, grazer: .2, "great-plains-grazer": .08 }) }),
+  "cold-country-scavenger": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "northern-shaggy-grazer": 1.3, "highland-grazer": 1.05, "highland-prowler": .65, "sunscale-ambusher": .15 }) }),
+  "sunscale-ambusher": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "meadow-nibbler": 1.2, "brush-nibbler": 1.1, "shieldback-colony": .35, "great-plains-grazer": .05 }) }),
+  "shieldback-colony": freeze({ plants: freeze({ grass: .8, shrub: 1.05, tree: .18 }), carrion: freeze({}) })
+});
+
+// The supplied ethology source distinguishes defended territory from a home
+// range. Most species therefore receive only a non-exclusive home range;
+// explicit territory is reserved for species/resources that can be defended.
+export const SPATIAL_ECOLOGY = freeze({
+  grazer: freeze({ mode: "home-range", territoriality: .12, radius: 10 }), hunter: freeze({ mode: "seasonal-territory", territoriality: .62, radius: 15, breedingMultiplier: 1.25 }),
+  "meadow-nibbler": freeze({ mode: "home-range", territoriality: .08, radius: 6 }), "great-plains-grazer": freeze({ mode: "home-range", territoriality: .08, radius: 15 }),
+  "woodland-browser": freeze({ mode: "core-range", territoriality: .28, radius: 10 }), "brush-fox": freeze({ mode: "pair-territory", territoriality: .72, radius: 11 }),
+  "shadow-stalker": freeze({ mode: "territory", territoriality: .86, radius: 16 }), "great-omnivore": freeze({ mode: "seasonal-territory", territoriality: .52, radius: 17, resourceMultiplier: 1.2 }),
+  "dryland-runner": freeze({ mode: "home-range", territoriality: .06, radius: 13 }), "highland-grazer": freeze({ mode: "seasonal-home-range", territoriality: .14, radius: 13 }),
+  "armoured-browser": freeze({ mode: "home-range", territoriality: .18, radius: 12 }), "pack-breaker": freeze({ mode: "pack-territory", territoriality: .78, radius: 18 }),
+  "carrion-runner": freeze({ mode: "home-range", territoriality: .18, radius: 16 }), "waterline-grazer": freeze({ mode: "home-range", territoriality: .12, radius: 10 }),
+  "brush-nibbler": freeze({ mode: "pair-core-range", territoriality: .32, radius: 7 }), "waterline-ambusher": freeze({ mode: "resource-territory", territoriality: .88, radius: 13 }),
+  "northern-shaggy-grazer": freeze({ mode: "seasonal-home-range", territoriality: .1, radius: 16 }), "highland-prowler": freeze({ mode: "territory", territoriality: .8, radius: 15 }),
+  "little-opportunist": freeze({ mode: "home-range", territoriality: .22, radius: 8 }), "cold-country-scavenger": freeze({ mode: "home-range", territoriality: .2, radius: 18 }),
+  "sunscale-ambusher": freeze({ mode: "mating-territory", territoriality: .84, radius: 8, breedingMultiplier: 1.4 }), "shieldback-colony": freeze({ mode: "colony-core", territoriality: .42, radius: 9 })
+});
+
 export const speciesProfile = (subject) => SPECIES[typeof subject === "string" ? subject : subject?.speciesId];
+export const foodEcology = (subject) => FOOD_ECOLOGY[typeof subject === "string" ? subject : subject?.speciesId] || freeze({ plants: freeze({}), carrion: freeze({}) });
+export const spatialEcology = (subject) => SPATIAL_ECOLOGY[typeof subject === "string" ? subject : subject?.speciesId] || freeze({ mode: "home-range", territoriality: 0, radius: 8 });
 export const guildOf = (subject) => speciesProfile(subject)?.guild || "herbivore";
 export const isHerbivore = (subject) => guildOf(subject) === "herbivore";
 export const isCarnivore = (subject) => ["carnivore", "scavenger"].includes(guildOf(subject));
@@ -45,8 +93,27 @@ export const eatsPlants = (subject) => isHerbivore(subject) || isOmnivore(subjec
 export const eatsMeat = (subject) => !isHerbivore(subject);
 export const canHunt = (subject) => Boolean(speciesProfile(subject)?.hunting);
 export const canScavenge = (subject) => eatsMeat(subject);
+export const LOW_PREDATOR_FOUNDER_THRESHOLD = 2;
+export const needsPregnantPredatorFounder = (subject, population) => canHunt(subject)
+  && Number.isFinite(Number(population))
+  && Number(population) > 0
+  && Number(population) <= LOW_PREDATOR_FOUNDER_THRESHOLD;
 export { BIOLOGICAL_PHENOTYPES };
-export const plantPreference = (subject, plantType) => { const feeding = speciesProfile(subject)?.feeding; if (plantType === "tree") return 0; if (feeding === "grass") return plantType === "grass" ? 1 : .08; if (feeding === "shrub") return plantType === "shrub" ? 1 : .08; return ["grass", "shrub"].includes(plantType) ? 1 : 0; };
+export const plantPreference = (subject, plantType) => Number(foodEcology(subject).plants?.[plantType] ?? 0);
+export const carcassPreference = (consumer, corpseOrSpecies) => {
+  const sourceId = typeof corpseOrSpecies === "string" ? corpseOrSpecies : corpseOrSpecies?.speciesId;
+  const explicit = foodEcology(consumer).carrion?.[sourceId];
+  if (Number.isFinite(explicit)) return explicit;
+  return eatsMeat(consumer) ? .55 : 0;
+};
+export function foodPreferenceSummary(subject) {
+  const ecology = foodEcology(subject), labels = (weights) => Object.entries(weights || {}).sort((a, b) => b[1] - a[1]);
+  const preferredPlants = labels(ecology.plants).filter(([, value]) => value >= 1).map(([key]) => key);
+  const avoidedPlants = labels(ecology.plants).filter(([, value]) => value < .2).map(([key]) => key);
+  const preferredCarrion = labels(ecology.carrion).filter(([, value]) => value >= 1).map(([key]) => SPECIES[key]?.label || key);
+  const avoidedCarrion = labels(ecology.carrion).filter(([, value]) => value < .2).map(([key]) => SPECIES[key]?.label || key);
+  return { preferredPlants, avoidedPlants, preferredCarrion, avoidedCarrion };
+}
 // Trace amounts describe opportunistic tasting, not a food source capable of
 // sustaining an animal.  Keeping that distinction explicit prevents a
 // specialist from repeatedly feeding on unsuitable plants while starving.
@@ -56,17 +123,68 @@ export const enabledSpeciesCounts = (counts = {}) => { const explicit = Object.k
 export const speciesCategoryTotals = (counts = {}) => { const exact = enabledSpeciesCounts(counts); return { herbivores: SPECIES_IDS.filter(id => isHerbivore(id)).reduce((sum, id) => sum + exact[id], 0), carnivores: SPECIES_IDS.filter(id => !isHerbivore(id)).reduce((sum, id) => sum + exact[id], 0) }; };
 
 export const ECOLOGY_PRESETS = freeze({
+  "ridge-hunter-web": freeze(["grazer", "hunter", "dryland-runner"]),
+  "brush-fox-web": freeze(["meadow-nibbler", "brush-nibbler", "brush-fox"]),
+  "shadow-stalker-web": freeze(["grazer", "woodland-browser", "shadow-stalker"]),
+  "pack-breaker-web": freeze(["great-plains-grazer", "armoured-browser", "northern-shaggy-grazer", "pack-breaker"]),
+  "waterline-ambusher-web": freeze(["waterline-grazer", "waterline-ambusher"]),
+  "highland-prowler-web": freeze(["highland-grazer", "highland-prowler"]),
+  "sunscale-ambusher-web": freeze(["meadow-nibbler", "brush-nibbler", "sunscale-ambusher"]),
   original: freeze(["grazer", "hunter"]),
   compact: freeze(["grazer", "hunter", "meadow-nibbler", "brush-fox", "great-plains-grazer", "woodland-browser", "shadow-stalker", "great-omnivore"]),
+  "compact-large": freeze(["great-plains-grazer", "armoured-browser", "northern-shaggy-grazer", "dryland-runner", "hunter", "pack-breaker", "waterline-ambusher", "great-omnivore"]),
+  "compact-small": freeze(["meadow-nibbler", "brush-nibbler", "dryland-runner", "shieldback-colony", "brush-fox", "sunscale-ambusher", "carrion-runner", "little-opportunist"]),
+  "compact-open": freeze(["grazer", "meadow-nibbler", "great-plains-grazer", "dryland-runner", "hunter", "brush-fox", "pack-breaker", "carrion-runner"]),
+  "compact-woodland": freeze(["woodland-browser", "brush-nibbler", "meadow-nibbler", "shieldback-colony", "brush-fox", "shadow-stalker", "great-omnivore", "little-opportunist"]),
   balanced: freeze(["grazer", "hunter", "meadow-nibbler", "dryland-runner", "great-plains-grazer", "woodland-browser", "armoured-browser", "brush-fox", "shadow-stalker", "pack-breaker", "carrion-runner", "great-omnivore"]),
   expanded: freeze(["grazer", "hunter", "meadow-nibbler", "dryland-runner", "great-plains-grazer", "woodland-browser", "armoured-browser", "brush-fox", "shadow-stalker", "pack-breaker", "carrion-runner", "great-omnivore", "brush-nibbler", "highland-grazer", "waterline-grazer", "waterline-ambusher"]),
   full: SPECIES_IDS
 });
 
+// Literal central populations derived from the predator/preferred-prey
+// calculations supplied for world setup. One entry always means one animal;
+// these values are never compressed representatives of a larger population.
+export const ECOLOGY_PRESET_POPULATIONS = freeze({
+  "ridge-hunter-web": freeze({ hunter: 1, grazer: 54, "dryland-runner": 95 }),
+  "brush-fox-web": freeze({ "brush-fox": 1, "meadow-nibbler": 267, "brush-nibbler": 197 }),
+  "shadow-stalker-web": freeze({ "shadow-stalker": 1, grazer: 50, "woodland-browser": 72 }),
+  "pack-breaker-web": freeze({ "pack-breaker": 1, "great-plains-grazer": 11, "armoured-browser": 7, "northern-shaggy-grazer": 10 }),
+  "waterline-ambusher-web": freeze({ "waterline-ambusher": 1, "waterline-grazer": 127 }),
+  "highland-prowler-web": freeze({ "highland-prowler": 1, "highland-grazer": 105 }),
+  "sunscale-ambusher-web": freeze({ "sunscale-ambusher": 1, "meadow-nibbler": 352, "brush-nibbler": 259 }),
+  full: freeze({
+    grazer: 104, hunter: 1, "meadow-nibbler": 619, "great-plains-grazer": 11,
+    "woodland-browser": 72, "brush-fox": 1, "shadow-stalker": 1, "great-omnivore": 1,
+    "dryland-runner": 95, "highland-grazer": 105, "armoured-browser": 7,
+    "pack-breaker": 1, "carrion-runner": 1, "waterline-grazer": 127,
+    "brush-nibbler": 456, "waterline-ambusher": 1, "northern-shaggy-grazer": 10,
+    "highland-prowler": 1, "little-opportunist": 1, "cold-country-scavenger": 1,
+    "sunscale-ambusher": 1, "shieldback-colony": 1
+  })
+});
+
+export const ECOLOGY_POPULATION_LEVELS = freeze([
+  freeze({ id: "minimal", label: "Minimal", percent: 20 }),
+  freeze({ id: "lean", label: "Lean", percent: 50 }),
+  freeze({ id: "central", label: "Calculated central", percent: 100 }),
+  freeze({ id: "abundant", label: "Abundant", percent: 150 }),
+  freeze({ id: "maximum", label: "Maximum", percent: 200 })
+]);
+
+export function ecologyPresetCounts(name, percent = 100) {
+  const ids = ECOLOGY_PRESETS[name];
+  if (!ids) return enabledSpeciesCounts({});
+  const central = ECOLOGY_PRESET_POPULATIONS[name]
+    || Object.fromEntries(ids.map(id => [id, SPECIES[id].defaultPopulation]));
+  const scale = Math.max(20, Math.min(200, Number(percent) || 100)) / 100;
+  return enabledSpeciesCounts(Object.fromEntries(ids.map(id => [id, Math.max(1, Math.round((central[id] || SPECIES[id].defaultPopulation || 1) * scale))])));
+}
+
 export function ecologyWarnings(counts = {}, world = {}) {
-  const exact = enabledSpeciesCounts(counts), active = id => exact[id] > 0, warnings = [];
+  const exact = enabledSpeciesCounts(counts), active = id => exact[id] > 0, warnings = [], totalPopulation = Object.values(exact).reduce((a, b) => a + b, 0);
+  if (totalPopulation > 500) warnings.push(`This literal preset starts ${totalPopulation.toLocaleString()} individual animals and may be expensive to simulate in a browser.`);
   for (const id of SPECIES_IDS.filter(id => active(id) && canHunt(id))) if (!SPECIES_IDS.some(prey => active(prey) && preyCompatible(id, prey))) warnings.push(`${SPECIES[id].label} has no enabled compatible prey.`);
-  if (SPECIES_IDS.filter(id => active(id) && SPECIES[id].guild === "scavenger").length > 1 && Object.values(exact).reduce((a, b) => a + b, 0) < 30) warnings.push("Several carrion specialists are enabled in a low-population world.");
+  if (SPECIES_IDS.filter(id => active(id) && SPECIES[id].guild === "scavenger").length > 1 && totalPopulation < 30) warnings.push("Several carrion specialists are enabled in a low-population world.");
   if (SPECIES_IDS.some(id => active(id) && SPECIES[id].habitat === "woodland") && Number(world.woodland) <= .1) warnings.push("Woodland specialists are enabled with almost no woodland.");
   if (SPECIES_IDS.some(id => active(id) && SPECIES[id].habitat === "riparian") && Number(world.rivers) + Number(world.lakes) <= .5) warnings.push("Waterline specialists are enabled with little surface water.");
   if (active("shieldback-colony") && exact["shieldback-colony"] < 4) warnings.push("Shieldback Colony needs at least four starting animals for communal defence and care.");

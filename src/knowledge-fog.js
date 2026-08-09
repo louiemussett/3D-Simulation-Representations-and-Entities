@@ -8,5 +8,8 @@ export function fogKnowledgeState({ currentlyVisible = false, communicatedReveal
 export function withinLocalFogReveal(cell, observer, radius = 5.5) {
   if (!cell || !observer || !Number.isFinite(radius) || radius < 0) return false;
   const dx = Number(cell.x) - Number(observer.x), dz = Number(cell.z) - Number(observer.z);
-  return Number.isFinite(dx) && Number.isFinite(dz) && dx * dx + dz * dz <= radius * radius;
+  const cellElevation = Number(cell.elevation), observerElevation = Number(observer.elevation);
+  const relief = Number.isFinite(cellElevation) && Number.isFinite(observerElevation) ? Math.abs(cellElevation - observerElevation) : 0;
+  const reliefAdjustedRadius = radius / (1 + relief * .18);
+  return Number.isFinite(dx) && Number.isFinite(dz) && dx * dx + dz * dz <= reliefAdjustedRadius * reliefAdjustedRadius;
 }

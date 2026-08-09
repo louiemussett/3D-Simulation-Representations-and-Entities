@@ -74,7 +74,7 @@ The default Cinema experience is an adaptive nature-documentary mode. It moves b
 - Camera coverage includes close, intermediate, group, regional and world-establishing perspectives. Wide context is selected when it helps explain spatial relationships, organisations or ecology—not by a mandatory shot counter.
 - Numbered entity/group/regional markers continue to obey observer distance rules in Cinema.
 - Cinema queues up to three bounded shot beats for short sequences. Live evidence and narration are validated near execution so a precomputed pursuit does not become stale.
-- Entering Cinema, changing shots and camera recovery use a camera/overlay refresh rather than rebuilding terrain, vegetation and the entire landscape. Full world presentation work remains on its normal invalidation cadence.
+- Entering Cinema, changing shots and camera recovery use a staged camera/overlay refresh rather than rebuilding terrain, vegetation and the entire landscape. Camera admission and overlay regeneration run on separate eligible frames, while full world presentation work remains on its normal invalidation cadence.
 - Cinema starts with ordinary entity panels off and chooses the minimum presentation needed for a shot. It can choose which entity receives detail; normal observer selection remains exclusive.
 - Voice, captions and companion services are active only while Cinema is running. Local deterministic narration and metadata remain available if the optional companion is absent.
 
@@ -104,7 +104,7 @@ Recent optimisation work preserves simulation rules while reducing repeated allo
 
 ### Verification status
 
-As of this update, `npm run check` passes and the complete deterministic Node/companion suite passes **983/983 tests**. The suite includes predictive contracts and epistemic boundaries, behaviour and learning scenarios, Cinema thread/narration/camera policy, entity presentation and timing, groups and social networks, persistence and shortcuts, deterministic state, ecology and performance regressions. Browser smoke and full visual tests remain separate commands because they launch Chromium.
+As of this update, `npm run check` passes and the complete deterministic Node/companion suite passes **984/984 tests**. The suite includes predictive contracts and epistemic boundaries, behaviour and learning scenarios, Cinema thread/narration/camera policy, entity presentation and timing, groups and social networks, persistence and shortcuts, deterministic state, ecology and performance regressions. Browser smoke and full visual tests remain separate commands because they launch Chromium.
 
 ## Run it
 

@@ -129,7 +129,7 @@ test("profile geometry is settings-only, deterministic and clamps every display 
   const input = { panelScale: 1.2, identityScale: 1.3, expressionScale: .9, publicCueScale: 1.4, thoughtScale: 1.6, predictionScale: 1.1 };
   assert.deepEqual(entityConstellationCardProfile({ ...input, predictionVisible: false }), entityConstellationCardProfile({ ...input, predictionVisible: true }));
   const bounded = entityConstellationCardProfile({ panelScale: .1, identityScale: 9, expressionScale: 9, publicCueScale: 9, thoughtScale: .1, predictionScale: 9 });
-  assert.deepEqual(bounded.scales, { panel: .6, identity: 1.5, expression: 2, publicCue: 2, thought: .75, prediction: 2 });
+  assert.deepEqual(bounded.scales, { panel: .1, identity: 1.5, expression: 2, publicCue: 2, thought: .5, prediction: 1.5 });
 });
 
 test("identity scaling expands the centre bay without changing either semantic side size", () => {
@@ -248,8 +248,30 @@ test("saved section settings deterministically remove bands and let one physiolo
   assert.ok(result.metabolicCell);
   closeTo(result.metabolicCell.left, result.physiologyBand.left + 8);
   closeTo(result.metabolicCell.right, result.physiologyBand.right - 8);
-  assert.deepEqual(result.visibleSections, { health: false, decision: false, metabolic: true, performance: false });
+  assert.deepEqual(result.visibleSections, { health: false, decision: false, immediateConcern: false, forecastEffect: false, metabolic: true, performance: false });
   closeTo(result.screenSize.height, ENTITY_INSTRUMENT_PANEL_GEOMETRY.identityHeight + ENTITY_INSTRUMENT_PANEL_GEOMETRY.physiologyHeight);
+});
+
+test("authored panel family has genuinely different fixed geometry while preserving the original rail", () => {
+  const profiles = Object.fromEntries(["identity-mast", "status-mast", "capsule", "classic-rail", "context-ribbon", "vital-strip", "predictive-view", "full-instrument"].map(style => [style, entityConstellationCardProfile({ style })]));
+  assert.deepEqual(profiles["classic-rail"].panel.screenSize, { width: 314, height: 82 });
+  assert.deepEqual(profiles["identity-mast"].panel.screenSize, { width: 40, height: 92 });
+  assert.deepEqual(profiles["status-mast"].panel.screenSize, { width: 62, height: 150 });
+  assert.deepEqual(profiles.capsule.panel.screenSize, { width: 220, height: 44 });
+  assert.equal(profiles["context-ribbon"].instrument.variant, "context-ribbon");
+  assert.equal(profiles["vital-strip"].instrument.variant, "vital-strip");
+  assert.equal(profiles["full-instrument"].instrument.variant, "full-instrument");
+  assert.ok(profiles["context-ribbon"].instrument.identityBand.height < profiles["full-instrument"].instrument.identityBand.height);
+  assert.ok(profiles["vital-strip"].instrument.identityBand.height < profiles["full-instrument"].instrument.identityBand.height);
+});
+
+test("private clouds attach to every compact style independently of rail scale", () => {
+  for (const style of ["identity-mast", "status-mast", "capsule", "classic-rail", "predictive-view"]) {
+    const panel = entityConstellationCardProfile({ style, panelScale: .1, thoughtAttachmentEnabled: true, forecastAttachmentEnabled: true }).panel;
+    assert.ok(panel.thought.y < panel.panel.top, style);
+    assert.ok(panel.prediction.y < panel.panel.top, style);
+    assert.ok(panel.selectedFootprint.top < panel.panel.top, style);
+  }
 });
 
 test("transparent attachments are selected-only slots outside the root and never resize it", () => {
@@ -260,6 +282,8 @@ test("transparent attachments are selected-only slots outside the root and never
   assert.ok(small.thought.y < small.panel.top);
   assert.ok(small.prediction.y < small.panel.top);
   assert.ok(small.thought.x + small.thought.width / 2 < small.prediction.x - small.prediction.width / 2);
+  // Bubble scale is independent from panel scale. Oversized private channels
+  // therefore expand the selected collision footprint instead of clipping.
   assert.ok(large.selectedFootprint.width > small.selectedFootprint.width);
   assert.ok(large.selectedFootprint.height > small.selectedFootprint.height);
   closeTo(small.attachmentTargets.thought.y, small.panel.top);
@@ -274,7 +298,9 @@ test("settings-disabled private channels release their invisible attachment foot
   assert.deepEqual(thoughtOnly.panel, complete.panel);
   assert.equal(thoughtOnly.prediction.width, 0);
   assert.ok(thoughtOnly.thought.width > 0);
-  assert.ok(thoughtOnly.attachmentBounds.width < complete.attachmentBounds.width);
+  // A single private channel inherits the complete attachment row, while a
+  // pair divides that same row into two near-half-width bays.
+  closeTo(thoughtOnly.attachmentBounds.width, complete.attachmentBounds.width);
   assert.equal(neither.thought.width, 0);
   assert.equal(neither.prediction.width, 0);
   assert.deepEqual(neither.selectedFootprint, neither.panel);

@@ -65,24 +65,26 @@ test("selected organism exposes a readable Forecasts tab and impact domains", ()
   assert.doesNotMatch(predictiveRenderer, /\$\{(?:cycle\?\.)?scheduler\?\.usedCost\s*\?\?/);
 });
 
-test("entity Social tab keeps the complete live four-channel visual guide out of Overview", () => {
+test("entity Social tab separates observable channels from private thought and forecast", () => {
   const guideStart = app.indexOf("function observerSocialVisualGuideHtml(");
   const guideEnd = app.indexOf("\nfunction renderObserverDetail(", guideStart);
   const guideMarkup = app.slice(guideStart, guideEnd);
   assert.ok(guideStart >= 0 && guideEnd > guideStart, "Social visual guide is extractable");
   assert.match(guideMarkup, /data-observer-social-visual-guide/);
-  assert.match(guideMarkup, /data-observer-symbol-bays[\s\S]*\$\{thoughtChannel\.bay\}\$\{actionChannel\.bay\}\$\{faceChannel\.bay\}\$\{signalChannel\.bay\}/, "all four symbol bays occupy stable slots");
-  assert.match(guideMarkup, /data-observer-symbol-explanations[\s\S]*\$\{thoughtChannel\.explanation\}\$\{actionChannel\.explanation\}\$\{faceChannel\.explanation\}\$\{signalChannel\.explanation\}/, "all four explanations follow the symbol grid");
+  assert.match(guideMarkup, /data-observer-symbol-bays="observable"[\s\S]*\$\{faceChannel\.bay\}\$\{signalChannel\.bay\}/, "expression and callout share the observable section");
+  assert.match(guideMarkup, /data-observer-symbol-bays="private"[\s\S]*\$\{thoughtChannel\.bay\}\$\{forecastChannel\.bay\}/, "thought and forecast share the private section");
+  assert.match(guideMarkup, /data-observer-symbol-explanations="observable"[\s\S]*\$\{faceChannel\.explanation\}\$\{signalChannel\.explanation\}/);
+  assert.match(guideMarkup, /data-observer-symbol-explanations="private"[\s\S]*\$\{thoughtChannel\.explanation\}\$\{forecastChannel\.explanation\}/);
   assert.match(guideMarkup, /aria-labelledby=/); assert.match(guideMarkup, /aria-describedby=/); assert.match(guideMarkup, /data-social-epistemic=/);
   for (const [channel, source] of [
     ["private-thought", "thoughtPreview"],
-    ["notable-action", "actionPreview"],
+    ["private-forecast", "forecastPreview"],
     ["visible-expression", "facePreview"],
     ["public-signal", "signalPreview"]
   ]) {
     assert.match(guideMarkup, new RegExp(`channelPresentation\\(${source}, "${channel}"`), `${channel} uses its live preview`);
   }
-  for (const helper of ["thoughtBubbleMaterialFromPresentation", "actionBadgeMaterial", "emotionFaceMaterial", "semanticBadgeMaterial", "exactSymbolPreview"]) {
+  for (const helper of ["thoughtBubbleMaterialFromPresentation", "predictionInsightMaterial", "emotionFaceMaterial", "semanticBadgeMaterial", "exactSymbolPreview"]) {
     assert.match(guideMarkup, new RegExp(`${helper}\\(`), `${helper} renders the same pixels used in the world`);
   }
 
@@ -93,7 +95,8 @@ test("entity Social tab keeps the complete live four-channel visual guide out of
   assert.deepEqual(alignmentStates, ["private", "aligned", "divergent"]);
   for (const copy of [
     /current private priority\. Cloud colour compares it with any public signal/i,
-    /behaviour worth labelling because posture and movement arrows do not already explain it/i,
+    /fallible estimate made from the animal's own evidence/i,
+    /unchanged bubble means no new forecast qualified/i,
     /observable face other animals may see, not the animal's exact private priority/i,
     /call or outward display\. It can be mistaken and does not expose the exact private thought/i,
     /Private priority and signal align/i,
@@ -109,8 +112,12 @@ test("entity Social tab keeps the complete live four-channel visual guide out of
   const socialEnd = observerRenderer.indexOf('observerDetailTab === "priorities"', socialStart);
   const socialBranch = observerRenderer.slice(socialStart, socialEnd);
   assert.ok(rendererStart >= 0 && rendererEnd > rendererStart && socialStart >= 0 && socialEnd > socialStart, "Social branch is extractable");
-  assert.match(socialBranch, /observer-social-summary[\s\S]*\$\{observerSocialVisualGuideHtml\(selected\)\}[\s\S]*Recent social memory/);
-  assert.equal((observerRenderer.match(/observerSocialVisualGuideHtml\(selected\)/g) || []).length, 1, "visual guide is mounted only by the Social branch");
+  assert.match(socialBranch, /observerSocialVisualHtml\(selected\)/);
+  const visualSocialStart = app.indexOf("function observerSocialVisualHtml(");
+  const visualSocialEnd = app.indexOf("\nfunction observerCommitmentVisualHtml(", visualSocialStart);
+  const visualSocial = app.slice(visualSocialStart, visualSocialEnd);
+  for (const visualOnly of ["guide.visual", "observer-social-network", "observer-social-counters", 'observerLaboratoryLink("society"']) assert.match(visualSocial, new RegExp(visualOnly.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  for (const movedProse of ["Recent social memory", "observer-symbol-explanations", "observer-social-summary"]) assert.doesNotMatch(visualSocial, new RegExp(movedProse));
 
   const overviewStart = app.indexOf("function observerWholeAnimalOverviewHtml(");
   const overviewEnd = app.indexOf("\nfunction observerSocialVisualGuideHtml(", overviewStart);
@@ -137,7 +144,7 @@ test("admitted forecasts use accessible circular confidence meters without losin
   assert.match(css, /\.prediction-confidence-gauge \{[^\n]+border-radius:50%;[^\n]+conic-gradient/);
 });
 
-test("entity Overview combines a compact forecast with a dense whole-animal summary", () => {
+test("entity Overview is a visual instrument with a Laboratory handoff", () => {
   const summaryStart = app.indexOf("const summaryContent =", app.indexOf("function entityPredictiveSummaryHtml("));
   const compactReturn = app.indexOf("if (compact) return", summaryStart);
   const compactMarkup = app.slice(summaryStart, compactReturn), overviewStart = app.indexOf("function observerWholeAnimalOverviewHtml("), overviewEnd = app.indexOf("function observerSocialVisualGuideHtml(", overviewStart), overviewMarkup = app.slice(overviewStart, overviewEnd);
@@ -145,13 +152,32 @@ test("entity Overview combines a compact forecast with a dense whole-animal summ
   for (const retained of ["entity-predictive-heading", "entity-predictive-hero", "entity-predictive-modules"]) assert.match(compactMarkup, new RegExp(retained));
   for (const omitted of ["entity-predictive-flow", "entity-predictive-effect", "entity-predictive-impact", "entity-predictive-expanded", "entity-predictive-open", "prediction-symbol-legend"]) assert.doesNotMatch(compactMarkup, new RegExp(omitted));
   assert.ok(overviewStart >= 0 && overviewEnd > overviewStart, "whole-animal Overview is extractable");
-  assert.match(overviewMarkup, /entityPredictiveSummaryHtml\(animal, \{ expanded: false, compact: true, surface: "observer-overview", showOpenButton: false \}\)/);
-  for (const section of ["physiology", "forecast", "needs-goals", "action", "social", "memory", "life-traits"]) assert.match(overviewMarkup, new RegExp(`data-overview-section="${section}"`));
-  for (const label of ["Whole animal now", "Body and performance", "Needs and goals", "Action and context", "Social and outward state", "Awareness and memory", "Condition, life and traits"]) assert.match(overviewMarkup, new RegExp(label));
-  for (const omitted of ["predictionSymbolLegendHtml", "entity-predictive-flow", "entity-predictive-effect", "<details", "<summary", "observerSocialVisualGuideHtml", "data-observer-social-visual-guide", "data-social-visual-channel", "data-thought-alignment-key", "observer-symbol-bays", "observer-symbol-explanations", "observer-trait-profile"]) assert.doesNotMatch(overviewMarkup, new RegExp(omitted));
-  assert.match(app, /^\s*ui\.hudDetail\.innerHTML = observerWholeAnimalOverviewHtml\(selected\);$/m);
-  assert.match(app, /entityPredictiveSummaryHtml\(selected, \{ expanded: true, surface: "observer-tab" \}\)/);
+  for (const visual of ["observer-visual-presentation", "observer-visual-meter-grid", "observerDecisionChainHtml", "observerPrimaryForecastHtml", 'observerLaboratoryLink("entity"', 'observerLaboratoryLink("reference"']) assert.match(overviewMarkup, new RegExp(visual.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  for (const meter of ["Health", "Hydration", "Accessible fuel", "Burst capacity", "Aerobic headroom", "Recovery burden"]) assert.match(overviewMarkup, new RegExp(meter));
+  for (const omitted of ["entityPredictiveSummaryHtml", "predictionSymbolLegendHtml", "entity-predictive-flow", "<details", "<summary", "observerSocialVisualGuideHtml", "observer-symbol-explanations", "observer-trait-profile", "Needs and goals", "Action and context"]) assert.doesNotMatch(overviewMarkup, new RegExp(omitted));
+  assert.match(app, /updateObserverDetailMarkup\(observerWholeAnimalOverviewHtml\(selected\), detailKey\)/);
+  assert.match(app, /updateObserverDetailMarkup\(observerForecastVisualHtml\(selected\), detailKey\)/);
   assert.match(app, /entityPredictiveSummaryHtml\(selected, \{ expanded: true, surface: "laboratory-entity" \}\)/);
+});
+
+test("selected detail rendering is stable and cadence-limited", () => {
+  assert.match(app, /const OBSERVER_DETAIL_UPDATE_INTERVAL_MS = 1000/);
+  assert.match(app, /if \(state\.key === key && state\.markup === markup\) return false/);
+  assert.match(app, /now - state\.updatedAt < OBSERVER_DETAIL_UPDATE_INTERVAL_MS/);
+  assert.match(app, /const scrollTop = ui\.hudDetail\.scrollTop/);
+  assert.match(app, /ui\.hudDetail\.scrollTop = scrollTop/);
+  assert.match(app, /const typographyRole = current\.dataset\.typographyRole/);
+  assert.match(app, /const typographyManaged = current\.dataset\.typographyManaged/);
+  assert.match(app, /const managedFontSize = typographyManaged === "true" \? current\.style\.fontSize : ""/);
+  assert.match(app, /if \(\["data-typography-role", "data-typography-managed"\]\.includes\(attribute\.name\)\) continue/);
+  assert.match(app, /if \(managedFontSize\) current\.style\.fontSize = managedFontSize/);
+  assert.match(app, /function reconcileObserverDetailNode/);
+  assert.match(app, /function reconcileObserverDetailMarkup/);
+  assert.match(app, /const structureChanged = reconcileObserverDetailMarkup\(ui\.hudDetail, markup\)/);
+  assert.match(app, /if \(structureChanged\) applyInterfacePresentation\(\[ui\.hudSelection\]\)/);
+  assert.match(app, /node\.closest\("#hud-detail-content"\) && node\.dataset\.typographyManaged === "true"/);
+  assert.match(css, /#observer-selection:not\(\.is-minimised\) \.observer-detail \{[^\n]+overflow-anchor:none/);
+  assert.doesNotMatch(app.slice(app.indexOf("function updateObserverDetailMarkup"), app.indexOf("function inheritedTraitProfileHtml")), /ui\.hudDetail\.innerHTML\s*=/);
 });
 
 test("world prediction insight is a transient private forecast variant, not a public signal", () => {

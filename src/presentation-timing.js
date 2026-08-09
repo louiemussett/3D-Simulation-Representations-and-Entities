@@ -1,11 +1,14 @@
 export const PRESENTATION_TIMING_MIN_MS = 500;
 export const PRESENTATION_TIMING_MAX_MS = 5000;
+export const FORECAST_TIMING_MIN_MS = 3000;
+export const FORECAST_TIMING_MAX_MS = 8000;
 
 const bounded = (value, low = 0, high = PRESENTATION_TIMING_MAX_MS) => Math.min(high, Math.max(low, Number(value) || 0));
-const defineTiming = (id, entryDelayMs, minimumVisibleMs, releaseDelayMs, interruptPriority, reason) => Object.freeze({
+const defineTiming = (id, entryDelayMs, minimumVisibleMs, releaseDelayMs, interruptPriority, reason, maximumVisibleMs = PRESENTATION_TIMING_MAX_MS) => Object.freeze({
   id,
   entryDelayMs: bounded(entryDelayMs),
-  minimumVisibleMs: bounded(minimumVisibleMs, PRESENTATION_TIMING_MIN_MS),
+  minimumVisibleMs: bounded(minimumVisibleMs, PRESENTATION_TIMING_MIN_MS, maximumVisibleMs),
+  maximumVisibleMs,
   releaseDelayMs: bounded(releaseDelayMs),
   interruptPriority: bounded(interruptPriority, 0, 100),
   reason
@@ -113,24 +116,24 @@ export function thoughtPresentationTiming(priority = "", category = null, placeh
 }
 
 const forecastDurations = Object.freeze({
-  "motion-continuing": 1000,
-  "threat-probable": 1500,
-  "action-compared": 2000,
-  "threat-possible": 2500,
-  "water-available": 4000,
-  "water-uncertain": 4000,
-  "body-recovery": 4500,
-  "bounded-renderer-fallback": 1500
+  "motion-continuing": 3000,
+  "threat-probable": 4000,
+  "action-compared": 4500,
+  "threat-possible": 5000,
+  "water-available": 6500,
+  "water-uncertain": 7000,
+  "body-recovery": 8000,
+  "bounded-renderer-fallback": 3000
 });
 export const FORECAST_PRESENTATION_TIMINGS = Object.freeze(Object.entries(forecastDurations).map(([id, duration]) => {
   const urgent = id.startsWith("threat-") || id === "body-recovery";
-  return defineTiming(`forecast:${id}`, urgent ? 0 : 150, duration, urgent ? 300 : 500, urgent ? 85 : 55, urgent ? "A safety-relevant private estimate enters quickly." : "The forecast remains long enough to interpret its uncertainty and effect.");
+  return defineTiming(`forecast:${id}`, urgent ? 0 : 150, duration, urgent ? 300 : 500, urgent ? 85 : 55, urgent ? "A safety-relevant private estimate enters quickly and remains readable." : "The text-bearing forecast remains long enough to interpret its uncertainty and effect.", FORECAST_TIMING_MAX_MS);
 }));
 export const FORECAST_EMPTY_PRESENTATION_TIMINGS = Object.freeze([
-  defineTiming("forecast-empty:not-yet-run", 0, 1500, 0, 15, "Waiting for the first predictive cycle."),
-  defineTiming("forecast-empty:below-admission", 0, 2500, 0, 15, "No result passed prediction admission."),
-  defineTiming("forecast-empty:below-display", 0, 2000, 0, 15, "Estimates exist but none qualifies for a world cloud."),
-  defineTiming("forecast-empty:no-new-insight", 0, 1250, 0, 15, "The admitted estimate has not materially changed.")
+  defineTiming("forecast-empty:not-yet-run", 0, 3000, 0, 15, "Waiting for the first predictive cycle.", FORECAST_TIMING_MAX_MS),
+  defineTiming("forecast-empty:below-admission", 0, 5000, 0, 15, "No result passed prediction admission.", FORECAST_TIMING_MAX_MS),
+  defineTiming("forecast-empty:below-display", 0, 4500, 0, 15, "Estimates exist but none qualifies for a world cloud.", FORECAST_TIMING_MAX_MS),
+  defineTiming("forecast-empty:no-new-insight", 0, 3500, 0, 15, "The admitted estimate has not materially changed.", FORECAST_TIMING_MAX_MS)
 ]);
 const forecastByVariant = new Map(FORECAST_PRESENTATION_TIMINGS.map(profile => [profile.id.slice("forecast:".length), profile]));
 const forecastEmptyByState = new Map(FORECAST_EMPTY_PRESENTATION_TIMINGS.map(profile => [profile.id.slice("forecast-empty:".length), profile]));
@@ -142,7 +145,7 @@ export function forecastPresentationTiming(cue = null) {
   const extension = cue?.priorityChanged ? 1000 : cue?.activeEffect ? 500 : 0;
   if (!extension) return base;
   const cacheKey = `${base.id}:${extension}`;
-  if (!forecastEffectCache.has(cacheKey)) forecastEffectCache.set(cacheKey, Object.freeze({ ...base, id: `${base.id}:${cue.priorityChanged ? "changed-choice" : "used-in-scoring"}`, minimumVisibleMs: bounded(base.minimumVisibleMs + extension, PRESENTATION_TIMING_MIN_MS) }));
+  if (!forecastEffectCache.has(cacheKey)) forecastEffectCache.set(cacheKey, Object.freeze({ ...base, id: `${base.id}:${cue.priorityChanged ? "changed-choice" : "used-in-scoring"}`, minimumVisibleMs: bounded(base.minimumVisibleMs + extension, FORECAST_TIMING_MIN_MS, FORECAST_TIMING_MAX_MS) }));
   return forecastEffectCache.get(cacheKey);
 }
 

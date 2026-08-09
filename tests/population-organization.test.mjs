@@ -41,7 +41,28 @@ test("future herbivore species can mix while carnivores remain separate by defau
 
 test("overlapping territorial owners produce bounded dispute pressure", () => {
   const owners = [{ id: "pack-a", speciesId: "wolf", count: 5, centroid: { x: 0, z: 0 } }, { id: "wolf-b", speciesId: "wolf", count: 1, centroid: { x: 8, z: 0 } }];
-  const result = updateTerritoryClaims({}, owners, { wolf: { diet: "meat", territoriality: .9, territoryRadius: 12 } }, 20, { worldSize: 180, population: 100 });
+  const result = updateTerritoryClaims({}, owners, { wolf: { diet: "meat", territoriality: .9, territoryRadius: 12 } }, 20, { worldSize: 180, population: 100, establishmentTicks: 1 });
   assert.equal(Object.keys(result.claims).length, 2); assert.ok(result.disputes[0].intensity > 0);
   assert.equal(organizationProfile({ diet: "meat" }).coalitionKind, "pack");
+});
+
+test("species spatial profiles distinguish home ranges from defended territory", () => {
+  assert.equal(organizationProfile({ id: "grazer", diet: "plants" }).spatialMode, "home-range");
+  assert.ok(organizationProfile({ id: "shadow-stalker", diet: "meat" }).territoriality > .8);
+  const owners = [
+    { id: "grazer-a", speciesId: "grazer", count: 1, centroid: { x: 0, z: 0 } },
+    { id: "stalker-a", speciesId: "shadow-stalker", count: 1, centroid: { x: 20, z: 0 } }
+  ];
+  const species = { grazer: { id: "grazer", diet: "plants" }, "shadow-stalker": { id: "shadow-stalker", diet: "meat" } };
+  const context = { worldSize: 180, population: 100, establishmentTicks: 3 };
+  const result = updateTerritoryClaims({}, owners, species, 1, context);
+  assert.equal(result.claims["grazer-a"], undefined);
+  assert.equal(result.claims["stalker-a"].established, false);
+  const second = updateTerritoryClaims(result.claims, owners, species, 2, context);
+  const established = updateTerritoryClaims(second.claims, owners, species, 3, context);
+  assert.equal(established.claims["stalker-a"].established, true);
+  const relocatedOwners = owners.map(owner => owner.id === "stalker-a" ? { ...owner, centroid: { x: 40, z: 0 } } : owner);
+  const relocated = updateTerritoryClaims(established.claims, relocatedOwners, species, 4, { worldSize: 40, population: 2, establishmentTicks: 3 });
+  assert.equal(relocated.claims["stalker-a"].stableTicks, 1);
+  assert.equal(relocated.claims["stalker-a"].established, false);
 });

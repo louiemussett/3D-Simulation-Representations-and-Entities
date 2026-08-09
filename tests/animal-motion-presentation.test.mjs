@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { animalGroundOffset, gradualHeading, locomotionAnimation, matingPosture, movingTurnTolerance, requiresTurnInPlace } from "../src/animal-motion-presentation.js";
+import { animalGroundOffset, gradualHeading, isGroundRestPosture, locomotionAnimation, matingPosture, movingTurnTolerance, postureTransitionDuration, requiresTurnInPlace, smoothPostureProgress } from "../src/animal-motion-presentation.js";
 
-test("animal roots retain clearance and lowered postures receive extra clearance", () => {
+test("animal roots retain standing clearance while ground rest settles into terrain", () => {
   assert.equal(animalGroundOffset(1, "travel"), .12);
-  assert.equal(animalGroundOffset(1, "rest"), .2);
+  assert.equal(animalGroundOffset(1, "rest"), -.02);
+  assert.ok(animalGroundOffset(1, "rest") < animalGroundOffset(1, "travel"));
   assert.ok(animalGroundOffset(.55, "stalk") > 0);
 });
 
@@ -13,6 +14,24 @@ test("ordinary walking bobs slower than urgent locomotion", () => {
   assert.equal(walking.active, true); assert.equal(chase.active, true);
   assert.ok(walking.frequency < chase.frequency);
   assert.equal(locomotionAnimation("rest", 250).bob, 0);
+});
+
+test("rest, suckling and nursing mothers share one grounded posture family", () => {
+  assert.equal(isGroundRestPosture("rest"), true);
+  assert.equal(isGroundRestPosture("suckle"), true);
+  assert.equal(isGroundRestPosture("nursing-mother"), true);
+  assert.equal(isGroundRestPosture("stand"), false);
+});
+
+test("grounding and standing transitions are eased and bounded by age and condition", () => {
+  assert.equal(postureTransitionDuration({ lifeStage: "juvenile", health: 100, fatigue: 0 }), .55);
+  assert.equal(postureTransitionDuration({ lifeStage: "dependent", health: 100, fatigue: 0 }), .65);
+  assert.ok(postureTransitionDuration({ lifeStage: "old", health: 35, fatigue: 80, injuries: [{}, {}] }) > 3);
+  assert.equal(postureTransitionDuration({ lifeStage: "old", health: 0, fatigue: 100, injuries: [{}, {}, {}] }), 4);
+  assert.equal(smoothPostureProgress(0, 1, 0, 1000), 0);
+  assert.equal(smoothPostureProgress(0, 1, 500, 1000), .5);
+  assert.equal(smoothPostureProgress(0, 1, 1000, 1000), 1);
+  assert.equal(smoothPostureProgress(1, 0, 500, 1000), .5);
 });
 
 test("male mating posture lifts and supports the head with the raised body", () => {

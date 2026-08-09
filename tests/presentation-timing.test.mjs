@@ -7,6 +7,8 @@ import {
   EXPRESSION_PRESENTATION_TIMINGS,
   FORECAST_EMPTY_PRESENTATION_TIMINGS,
   FORECAST_PRESENTATION_TIMINGS,
+  FORECAST_TIMING_MAX_MS,
+  FORECAST_TIMING_MIN_MS,
   PRESENTATION_TIMING_MAX_MS,
   PRESENTATION_TIMING_MIN_MS,
   THOUGHT_PRESENTATION_TIMINGS,
@@ -23,7 +25,8 @@ const assertBoundedProfile = profile => {
   assert.ok(profile, "timing profile exists");
   assert.ok(profile.id, "timing profile has a stable id");
   assert.ok(profile.minimumVisibleMs >= PRESENTATION_TIMING_MIN_MS, `${profile.id} meets 500 ms floor`);
-  assert.ok(profile.minimumVisibleMs <= PRESENTATION_TIMING_MAX_MS, `${profile.id} meets 5000 ms ceiling`);
+  const maximum = profile.id.startsWith("forecast") ? FORECAST_TIMING_MAX_MS : PRESENTATION_TIMING_MAX_MS;
+  assert.ok(profile.minimumVisibleMs <= maximum, `${profile.id} meets its channel ceiling`);
   assert.ok(profile.entryDelayMs >= 0 && profile.entryDelayMs <= PRESENTATION_TIMING_MAX_MS, `${profile.id} entry delay bounded`);
   assert.ok(profile.releaseDelayMs >= 0 && profile.releaseDelayMs <= PRESENTATION_TIMING_MAX_MS, `${profile.id} release delay bounded`);
   assert.ok(profile.interruptPriority >= 0 && profile.interruptPriority <= 100, `${profile.id} interrupt priority bounded`);
@@ -76,11 +79,15 @@ test("every forecast variant and honest empty state resolves within the timing b
   for (const variant of PREDICTION_INSIGHT_VARIANTS) {
     const profile = forecastPresentationTiming({ variantId: variant.id });
     assertBoundedProfile(profile);
+    assert.ok(profile.minimumVisibleMs >= FORECAST_TIMING_MIN_MS);
+    assert.ok(profile.minimumVisibleMs <= FORECAST_TIMING_MAX_MS);
     assert.ok(profile.id.startsWith(`forecast:${variant.id}`));
   }
   for (const state of PREDICTION_EMPTY_STATES) {
     const profile = forecastPresentationTiming({ placeholder: true, emptyState: state.id });
     assertBoundedProfile(profile);
+    assert.ok(profile.minimumVisibleMs >= FORECAST_TIMING_MIN_MS);
+    assert.ok(profile.minimumVisibleMs <= FORECAST_TIMING_MAX_MS);
     assert.equal(profile.id, `forecast-empty:${state.id}`);
   }
 });
@@ -111,5 +118,5 @@ test("generic channel dispatch and aggregate ranges preserve the canonical bound
     ...FORECAST_PRESENTATION_TIMINGS,
     ...FORECAST_EMPTY_PRESENTATION_TIMINGS
   ]);
-  assert.deepEqual(range, { minimumMs: 500, maximumMs: 5000 });
+  assert.deepEqual(range, { minimumMs: 500, maximumMs: 8000 });
 });

@@ -4,24 +4,56 @@ import { graphicsPreset, normalizeGraphicsSettings, READABLE_INTERFACE_DEFAULTS 
 test("low graphics reduce render work without changing simulation settings", () => { const low = graphicsPreset("low"), ultra = graphicsPreset("ultra"); assert.ok(low.renderScale < ultra.renderScale); assert.ok(low.vegetationStride > ultra.vegetationStride); assert.equal(low.frameCap, 30); });
 test("custom graphics values remain bounded", () => { const value = normalizeGraphicsSettings({ renderScale: 9, vegetationStride: 0, animalDetail: .1, frameCap: 17 }); assert.equal(value.renderScale, 1.5); assert.equal(value.vegetationStride, 1); assert.equal(value.animalDetail, .6); assert.equal(value.frameCap, 30); });
 test("removed frame-rate choices migrate to supported limits", () => { assert.equal(normalizeGraphicsSettings({ frameCap: 45 }).frameCap, 30); assert.equal(normalizeGraphicsSettings({ frameCap: 0 }).frameCap, 60); assert.equal(normalizeGraphicsSettings({ frameCap: 60 }).frameCap, 60); });
-test("new users begin on the balanced preset", () => { assert.equal(normalizeGraphicsSettings({}).preset, "balanced"); });
+test("new users begin on the authored custom default profile", () => {
+  const defaults = normalizeGraphicsSettings({});
+  assert.equal(defaults.preset, "custom");
+  assert.deepEqual(
+    [defaults.renderScale, defaults.adaptiveMinScale, defaults.adaptiveMaxScale, defaults.vegetationStride, defaults.animalDetail, defaults.iconTextureQuality, defaults.frameCap],
+    [1, .75, 1.25, 2, 1, 2, 30]
+  );
+});
 test("adaptive resolution defaults on and can be disabled", () => { assert.equal(normalizeGraphicsSettings({}).adaptiveResolution, true); assert.equal(normalizeGraphicsSettings({ adaptiveResolution: false }).adaptiveResolution, false); });
 test("adaptive thresholds are bounded and lower never exceeds upper", () => { const value = normalizeGraphicsSettings({ preset: "custom", adaptiveMinScale: 1.5, adaptiveMaxScale: .75 }); assert.equal(value.adaptiveMinScale, .75); assert.equal(value.adaptiveMaxScale, .75); });
 test("entity constellations expose one bounded uniform panel scale", () => {
-  assert.equal(normalizeGraphicsSettings({}).entityPanelScale, 1);
-  assert.equal(normalizeGraphicsSettings({ entityPanelScale: .1 }).entityPanelScale, .6);
+  assert.equal(normalizeGraphicsSettings({}).entityPanelScale, .4);
+  assert.equal(normalizeGraphicsSettings({ entityPanelScale: .1, entityPanelStyle: "classic-rail" }).entityPanelScale, .1);
   assert.equal(normalizeGraphicsSettings({ entityPanelScale: 9 }).entityPanelScale, 1.5);
 });
 test("entity panel text scale is independent, discrete and bounded", () => {
   const defaults = normalizeGraphicsSettings({});
-  assert.deepEqual([defaults.entityPanelScale, defaults.entityPanelTextScale], [1, 1]);
+  assert.deepEqual([defaults.entityPanelScale, defaults.entityPanelTextScale], [.4, 1.3]);
   assert.equal(normalizeGraphicsSettings({ entityPanelScale: 1.5, entityPanelTextScale: .1 }).entityPanelTextScale, .75);
   assert.equal(normalizeGraphicsSettings({ entityPanelScale: .6, entityPanelTextScale: 9 }).entityPanelTextScale, 1.5);
   assert.equal(normalizeGraphicsSettings({ entityPanelTextScale: 1.12 }).entityPanelTextScale, 1.15);
-  assert.equal(normalizeGraphicsSettings({ entityPanelTextScale: "not-a-number" }).entityPanelTextScale, 1);
-  assert.equal(normalizeGraphicsSettings({ entityPanelTextScale: 1.3 }).entityPanelScale, 1);
+  assert.equal(normalizeGraphicsSettings({ entityPanelTextScale: "not-a-number" }).entityPanelTextScale, 1.3);
+  assert.equal(normalizeGraphicsSettings({ entityPanelTextScale: 1.3 }).entityPanelScale, .4);
   const saved = normalizeGraphicsSettings({ preset: "custom", entityPanelTextScale: 1.3 });
   assert.equal(normalizeGraphicsSettings(saved).entityPanelTextScale, 1.3);
+});
+test("new worlds use the compact predictive classic rail while retaining every authored design", () => {
+  const defaults = normalizeGraphicsSettings({});
+  assert.deepEqual(
+    [defaults.entityPanelStyle, defaults.entityPanelContentPreset, defaults.entityPanelScale],
+    ["classic-rail", "predictive", .4]
+  );
+  assert.deepEqual(
+    [defaults.entityPanelIdentityVisible, defaults.entityPanelExpressionVisible, defaults.entityPanelPublicCueVisible, defaults.entityPanelThoughtVisible, defaults.entityPanelForecastVisible],
+    [true, true, true, true, true]
+  );
+  assert.deepEqual(
+    [defaults.entityPanelHealthVisible, defaults.entityPanelConcernVisible, defaults.entityPanelForecastEffectVisible, defaults.entityPanelMetabolicVisible, defaults.entityPanelPerformanceVisible],
+    [false, false, false, false, false]
+  );
+  for (const style of ["identity-mast", "status-mast", "capsule", "classic-rail", "context-ribbon", "vital-strip", "predictive-view", "full-instrument"]) {
+    assert.equal(normalizeGraphicsSettings({ entityPanelStyle: style }).entityPanelStyle, style);
+  }
+});
+test("older complete-panel saves migrate to the preserved full instrument", () => {
+  const migrated = normalizeGraphicsSettings({ entityPanelScale: .6, instrumentThoughtVisible: false });
+  assert.equal(migrated.entityPanelStyle, "full-instrument");
+  assert.equal(migrated.entityPanelContentPreset, "full");
+  assert.equal(migrated.entityPanelThoughtVisible, false);
+  assert.deepEqual([migrated.entityPanelHealthVisible, migrated.entityPanelConcernVisible, migrated.entityPanelForecastEffectVisible, migrated.entityPanelMetabolicVisible, migrated.entityPanelPerformanceVisible], [true, true, true, true, true]);
 });
 test("explicit uniform scale wins over every legacy component scale", () => {
   const result = normalizeGraphicsSettings({ preset: "custom", entityPanelScale: .8, entityExpressionScale: 2, entityIdentityScale: 1.5, entityIconScale: .75, thoughtScale: 2, predictionScale: .75 });
@@ -62,7 +94,7 @@ test("content visibility remains independent of uniform panel size", () => {
 });
 test("interface and font scaling are independent and bounded", () => {
   const defaults = normalizeGraphicsSettings({});
-  assert.deepEqual([defaults.interfaceScale, defaults.fontScale], [.85, 1]);
+  assert.deepEqual([defaults.interfaceScale, defaults.fontScale], [.85, 1.15]);
   const custom = normalizeGraphicsSettings({ preset: "custom", interfaceScale: 4, fontScale: .2 });
   assert.deepEqual([custom.interfaceScale, custom.fontScale], [1.3, .85]);
 });
@@ -70,7 +102,7 @@ test("semantic typography categories have readable first-run defaults and indepe
   const defaults = normalizeGraphicsSettings({});
   assert.deepEqual(
     [defaults.smallTextScale, defaults.bodyTextScale, defaults.controlTextScale, defaults.headingTextScale, defaults.titleTextScale],
-    [1.5, 1.75, 1.3, 1, 1]
+    [1.3, 1.15, 1, 1, .75]
   );
   const custom = normalizeGraphicsSettings({ smallTextScale: .1, bodyTextScale: 9, controlTextScale: 1.15, headingTextScale: 1.3, titleTextScale: 1.5 });
   assert.deepEqual([custom.smallTextScale, custom.bodyTextScale, custom.controlTextScale, custom.headingTextScale, custom.titleTextScale], [.75, 1.75, 1.15, 1.3, 1.5]);
@@ -78,12 +110,12 @@ test("semantic typography categories have readable first-run defaults and indepe
 test("readable interface defaults match the first-run settings labels", () => {
   assert.deepEqual(READABLE_INTERFACE_DEFAULTS, {
     interfaceScale: .85,
-    fontScale: 1,
-    smallTextScale: 1.5,
-    bodyTextScale: 1.75,
-    controlTextScale: 1.3,
+    fontScale: 1.15,
+    smallTextScale: 1.3,
+    bodyTextScale: 1.15,
+    controlTextScale: 1,
     headingTextScale: 1,
-    titleTextScale: 1
+    titleTextScale: .75
   });
 });
 test("explicit saved interface and typography choices remain untouched", () => {

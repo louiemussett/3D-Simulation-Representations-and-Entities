@@ -1,18 +1,21 @@
 export const PRESENTATION_MINIMUM_HOLD_MS = 500;
 export const PRESENTATION_MAXIMUM_HOLD_MS = 5000;
+export const PRESENTATION_EXTENDED_MAXIMUM_HOLD_MS = 8000;
 export const EMPTY_CHANNEL_VISIBLE_MS = 1250;
 export const EMPTY_CHANNEL_HIDDEN_MS = 1750;
 
 const boundedDuration = (value, fallback) => Math.max(0, Number.isFinite(Number(value)) ? Number(value) : fallback);
-const boundedHold = (value, fallback = PRESENTATION_MINIMUM_HOLD_MS) => Math.min(PRESENTATION_MAXIMUM_HOLD_MS, Math.max(PRESENTATION_MINIMUM_HOLD_MS, boundedDuration(value, fallback)));
+const boundedHold = (value, fallback = PRESENTATION_MINIMUM_HOLD_MS, maximum = PRESENTATION_MAXIMUM_HOLD_MS) => Math.min(maximum, Math.max(PRESENTATION_MINIMUM_HOLD_MS, boundedDuration(value, fallback)));
 const boundedRank = value => Math.max(0, Math.min(100, Number.isFinite(Number(value)) ? Number(value) : 0));
 const recordKey = (entityId, channel) => `${String(entityId)}\u0000${String(channel)}`;
 
 function normaliseTiming(candidate, supplied, fallbackHold) {
   const timing = supplied || candidate?.presentationTiming || candidate?.timing || {};
+  const maximumVisibleMs = Math.min(PRESENTATION_EXTENDED_MAXIMUM_HOLD_MS, Math.max(PRESENTATION_MAXIMUM_HOLD_MS, boundedDuration(timing.maximumVisibleMs, PRESENTATION_MAXIMUM_HOLD_MS)));
   return Object.freeze({
     id: String(timing.id || "default"),
-    minimumVisibleMs: boundedHold(timing.minimumVisibleMs ?? timing.minimumHoldMs, fallbackHold),
+    minimumVisibleMs: boundedHold(timing.minimumVisibleMs ?? timing.minimumHoldMs, fallbackHold, maximumVisibleMs),
+    maximumVisibleMs,
     entryDelayMs: Math.min(PRESENTATION_MAXIMUM_HOLD_MS, boundedDuration(timing.entryDelayMs ?? timing.enterStableMs, 0)),
     releaseDelayMs: Math.min(PRESENTATION_MAXIMUM_HOLD_MS, boundedDuration(timing.releaseDelayMs ?? timing.releaseGraceMs, 0)),
     interruptPriority: boundedRank(timing.interruptPriority ?? timing.preemptRank)
@@ -129,7 +132,7 @@ export class PresentationChannelHoldStore {
   get size() { return this.records.size; }
 
   #commit(previous, candidate, candidateKey, now, timing) {
-    const duration = boundedHold(timing.minimumVisibleMs, this.minimumHoldMs);
+    const duration = boundedHold(timing.minimumVisibleMs, this.minimumHoldMs, timing.maximumVisibleMs);
     return {
       entityId: previous.entityId,
       channel: previous.channel,

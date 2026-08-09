@@ -2,20 +2,24 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { CINEMA_INFORMATION_CHANNELS, CINEMA_PRESETS, applyCinemaPresetValues, isWorldSceneCandidate, resolveCinemaInformationLens } from "../src/cinema-presets.js";
 
-test("complete Cinema presets configure the whole production while leaving AI off by default", () => {
-  for (const key of ["classic", "characters", "ecology", "world", "perception", "complete", "quiet", "events", "research"]) {
+test("the simplified Cinema modes configure coherent productions with AI off by default", () => {
+  assert.deepEqual(Object.keys(CINEMA_PRESETS), ["classic", "follow", "carnivore", "overview"]);
+  for (const key of ["classic", "follow", "carnivore", "overview"]) {
     const preset = CINEMA_PRESETS[key]; assert.ok(preset, key);
     for (const property of ["lensPreset", "subjectMode", "continuity", "pacing", "eventPriority", "shotLength", "shotTypes", "motionTypes", "perceptionInserts", "narrationPreset", "contextDepth", "narrationLength", "voice", "captions", "ai"]) assert.notEqual(preset[property], undefined, `${key}.${property}`);
     assert.equal(preset.ai, false, `${key} must not automatically enable the prototype AI`);
   }
-  assert.equal(CINEMA_PRESETS.world.subjectMode, "world");
-  assert.equal(CINEMA_PRESETS.complete.lensPreset, "complete");
+  assert.equal(CINEMA_PRESETS.overview.subjectMode, "world");
+  assert.equal(CINEMA_PRESETS.follow.subjectMode, "characters");
+  assert.equal(CINEMA_PRESETS.carnivore.subjectMode, "characters");
+  assert.equal(CINEMA_PRESETS.carnivore.continuity, "strong");
   assert.equal(CINEMA_PRESETS.classic.subjectMode, "balanced");
   assert.equal(CINEMA_PRESETS.classic.continuity, "strong");
-  assert.equal(CINEMA_PRESETS.classic.lensPreset, "adaptive");
-  assert.equal(CINEMA_PRESETS.classic.shotTypes, "all");
+  assert.equal(CINEMA_PRESETS.classic.lensPreset, "natural");
+  assert.equal(CINEMA_PRESETS.classic.shotTypes, "wildlife");
+  assert.equal(CINEMA_PRESETS.classic.perceptionInserts, "off");
   assert.equal(CINEMA_PRESETS.classic.narrationLength, "short");
-  assert.equal(CINEMA_PRESETS.classic.eventPriority, "events");
+  assert.equal(CINEMA_PRESETS.classic.eventPriority, "balanced");
 });
 
 test("documentary lenses add scene context instead of replacing it", () => {
@@ -48,7 +52,7 @@ test("world scene recognition includes actual environmental candidate kinds", ()
 });
 
 test("preset application preserves unrelated runtime state", () => {
-  const result = applyCinemaPresetValues("world", { active: true, sequence: 12 });
-  assert.equal(result.active, true); assert.equal(result.sequence, 12); assert.equal(result.subjectMode, "world"); assert.equal(result.presetName, "world");
+  const result = applyCinemaPresetValues("overview", { active: true, sequence: 12 });
+  assert.equal(result.active, true); assert.equal(result.sequence, 12); assert.equal(result.subjectMode, "world"); assert.equal(result.presetName, "overview");
   assert.equal(applyCinemaPresetValues("unknown", { active: true }).presetName, "custom");
 });

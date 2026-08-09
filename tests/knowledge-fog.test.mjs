@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { FOG_STATE, fogKnowledgeState, withinLocalFogReveal } from "../src/knowledge-fog.js";
 
-test("unseen terrain is black unknown fog", () => {
+test("unseen terrain remains uniformly unknown", () => {
   assert.equal(fogKnowledgeState(), FOG_STATE.UNKNOWN);
 });
 
@@ -24,4 +24,10 @@ test("selected animal receives a stable circular local reveal", () => {
   const observer = { x: 10, z: 10 };
   assert.equal(withinLocalFogReveal({ x: 13, z: 14 }, observer, 5), true);
   assert.equal(withinLocalFogReveal({ x: 14, z: 14 }, observer, 5), false);
+});
+
+test("terrain relief contracts the local reveal instead of creating vertical black gaps", () => {
+  const observer = { x: 0, z: 0, elevation: 0 };
+  assert.equal(withinLocalFogReveal({ x: 4, z: 0, elevation: 0 }, observer, 5), true);
+  assert.equal(withinLocalFogReveal({ x: 4, z: 0, elevation: 3 }, observer, 5), false);
 });

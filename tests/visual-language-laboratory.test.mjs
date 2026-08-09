@@ -52,7 +52,7 @@ test("live visual-language snapshot admits only contract-valid public records", 
 
 test("Society mounts a Main visual-language instrument with a deliberately condensed Mini surface", () => {
   assert.ok(rendererStart >= 0 && rendererEnd > rendererStart, "visual-language renderer is extractable");
-  assert.match(app, /panels\.society\.append\(visualLanguage, society\)/);
+  assert.match(app, /panels\.society\.append\(visualLanguage, society, societyEcology\)/);
   assert.match(app, /if \(id === "society"\) renderVisualLanguageLaboratory\(\)/);
   assert.match(app, /renderVisualLanguageLaboratory\(\);\s*\n/);
   for (const hook of ["data-visual-language-surface=\"mini\"", "data-visual-language-surface=\"main\"", "data-open-main-visual-language", "data-visual-language-mini-expression-samples", "data-visual-language-mini-emitter-samples"]) assert.match(renderer, new RegExp(hook));

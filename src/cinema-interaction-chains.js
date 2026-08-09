@@ -2,6 +2,34 @@ const clean = value => String(value || "").toLowerCase().replaceAll("_", "-");
 const distance = (left, right) => Math.hypot(Number(left?.x || 0) - Number(right?.x || 0), Number(left?.z || 0) - Number(right?.z || 0));
 const unique = values => [...new Set(values.filter(Boolean))];
 
+function predationCompletionEstimateMs(phase, separation, hunter, prey) {
+  if (phase === "contact") return 8_000;
+  // Editorial time is real viewing time, not simulation time. Even slow-search
+  // phases progress through camera beats at a bounded minimum narrative rate.
+  const closingSpeed = Math.max(.3, Number(hunter?.speed || 0) + Number(prey?.speed || 0) * .35);
+  const travelMs = Math.max(0, Number(separation || 0) - 1.2) / closingSpeed * 1_000;
+  const phaseAllowance = { pursuit: 10_000, approach: 18_000, evidence: 32_000, hunt: 35_000 }[phase] || 30_000;
+  return Math.round(Math.min(180_000, travelMs + phaseAllowance));
+}
+
+function narrativeConclusionProfile(chain) {
+  if (chain.kind === "predation") {
+    const activePursuit = ["approach", "pursuit", "contact"].includes(chain.phase);
+    return {
+      eligible: true,
+      activePursuit,
+      // A committed stalk or pursuit is already the event. Its remaining
+      // duration is diagnostic information, never an admission deadline.
+      mustFollow: activePursuit,
+      completionEstimateMs: predationCompletionEstimateMs(chain.phase, chain.distance, chain.hunter, chain.prey)
+    };
+  }
+  if (chain.kind === "reproduction") return { eligible: ["courtship", "accepted", "rejected", "mating", "mating-complete", "birth"].includes(chain.phase), completionEstimateMs: chain.phase === "birth" ? 55_000 : 45_000 };
+  if (chain.kind === "caregiving") return { eligible: ["nursing", "reunion", "protection"].includes(chain.phase), completionEstimateMs: 45_000 };
+  if (chain.kind === "pregnancy") return { eligible: chain.phase === "labour", completionEstimateMs: 55_000 };
+  return { eligible: false, completionEstimateMs: Infinity };
+}
+
 function predationPhase(entity) {
   const action = clean(`${entity.actionKey || ""} ${entity.predationPhase || ""}`);
   if (/attack|strike|grapple|kill|contact/.test(action)) return "contact";
@@ -30,6 +58,8 @@ function stageScene(chain, stage, subjectIds, title, detail, extra = {}) {
     eventKey: `${chain.signature}:${stage}`,
     eventPriority: chain.priority,
     score: chain.score,
+    activePursuit: Boolean(chain.activePursuit),
+    mustFollow: Boolean(chain.mustFollow),
     heading: chain.heading ?? chain.hunter?.heading ?? chain.subject?.heading ?? 0,
     speed: Math.max(0, ...present.map(item => Number(item.speed) || 0)),
     title,
@@ -44,18 +74,18 @@ function predationScenes(chain) {
   const preyAwareness = chain.preyAware
     ? `${names.prey}'s outward behaviour or sensory record now contains evidence of ${names.hunter}.`
     : `The camera checks ${names.prey} for an outward response; absence of one does not prove the hunter is unknown.`;
-  const scenes = [
-    stageScene(chain, "evidence", [hunter.id], `${names.hunter} has ${evidence}`, `${names.hunter} has obtained ${evidence} linked to ${names.prey}. This begins a connected predation thread rather than an isolated animal profile.`, { preferredBeat: "perception" }),
-    stageScene(chain, "prey-response", [prey.id], `Has ${names.prey} detected the danger?`, preyAwareness, { preferredBeat: "reaction" }),
-    stageScene(chain, "hunter-progress", [hunter.id], `${names.hunter} follows the opportunity`, `${names.hunter} is in the ${chain.phase} phase. The current separation from ${names.prey} is about ${Math.round(chain.distance * 10) / 10} world units.`, { preferredBeat: "action" })
-  ];
-  if (chain.joiner) scenes.push(stageScene(chain, "nearby-participant", [chain.joiner.id, prey.id], `${names.joiner} is close to the same hunt`, chain.joinerCommitted ? `${names.joiner}'s current action is linked to ${names.prey}, making it an active participant in this thread.` : `${names.joiner} is close enough to become relevant, but the documentary does not claim it has joined without behavioural evidence.`, { preferredBeat: "reaction" }));
-  scenes.push(
-    stageScene(chain, "distance-overview", [hunter.id, prey.id, chain.joiner?.id], `The hunt in spatial context`, `${names.hunter} and ${names.prey} are about ${Math.round(chain.distance * 10) / 10} world units apart. This wider view restores the geometry of the encounter.`, { preferredBeat: "establish" }),
-    stageScene(chain, "prey-condition", [prey.id], `${names.prey}'s escape capacity`, `A deliberate condition check shows the prey's current health, hydration, accessible energy, burst reserve and recovery burden.`, { preferredBeat: "detail", conditionSubject: "prey" }),
-    stageScene(chain, "hunter-condition", [hunter.id], `${names.hunter}'s pursuit capacity`, `A deliberate condition check shows the hunter's hunger, body reserves, burst reserve and recovery burden before the thread returns to events.`, { preferredBeat: "detail", conditionSubject: "hunter" })
-  );
-  return scenes;
+  const progress = stageScene(chain, "hunter-progress", [hunter.id], `${names.hunter} follows the opportunity`, `${names.hunter} is in the ${chain.phase} phase. The current separation from ${names.prey} is about ${Math.round(chain.distance * 10) / 10} world units.`, { preferredBeat: "action" });
+  const response = stageScene(chain, "prey-response", [prey.id], `Has ${names.prey} detected the danger?`, preyAwareness, { preferredBeat: "reaction" });
+  const overview = stageScene(chain, "distance-overview", [hunter.id, prey.id, chain.joiner?.id], `The hunt in spatial context`, `${names.hunter} and ${names.prey} are about ${Math.round(chain.distance * 10) / 10} world units apart.${chain.joinerCommitted ? ` ${names.joiner} is also behaviourally committed to this hunt.` : ""}`, { preferredBeat: "establish" });
+  const condition = stageScene(chain, "prey-condition", [prey.id], `${names.prey}'s escape capacity`, `A deliberate condition check shows the prey's current health, hydration, accessible energy, burst reserve and recovery burden.`, { preferredBeat: "detail", conditionSubject: "prey" });
+  const opening = stageScene(chain, "evidence", [hunter.id], `${names.hunter} has ${evidence}`, `${names.hunter} has obtained ${evidence} linked to ${names.prey}. This begins a connected predation thread rather than an isolated animal profile.`, { preferredBeat: "perception" });
+
+  // A hunt is one editorial story, not a checklist of every available lens.
+  // Keep three complementary views and replace them as the phase advances.
+  if (chain.phase === "evidence" || chain.phase === "hunt") return [opening, response, overview];
+  if (chain.phase === "approach") return [progress, response, overview];
+  if (chain.phase === "pursuit") return [overview, progress, condition];
+  return [progress, overview, condition];
 }
 
 function reproductionPhase(entity) {
@@ -73,11 +103,9 @@ function reproductiveScenes(chain) {
   const first = chain.initiator, second = chain.partner, names = chain.names;
   const phaseText = chain.phase.replaceAll("-", " ");
   return [
-    stageScene(chain, "relationship-open", [first.id], `${names.first} begins a reproductive interaction`, `${names.first}'s authoritative action state identifies ${names.second} as the partner in a ${phaseText} phase. This is a paired event, not an inference from proximity.`, { preferredBeat: "action" }),
     stageScene(chain, "partner-response", [second.id], `${names.second}'s part in the interaction`, chain.reciprocal ? `${names.second}'s current reproductive state also links back to ${names.first}.` : `Cinema can show ${names.second}'s observable state without claiming reciprocal acceptance until its own state records it.`, { preferredBeat: "reaction" }),
     stageScene(chain, "relationship-progress", [first.id, second.id], `${names.first} and ${names.second}: ${phaseText}`, `The same pair remains the subject as courtship, acceptance, rejection or mating changes. A phase change updates this thread instead of creating an unrelated animal profile.`, { preferredBeat: "action" }),
-    stageScene(chain, "relationship-overview", [first.id, second.id], "The pair in social context", `${names.first} and ${names.second} are about ${Math.round(chain.distance * 10) / 10} world units apart. The wider view restores the spatial and social context of the interaction.`, { preferredBeat: "establish" }),
-    stageScene(chain, "reproductive-condition", [first.id, second.id], "Condition behind the reproductive event", "A deliberate condition view can relate health, reserves, recovery and reproductive state to the ongoing interaction without treating those statistics as the story itself.", { preferredBeat: "detail" })
+    stageScene(chain, "relationship-overview", [first.id, second.id], "The pair in social context", `${names.first} and ${names.second} are about ${Math.round(chain.distance * 10) / 10} world units apart. The wider view restores the spatial and social context of the interaction.`, { preferredBeat: "establish" })
   ];
 }
 
@@ -88,8 +116,7 @@ function pregnancyScenes(chain) {
   return [
     stageScene(chain, "maternal-state", [mother.id], `${names.mother}'s ${chain.phase}`, `Authoritative simulation state places ${names.mother} in ${chain.phase}; gestation is approximately ${percent}% complete and ${development}. This is documentary truth, not a public signal emitted by the animal.`, { preferredBeat: "detail" }),
     stageScene(chain, "maternal-condition", [mother.id], `The physical investment of pregnancy`, `A deliberate condition check relates ${names.mother}'s health, hydration, energy reserves and recovery burden to the current gestational phase.`, { preferredBeat: "detail" }),
-    stageScene(chain, "pregnancy-context", contextIds, `Pregnancy within the group`, chain.nearbyFamily ? `${names.family} is nearby in the same social group. Proximity provides context but is not described as active support unless behaviour records caregiving.` : `${names.mother}'s immediate social context contains no nearby group member selected for this shot; Cinema does not invent support.`, { preferredBeat: "establish" }),
-    stageScene(chain, "reproductive-outlook", [mother.id], `What changes as gestation advances?`, `The thread can return when ${names.mother}'s gestational phase, condition, labour state or dependent family changes. It does not predict a successful birth merely because pregnancy is established.`, { preferredBeat: "reflection" })
+    stageScene(chain, "pregnancy-context", contextIds, `Pregnancy within the group`, chain.nearbyFamily ? `${names.family} is nearby in the same social group. Proximity provides context but is not described as active support unless behaviour records caregiving.` : `${names.mother}'s immediate social context contains no nearby group member selected for this shot; Cinema does not invent support.`, { preferredBeat: "establish" })
   ];
 }
 
@@ -102,14 +129,13 @@ function caregivingScenes(chain) {
       : chain.phase === "protection"
         ? `${names.mother}'s current action places protection or defence within this family relationship.`
         : `The authoritative mother–dependent link keeps this family together as a documentary subject; proximity alone is not used to manufacture caregiving.`;
-  return [
-    stageScene(chain, "dependent-state", [child.id], `${names.child} within a dependent life`, `${names.child} is authoritatively recorded as ${names.mother}'s dependent. Cinema first establishes the young animal rather than opening with a table of its statistics.`, { preferredBeat: "reaction" }),
-    stageScene(chain, "caregiver-response", [mother.id], `${names.mother}'s current response`, `${names.mother}'s observable action is ${mother.actionKey || "ordinary family activity"}. The documentary distinguishes that action from assumed private concern.`, { preferredBeat: "action" }),
-    stageScene(chain, "family-exchange", [mother.id, child.id], chain.phase === "nursing" ? "Nursing as a two-animal exchange" : `The family relationship in its ${chain.phase} phase`, exchange, { preferredBeat: "action" }),
-    stageScene(chain, "family-overview", [mother.id, ...chain.dependents.map(item => item.id)], `The wider dependent family`, `${names.mother} currently has ${chain.dependents.length} living ${chain.dependents.length === 1 ? "dependent" : "dependents"} in this thread. The wide view restores their spacing and immediate surroundings.`, { preferredBeat: "establish" }),
-    stageScene(chain, "dependent-condition", [child.id], `${names.child}'s immediate capacity`, "A deliberate condition check can show whether the dependent has the reserves, hydration and recovery capacity to feed, follow or wait.", { preferredBeat: "detail" }),
-    stageScene(chain, "caregiver-condition", [mother.id], `${names.mother}'s caregiving capacity`, `A deliberate condition check can relate ${names.mother}'s reserves, hydration, lactation and recovery burden to continued care.`, { preferredBeat: "detail" })
-  ];
+  const dependent = stageScene(chain, "dependent-state", [child.id], `${names.child} within a dependent life`, `${names.child} is authoritatively recorded as ${names.mother}'s dependent. Cinema first establishes the young animal rather than opening with a table of its statistics.`, { preferredBeat: "reaction" });
+  const response = stageScene(chain, "caregiver-response", [mother.id], `${names.mother}'s current response`, `${names.mother}'s observable action is ${mother.actionKey || "ordinary family activity"}. The documentary distinguishes that action from assumed private concern.`, { preferredBeat: "action" });
+  const exchangeScene = stageScene(chain, "family-exchange", [mother.id, child.id], chain.phase === "nursing" ? "Nursing as a two-animal exchange" : `The family relationship in its ${chain.phase} phase`, exchange, { preferredBeat: "action" });
+  const overview = stageScene(chain, "family-overview", [mother.id, ...chain.dependents.map(item => item.id)], `The wider dependent family`, `${names.mother} currently has ${chain.dependents.length} living ${chain.dependents.length === 1 ? "dependent" : "dependents"} in this thread. The wide view restores their spacing and immediate surroundings.`, { preferredBeat: "establish" });
+  if (chain.phase === "nursing") return [exchangeScene, dependent, overview];
+  if (chain.phase === "protection") return [response, exchangeScene, overview];
+  return [dependent, exchangeScene, overview];
 }
 
 function buildReproductiveChains(alive, byId) {
@@ -198,18 +224,26 @@ export function buildCinemaInteractionChains(entities = [], { maximumJoinDistanc
       byId,
       names: { hunter: hunter.label || hunter.id, prey: prey.label || prey.id, joiner: joiner?.label || joiner?.id || "another hunter" }
     };
+    Object.assign(chain, narrativeConclusionProfile(chain));
     chain.scenes = predationScenes(chain);
     chains.push(chain);
   }
   chains.push(...buildReproductiveChains(alive, byId), ...buildPregnancyChains(alive, byId), ...buildCaregivingChains(alive, byId));
-  return chains.sort((left, right) => right.score - left.score || left.chainId.localeCompare(right.chainId));
+  for (const chain of chains) if (chain.completionEstimateMs == null) Object.assign(chain, narrativeConclusionProfile(chain));
+  return chains.sort((left, right) => Number(right.mustFollow) - Number(left.mustFollow) || right.score - left.score || left.chainId.localeCompare(right.chainId));
 }
 
 /** Returns one live beat and a serialisable continuation state. */
-export function chooseCinemaInteractionBeat(chains = [], state = {}, sequence = 0) {
+export function chooseCinemaInteractionBeat(chains = [], state = {}, sequence = 0, { nowMs = 0, kind = null } = {}) {
   const completed = { ...(state.completed || {}) };
   for (const [signature, at] of Object.entries(completed)) if (sequence - at > 10) delete completed[signature];
   let chain = chains.find(item => item.chainId === state.chainId), cursor = Math.max(0, Number(state.cursor) || 0);
+  if (!chain && state.chainId && !state.resolutionShown) {
+    const ids = unique(state.ids || []), kind = state.kind || "interaction";
+    const scene = { id: `interaction:${state.chainId}:resolution`, kind: "interaction-stage", interactionFirst: true, interactionKind: kind, interactionPhase: "resolved", chainId: state.chainId, chainSignature: state.signature, chainStage: "resolution", ids, semanticRoleIds: ids, focus: state.focus || { x: 0, z: 0 }, actionKey: `${kind} interaction resolution`, eventKey: `${state.signature}:resolution`, eventPriority: 100, score: 130, heading: state.heading || 0, speed: 0, title: `The ${kind} thread reaches an outcome`, detail: "The participants no longer sustain the interaction recorded in the preceding shots. Cinema closes the thread without inventing which private belief caused the outcome.", preferredBeat: "outcome" };
+    completed[state.signature] = sequence;
+    return { scene, state: { chainId: null, signature: null, kind: null, phase: null, cursor: 0, completed, resolutionShown: true } };
+  }
   if (chain && chain.signature !== state.signature) {
     // Awareness, distance and pursuit phase can change while the camera is
     // following the same participants. Continue after the last narrated beat
@@ -221,12 +255,12 @@ export function chooseCinemaInteractionBeat(chains = [], state = {}, sequence = 
   }
   if (!chain || cursor >= chain.scenes.length) {
     if (chain && cursor >= chain.scenes.length) completed[chain.signature] = sequence;
-    chain = chains.find(item => sequence - Number(completed[item.signature] ?? -Infinity) > 10) || null;
+    chain = chains.find(item => item.eligible && (!kind || item.kind === kind) && sequence - Number(completed[item.signature] ?? -Infinity) > 10) || null;
     cursor = 0;
   }
   if (!chain) return { scene: null, state: { chainId: null, signature: null, kind: null, phase: null, cursor: 0, completed } };
   const scene = chain.scenes[cursor], nextCursor = cursor + 1;
-  return { scene, state: { chainId: chain.chainId, signature: chain.signature, kind: chain.kind, phase: chain.phase, cursor: nextCursor, completed, stage: scene.chainStage, length: chain.scenes.length } };
+  return { scene, state: { chainId: chain.chainId, signature: chain.signature, kind: chain.kind, phase: chain.phase, cursor: nextCursor, completed, stage: scene.chainStage, length: chain.scenes.length, startedAtMs: state.chainId === chain.chainId ? state.startedAtMs : nowMs, completionEstimateMs: chain.completionEstimateMs, ids: unique(chain.scenes.flatMap(item => item.ids || [])), focus: { ...chain.focus }, heading: chain.heading || 0, resolutionShown: false } };
 }
 
 export function cinemaInteractionLens(stage) {

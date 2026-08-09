@@ -48,6 +48,17 @@ test("reference covers every major game-system family", () => {
   for (const term of ["Valley Grazer", "Shieldback Colony", "Maintain hydration", "Drink at confirmed shoreline", "authoritative simulated minute", "Ecological accounting", "Personal space", "Meta-group", "Surface nests", "deterministic time skip"]) assert.match(html, new RegExp(term, "i"));
 });
 
+test("reference explains literal calculated ecology presets and manual overrides", () => {
+  const section = LABORATORY_REFERENCE_SECTIONS.find(item => item.id === "species-directory");
+  assert.ok(section);
+  for (const term of ["Literal predator-and-prey population presets", "Ridge Hunter food web", "Pack Breaker", "All 22 species", "20%", "200%", "one predator means one predator", "Custom selection"]) assert.match(section.html, new RegExp(term, "i"), term);
+  assert.match(section.html, /Pack Breaker[^]*Great Plains Grazer 11[^]*Armoured Browser 7[^]*Northern Shaggy Grazer 10/i);
+  assert.match(section.html, /data-reference-ecology-preset="full"/);
+  assert.match(section.html, /Low-predator founder safeguard/i);
+  assert.match(section.html, /only one or two literal animals[^]*adult female at 95% gestation/i);
+  assert.match(section.html, /only when the world is created/i);
+});
+
 test("reference explains the public rail, selected integrated instrument and every independent line channel", () => {
   const section = LABORATORY_REFERENCE_SECTIONS.find(item => item.id === "symbols-communication");
   assert.ok(section);
@@ -193,7 +204,7 @@ test("in-world Entity Display Guide teaches the same single-surface contract", (
   assert.match(index, /semantic profiles between 0\.5 and 5 seconds/i);
   assert.match(index, /sudden startle lasts 0\.5 seconds[\s\S]*safe rest[\s\S]*5-second minimum/i);
   assert.match(index, /1\.25-second visible, 1\.75-second quiet heartbeat/i);
-  assert.match(index, /empty forecast pulses vary from 1\.25 to 2\.5 seconds/i);
+  assert.match(index, /empty forecast pulses vary from 3 to 5 seconds/i);
   assert.match(index, /Sound arcs are not held[\s\S]*only while the animal is actually vocalising/i);
   assert.match(index, /UNDECIDED/);
   assert.match(index, /NO QUALIFIED FORECAST[\s\S]*never mean safe, no predator, no water or no event/i);
@@ -257,12 +268,13 @@ test("symbols reference documents bounded semantic timing and honest empty heart
   assert.match(section.html, /Visible expression[\s\S]*0\.5 s–5 s/);
   assert.match(section.html, /Public callout[\s\S]*0\.75 s–4 s/);
   assert.match(section.html, /Ordinary thought[\s\S]*0\.75 s–5 s/);
-  assert.match(section.html, /Private forecast[\s\S]*1 s–4\.5 s/);
+  assert.match(section.html, /Private forecast[\s\S]*3 s–8 s/);
   assert.match(section.html, /coalesces rapid replacements[\s\S]*latest eligible pending value/i);
   assert.match(section.html, /never freezes physiology, priority selection, action execution, memory, predictive learning/i);
   assert.match(section.html, /Undecided priority heartbeat[\s\S]*1\.25 s[\s\S]*1\.75 s quiet interval/i);
   assert.match(section.html, /Forecast-status heartbeat[\s\S]*qualified estimate has not changed[\s\S]*never implies safety or (?:environmental )?absence/i);
-  for (const profile of [...EXPRESSION_PRESENTATION_TIMINGS, ...CALLOUT_PRESENTATION_TIMINGS, ...THOUGHT_PRESENTATION_TIMINGS, ...FORECAST_PRESENTATION_TIMINGS, ...FORECAST_EMPTY_PRESENTATION_TIMINGS]) assert.ok(profile.minimumVisibleMs >= 500 && profile.minimumVisibleMs <= 5000, profile.id);
+  for (const profile of [...EXPRESSION_PRESENTATION_TIMINGS, ...CALLOUT_PRESENTATION_TIMINGS, ...THOUGHT_PRESENTATION_TIMINGS]) assert.ok(profile.minimumVisibleMs >= 500 && profile.minimumVisibleMs <= 5000, profile.id);
+  for (const profile of [...FORECAST_PRESENTATION_TIMINGS, ...FORECAST_EMPTY_PRESENTATION_TIMINGS]) assert.ok(profile.minimumVisibleMs >= 3000 && profile.minimumVisibleMs <= 8000, profile.id);
   assert.match(app, /publicSignalMaterialFromDescriptor\(signalDescriptor, liveVocalActive\)/);
 });
 
@@ -340,7 +352,7 @@ test("predictive-symbols reference exhaustively identifies every honest empty fo
     assert.ok(section.html.includes(state.footerLabel), `${state.id} footer`);
     assert.ok(section.html.includes(state.detail), `${state.id} detail`);
   }
-  assert.match(section.html, /1\.25 s–2\.5 s visible[\s\S]*1\.75 s quiet interval/i);
+  assert.match(section.html, /3 s–5 s visible[\s\S]*1\.75 s quiet interval/i);
   assert.match(section.html, /NO QUALIFIED FORECAST[\s\S]*never means “no predator”, “safe”, “no water” or “nothing will happen”/i);
   assert.match(section.html, /distinct from the broken-ring empty status/i);
 });

@@ -20,7 +20,7 @@ const freezeEntries = entries => Object.freeze(Object.fromEntries(Object.entries
 })])));
 
 export const CINEMA_THREAD_TEMPOS = Object.freeze({
-  flash: Object.freeze({ maximumSentences: 2, maximumWords: 6, initialDelayMs: 90, rateMultiplier: 1.32, maximumHoldSeconds: 2.2, cuePauseMs: 90, minimumCaptionMs: 420, interruptible: true }),
+  flash: Object.freeze({ maximumSentences: 1, maximumWords: 14, initialDelayMs: 120, rateMultiplier: 1.18, maximumHoldSeconds: 6, cuePauseMs: 100, minimumCaptionMs: 650, interruptible: true }),
   urgent: Object.freeze({ maximumSentences: 1, maximumWords: 12, initialDelayMs: 160, rateMultiplier: 1.2, maximumHoldSeconds: 3.4, cuePauseMs: 140, minimumCaptionMs: 520, interruptible: true }),
   active: Object.freeze({ maximumSentences: 1, maximumWords: 22, initialDelayMs: 420, rateMultiplier: 1.07, maximumHoldSeconds: 5.5, cuePauseMs: 240, minimumCaptionMs: 650, interruptible: true }),
   developing: Object.freeze({ maximumSentences: 2, maximumWords: 38, initialDelayMs: 850, rateMultiplier: 1, maximumHoldSeconds: 9, cuePauseMs: 620, minimumCaptionMs: 800, interruptible: false }),
@@ -62,6 +62,19 @@ export const CINEMA_THREAD_PHRASE_LIBRARY = Object.freeze({
     reunion: { atoms: ["Reunion.", "Returning."], pulses: [["Separated.", "Returning now."]], links: [["The family is closing the separation", "a reunion is under way"]], sentences: ["The family is trying to reunite."] },
     protection: { atoms: ["Protection.", "Guarding."], pulses: [["Danger nearby.", "The caregiver guards."]], links: [["Danger has changed the exchange", "care becomes protection"]], sentences: ["Care has become protection."] },
     care: { atoms: ["Family care."], links: [["The dependent relationship persists", "the camera follows its next exchange"]], sentences: ["The family remains linked through care."] }
+  }),
+  feeding: freezeEntries({
+    preference: { atoms: ["Preferred food.", "A selective meal."], pulses: [["Food found.", "Preference matters."], ["A possible meal.", "Not equal nourishment."]], links: [["Food is available", "species preference changes its value"], ["The animal begins to feed", "this food suits its registered diet"]], sentences: ["This food matches the species' registered preference.", "The feeding choice reflects a species-specific diet."] },
+    "carcass-provenance": { atoms: ["Carrion identified.", "A particular carcass."], pulses: [["A carcass remains.", "Its source matters."], ["Carrion found.", "Preference now matters."]], links: [["The carcass retains its source species", "consumers value it differently"], ["The remains are edible", "but not equally preferred by every scavenger"]], sentences: ["The carcass's source species changes its value to this consumer.", "This carrion is evaluated by provenance as well as freshness."] },
+    "tree-browsing": { atoms: ["Browsing.", "Foliage taken."], pulses: [["Reachable leaves.", "Browsing begins."], ["Foliage depleted.", "The trunk remains."]], links: [["The animal takes reachable foliage", "the living trunk remains"], ["Browsing removes the leaves", "regrowth will take time"]], sentences: ["The animal is browsing reachable tree foliage.", "The tree is losing foliage without being removed."] },
+    "foliage-recovery": { atoms: ["Leaves return.", "Foliage recovers."], pulses: [["Time passes.", "Leaves return."]], links: [["Bounded regrowth is complete", "the tree can support browsing again"]], sentences: ["The browsed tree has recovered its foliage."] }
+  }),
+  spatial: freezeEntries({
+    "home-range": { atoms: ["A familiar range."], pulses: [["Repeated use.", "No exclusive claim."]], links: [["This ground is used repeatedly", "it is not an established territory"]], sentences: ["This is a familiar home range, not a defended territory."] },
+    "territory-establishing": { atoms: ["A claim forms.", "Occupancy holds."], pulses: [["Repeated presence.", "A claim strengthens."]], links: [["Local occupancy remains stable", "a territorial claim is forming"]], sentences: ["Stable occupancy is establishing a defended claim."] },
+    "territory-established": { atoms: ["Territory established.", "A defended claim."], pulses: [["The claim holds.", "This ground is defended."]], links: [["The claim is established", "intrusion now carries social pressure"]], sentences: ["An established territory now shapes this encounter."] },
+    "territory-dispute": { atoms: ["Disputed ground.", "Claims overlap."], pulses: [["Two claims.", "One overlap."], ["Territories overlap.", "Conflict is possible."]], links: [["Two established claims overlap", "a dispute is now active"], ["The boundary is disputed", "combat is not inevitable"]], sentences: ["Two established territories now overlap in dispute.", "This overlap creates territorial pressure without guaranteeing a fight."] },
+    relocation: { atoms: ["The old claim resets."], pulses: [["The owner relocates.", "Establishment restarts."]], links: [["The owner has relocated", "the former local claim no longer follows it"]], sentences: ["Relocation has reset the local territorial claim."] }
   })
 });
 
@@ -71,6 +84,8 @@ export function cinemaThreadTempo(scene = {}) {
   if (kind === "pregnancy" && phase === "labour") return stage === "maternal-condition" ? "active" : "urgent";
   if (kind === "reproduction") return ["mating", "accepted", "rejected"].includes(phase) ? "active" : "developing";
   if (kind === "caregiving") return ["nursing", "reunion", "protection"].includes(phase) ? "active" : "developing";
+  if (kind === "feeding") return ["tree-browsing", "carcass-provenance"].includes(phase) ? "active" : "developing";
+  if (kind === "spatial") return phase === "territory-dispute" ? "active" : "developing";
   if (kind === "pregnancy") return stage === "reproductive-outlook" ? "reflective" : "developing";
   return "developing";
 }
@@ -93,10 +108,8 @@ function realiseEntry(entry, tempo, variant) {
   if (!entry) return { text: "", segments: [], realisation: "none" };
   const index = Math.abs(Math.floor(Number(variant) || 0));
   if (tempo === "flash") {
-    const styles = ["atom", "pulse", "sentence"], style = styles[index % styles.length];
-    if (style === "pulse" && entry.pulses.length) return { ...composeCinemaThreadFragments(choose(entry.pulses, index), { mode: "pulse", maximumParts: 2 }), realisation: "pulse" };
-    if (style === "sentence" && entry.sentences.length) { const text = sentence(choose(entry.sentences, index)); return { text, segments: [text], realisation: "single" }; }
-    const text = sentence(choose(entry.atoms.length ? entry.atoms : entry.sentences, index)); return { text, segments: text ? [text] : [], realisation: "atom" };
+    const text = sentence(choose(entry.sentences.length ? entry.sentences : entry.atoms, index));
+    return { text, segments: text ? [text] : [], realisation: "single" };
   }
   if (["urgent", "active"].includes(tempo) && entry.links.length && index % 2) return { ...composeCinemaThreadFragments(choose(entry.links, index), { mode: "linked", maximumParts: 2 }), realisation: "linked" };
   const text = sentence(choose(entry.sentences.length ? entry.sentences : entry.atoms, index));
@@ -128,5 +141,6 @@ export function cinemaThreadChanged(previous = {}, current = null) {
   }
   const changed = previous.chainSignature !== current.signature;
   const tempo = cinemaThreadTempo({ interactionKind: current.kind, interactionPhase: current.phase, chainStage: current.scenes?.[0]?.chainStage });
-  return { changed, urgent: changed && ["flash", "urgent"].includes(tempo), reason: changed ? `thread-${current.phase}-changed` : null };
+  const decisive = current.kind === "predation" ? ["contact", "resolution", "consequence"].includes(current.phase) : ["urgent", "flash"].includes(tempo);
+  return { changed, urgent: changed && decisive, reason: changed ? `thread-${current.phase}-changed` : null };
 }

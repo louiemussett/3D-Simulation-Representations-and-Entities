@@ -33,6 +33,17 @@ test("per-candidate holds are clamped to the 500-5000 ms readable range", () => 
   assert.equal(tooLong.timing.minimumVisibleMs, 5000);
 });
 
+test("forecast timing may opt into the extended 8000 ms text-reading ceiling", () => {
+  const store = new PresentationChannelHoldStore();
+  const forecast = cue("forecast:body-recovery", timing("forecast:body-recovery", 8000, { maximumVisibleMs: 8000 }));
+  const shown = store.resolve({ entityId: "VG1", channel: "forecast", candidate: forecast, now: 100 });
+  assert.equal(shown.timing.minimumVisibleMs, 8000);
+  assert.equal(shown.holdUntil, 8100);
+
+  const ordinary = store.resolve({ entityId: "VG2", channel: "expression", candidate: cue("calm", timing("calm", 8000)), now: 100 });
+  assert.equal(ordinary.timing.minimumVisibleMs, 5000);
+});
+
 test("replacement waits for both entry stability and the current cue release grace", () => {
   const store = new PresentationChannelHoldStore();
   const calm = cue("calm", timing("calm", 500, { releaseDelayMs: 300, interruptPriority: 10 }));

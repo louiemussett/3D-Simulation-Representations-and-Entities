@@ -13,6 +13,15 @@ test("a selected herd can expand constituent groups without replacing herd selec
   assert.match(app, /members\.map\(observerMemberSummary\)/);
 });
 
+test("the herd panel presents one herd above numbered groups and their individuals", () => {
+  assert.match(app, /One herd · \$\{rows\.length\} constituent/);
+  assert.match(app, /<strong>Group \$\{groupNumber\}<\/strong>/);
+  assert.match(app, /Show individuals/);
+  assert.match(app, /Individuals in group \$\{groupNumber\}/);
+  assert.match(app, /Individuals attached directly to this herd/);
+  assert.doesNotMatch(app, /<strong>\$\{escapeHtml\(label\)\}<\/strong> · \$\{members\.length\}/);
+});
+
 test("group expansion and group focus are distinct controls", () => {
   const expansionHandler = app.indexOf('event.target.closest("[data-group-expand]")');
   const focusHandler = app.indexOf('dataset.groupFocus', expansionHandler);
@@ -25,4 +34,7 @@ test("expanded herd members have a bounded nested layout", () => {
   assert.match(styles, /\.observer-herd-group-members\s*\{/);
   assert.match(styles, /\.observer-herd-group-summary\s*\{/);
   assert.match(styles, /grid-template-columns:\s*minmax\(0,1fr\) auto/);
+  assert.match(styles, /\.observer-organization-groups\s*\{[^}]*list-style:\s*none/);
+  assert.match(styles, /\.observer-herd-members-title\s*\{/);
+  assert.match(styles, /\.observer-herd-individuals\s*\{/);
 });

@@ -50,17 +50,29 @@ test("runtime typography scales authored component sizes instead of flattening e
   assert.doesNotMatch(scaler, /typographyDefaults\[role\] \* graphicsSettings\.fontScale/);
 });
 
+test("dynamic selected-panel typography is remeasured from the complete authored panel", () => {
+  const app = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+  const observerStart = app.indexOf("const typographyObserver = new MutationObserver");
+  const observerEnd = app.indexOf("typographyObserver.observe(document.body", observerStart);
+  const observer = app.slice(observerStart, observerEnd);
+  assert.match(observer, /node\.closest\("#observer-selection, #movie-hud"\)/);
+  assert.match(observer, /pendingTypographyRoots\.add\(authoredPanel \|\| node\)/);
+});
+
 test("selected organism commitment and Laboratory expose metabolic state", () => {
   assert.match(app, /observerFuelOverviewHtml/);
-  assert.match(app, /function observerWholeAnimalOverviewHtml[\s\S]*data-overview-section="physiology"/);
+  assert.match(app, /function observerWholeAnimalOverviewHtml[\s\S]*observer-visual-meter-grid/);
+  assert.match(app, /function observerCommitmentVisualHtml[\s\S]*observer-physiology-badges/);
   for (const label of ["Health", "Hydration", "Accessible fuel", "Burst capacity", "Aerobic headroom", "Recovery burden"]) assert.match(app, new RegExp(label));
-  assert.match(app, /Journey physiology/);
+  assert.match(app, /ui\.selectedEnergy\.textContent/);
   assert.match(app, /anaerobic debt/);
   assert.match(html, /Metabolic fuel and performance/);
 });
 
-test("overlay tab includes sensory environmental and physiology controls", () => {
-  for (const label of ["Vision field", "Smell contacts", "Sound and vibration", "Performance fuels", "Metabolic reserves", "Plant biomass", "Surface water"]) assert.match(app, new RegExp(label));
+test("overlay tab reduces entity presentation to three coherent controls", () => {
+  for (const label of ["Personal space", "Known world only", "No panel and bubbles"]) assert.match(app, new RegExp(label));
+  assert.match(app, /data-observer-overlay="presentation"/);
+  assert.match(app, /entityPanelsVisible: !event\.target\.checked/);
 });
 
 test("entity display guide documents the redesigned physiology overlays", () => {

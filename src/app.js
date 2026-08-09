@@ -46,7 +46,7 @@ import { initialBodyTemperature, migrateTemperatureState, terrainThermalEffect, 
 import { observableBodyCues, visibleInjuryCue } from "./observable-body-cues.js";
 import { activeEmittedSignal, decisionTraceVisible, FACIAL_EXPRESSION_LEGEND, facialExpressionSymbol, visibleBodyCondition, visibleExpression } from "./visual-language.js";
 import { EXPRESSION_LIBRARY_SECTIONS, expressionLibrarySection, visualLanguagePopulationSnapshot } from "./visual-language-laboratory.js";
-import { animalGroundOffset, gradualHeading, locomotionAnimation, matingPosture, movingTurnTolerance, requiresTurnInPlace } from "./animal-motion-presentation.js";
+import { animalGroundOffset, gradualHeading, isGroundRestPosture, locomotionAnimation, matingPosture, movingTurnTolerance, postureTransitionDuration, requiresTurnInPlace, smoothPostureProgress } from "./animal-motion-presentation.js";
 import { alertPauseDuration, applyExertion, enduranceSpeedFactor, exertionMode, exertionProfile, focusMultipliers, hearingRangeForProfile, migrateExertionState, noticesSound, recoverExertion, sensoryAttention, shouldFreeze } from "./alertness-exertion.js";
 import { emergencyReleaseAssessment, recordEmergencyAssessment } from "./emergency-action.js";
 import { BEHAVIOUR_ONTOLOGY, classifySatisfierEffects, contextSnapshot, needStateSnapshot, ontologyIntegrity, SATISFIER_DEFINITIONS } from "./behaviour-ontology.js";
@@ -59,7 +59,7 @@ import { assignStartingCareFamilies } from "./starting-care.js";
 import { laboratoryReferenceHtml, searchLaboratoryReference } from "./laboratory-reference.js";
 import { REPRODUCTION_DURATIONS, birthAttendantEligible, createBirthEvent, createCourtshipEvent, createMatingEvent, migrateReproductionEvents, reproductionStage } from "./reproduction-events.js";
 import { chooseOffspringCount, conceptionProbability, maternalConditionScore, migratePregnancyState, pregnancyDailyLossRisk, pregnancyHormonalCycle, pregnancyPhysiology, prenatalHealthOutcome } from "./pregnancy-physiology.js";
-import { animalEyePosition } from "./animal-face-geometry.js";
+import { animalEyePosition, attachedAnimalEyePosition } from "./animal-face-geometry.js";
 import { adaptFemaleMatePreferences, createMaleMatingEpisode, inferredLibido, maleMatingStrategy, maleSocialStrategyNetwork, migrateSocialState, observableMateCompatibility, rateFemaleCandidate, relationshipKind, rememberFemaleMateOutcome, rememberMaleFemaleRating, rememberSocialEvent, shareFemaleMateObservation, shareHighRatedFemale, socialEncounterKind } from "./social-relationships.js";
 import { endurancePresentation } from "./endurance-presentation.js";
 import { lifespanMultiplier, migrateLifeHistory, projectedMaximumAge, projectedSenescenceAge, recordInjurySustained, recordLifeExperience } from "./lifespan-history.js";
@@ -69,7 +69,8 @@ import { PerformanceBenchmark } from "./performance-benchmark.js";
 import { feedingAppetite } from "./feeding-appetite.js";
 import { FOG_STATE, fogKnowledgeState, withinLocalFogReveal } from "./knowledge-fog.js";
 import { buildNavMesh } from "./navmesh.js";
-import { createLocomotionState, createMovementRequest, LOCOMOTION_PROFILES, runLocomotionMinute } from "./locomotion-system.js";
+import { bodySupportedByNavmesh, createLocomotionState, createMovementRequest, LOCOMOTION_PROFILES, runLocomotionMinute } from "./locomotion-system.js";
+import { nearestSafeUnstuckDestination } from "./entity-unstuck.js";
 import { assessWorldBoundary, DEFAULT_EDGE_MARGIN, DEFAULT_RECOVERY_BUFFER, worldBoundaryClearance } from "./world-boundary.js";
 import { bodyRadius, collisionRadiusFor, interactionRadius, physicalContact } from "./interaction-spacing.js";
 import { gradedObservation } from "./perception-observation.js";
@@ -112,7 +113,7 @@ import { confirmResourceMemory, failResourceMemory, migrateResourceAcquisition, 
 import { applyOffspringTraitArchitecture, offspringTraitArchitecture } from "./trait-variation.js";
 import { activeBereavement, ageBereavement, bereavementDisposition, createBereavementEpisode, migrateBereavement, recordBereavement } from "./bereavement.js";
 import { captureGenerationalAudit, compareGenerationalAudit } from "./generational-audit.js";
-import { ECOLOGY_PRESETS, SPECIES as species, SPECIES_IDS, canHunt as speciesCanHunt, canScavenge as speciesCanScavenge, eatsMeat, eatsPlants, ecologyWarnings, enabledSpeciesCounts, guildOf, isCarnivore, isHerbivore, isOmnivore, isSustainableForage, plantPreference, preyCompatible, speciesCategoryTotals, speciesProfile } from "./species-registry.js";
+import { ECOLOGY_POPULATION_LEVELS, ECOLOGY_PRESETS, ECOLOGY_PRESET_POPULATIONS, SPECIES as species, SPECIES_IDS, canHunt as speciesCanHunt, canScavenge as speciesCanScavenge, carcassPreference, eatsMeat, eatsPlants, ecologyPresetCounts, ecologyWarnings, enabledSpeciesCounts, foodPreferenceSummary, guildOf, isCarnivore, isHerbivore, isOmnivore, isSustainableForage, needsPregnantPredatorFounder, plantPreference, preyCompatible, spatialEcology, speciesCategoryTotals, speciesProfile } from "./species-registry.js";
 import { biologicalPhenotype, digestiveEfficiency, phenotypeSummary, sensoryPhenotype, thermalPerformance } from "./biological-phenotypes.js";
 import { advanceMetabolism, ingestNutrients, initializeMetabolism, metabolicJourneyBudget, metabolicPresentation, predictiveHunger, spendMetabolicEnergy, syncLegacyEnergy } from "./metabolic-system.js";
 import { difficultyProfile, resolveEmbodimentCapabilities } from "./embodiment-capabilities.js";
@@ -163,7 +164,7 @@ function recordNutrientIntake(animal, nutrients) {
 const TEST_MODE = new URLSearchParams(window.location.search).get("test") === "1";
 let WORLD = TEST_MODE ? 48 : 90;
 let HALF = Math.floor(WORLD / 2);
-let worldSetup = { size: WORLD, span: 1, customSpan: null, hexDetail: TEST_MODE ? 400 : 5000, startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, ecologyPreset: "original", speciesCounts: enabledSpeciesCounts({ grazer: 18, hunter: 4 }), herbivores: 18, carnivores: 4, relief: .15, mountains: 1, hills: 1, valleys: 1, rivers: 1.25, lakes: 1.25, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1.2, climate: 1, temperatureVariation: 1, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36 };
+let worldSetup = { size: WORLD, span: 1, customSpan: null, hexDetail: TEST_MODE ? 400 : 5000, startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, ecologyPreset: "ridge-hunter-web", ecologyPopulationScale: 100, speciesCounts: ecologyPresetCounts("ridge-hunter-web"), herbivores: 149, carnivores: 1, relief: .15, mountains: 1, hills: 1, valleys: 1, rivers: 1.25, lakes: 1.25, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1.2, climate: 1, temperatureVariation: 1, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36 };
 const WORLD_SCHEMA = 4;
 const SAVE_KEY = "persistent-ecosystem-simulation-v1";
 const AUTOSAVE_DB = "rss-living-laboratory-progress-v1";
@@ -179,6 +180,7 @@ const ui = {
 };
 ui.overlayCalls = document.querySelector("#overlay-calls");
 ui.overlayPersonalSpace = document.querySelector("#overlay-personal-space");
+ui.overlayHideEntityPresentation = document.querySelector("#overlay-hide-entity-presentation");
 ui.overlayPredatorIntent = document.querySelector("#overlay-predator-intent");
 ui.overlayEntitySymbols = document.querySelector("#overlay-entity-symbols");
 ui.overlayEntityNames = document.querySelector("#overlay-entity-names");
@@ -188,11 +190,15 @@ ui.overlayEnduranceBar = document.querySelector("#overlay-endurance-bar");
 ui.overlayCompositionBar = document.querySelector("#overlay-composition-bar");
 ui.overlayOrganismOnly = document.querySelector("#overlay-organism-only");
 ui.overlayAnalysisStage = document.querySelector("#overlay-analysis-stage");
+ui.overlayNavigationCues = document.querySelector("#overlay-navigation-cues");
+ui.overlaySelectionRing = document.querySelector("#overlay-selection-ring");
+ui.overlayMotionTrails = document.querySelector("#overlay-motion-trails");
+ui.overlayTerritories = document.querySelector("#overlay-territories");
 ui.gameMenu = document.querySelector("#game-menu"); ui.gameMenuMain = document.querySelector("#game-menu-main"); ui.gameMenuSaves = document.querySelector("#game-menu-saves"); ui.gameMenuShowcase = document.querySelector("#game-menu-showcase"); ui.gameMenuSaveControls = document.querySelector("#game-menu-save-controls");
 ui.menuContinue = document.querySelector("#menu-continue"); ui.menuNewWorld = document.querySelector("#menu-new-world"); ui.menuShowcaseWorld = document.querySelector("#menu-showcase-world"); ui.menuSaveLoad = document.querySelector("#menu-save-load"); ui.menuSettings = document.querySelector("#menu-settings"); ui.menuSavesBack = document.querySelector("#menu-saves-back"); ui.menuShowcaseBack = document.querySelector("#menu-showcase-back");
 ui.menuWorldSource = document.querySelector("#menu-world-source"); ui.menuWorldAction = document.querySelector("#menu-world-action"); ui.menuWorldState = document.querySelector("#menu-world-state"); ui.menuWorldDetail = document.querySelector("#menu-world-detail"); ui.menuWorldExplanation = document.querySelector("#menu-world-explanation");
-ui.escapeMenu = document.querySelector("#escape-menu"); ui.escapeResume = document.querySelector("#escape-resume"); ui.escapeClose = document.querySelector("#escape-menu-close"); ui.escapeStatus = document.querySelector("#escape-menu-status"); ui.escapeWindowList = document.querySelector("#escape-window-list"); ui.escapeLaboratorySize = document.querySelector("#escape-laboratory-size"); ui.escapeResetLayout = document.querySelector("#escape-reset-layout"); ui.escapeNewWorld = document.querySelector("#escape-new-world"); ui.escapeExitMovie = document.querySelector("#escape-exit-movie"); ui.escapeMainMenu = document.querySelector("#escape-main-menu"); ui.windowDock = document.querySelector("#window-dock");
-ui.showcaseHud = document.querySelector("#showcase-hud"); ui.showcaseScenario = document.querySelector("#showcase-scenario"); ui.showcasePresentation = document.querySelector("#showcase-presentation"); ui.showcaseReload = document.querySelector("#showcase-reload"); ui.showcaseMainMenu = document.querySelector("#showcase-main-menu"); ui.showcaseHideControls = document.querySelector("#showcase-hide-controls"); ui.showcaseRestoreControls = document.querySelector("#showcase-restore-controls");
+ui.escapeMenu = document.querySelector("#escape-menu"); ui.escapeResume = document.querySelector("#escape-resume"); ui.escapeClose = document.querySelector("#escape-menu-close"); ui.escapeStatus = document.querySelector("#escape-menu-status"); ui.escapeWindowList = document.querySelector("#escape-window-list"); ui.escapeLaboratorySize = document.querySelector("#escape-laboratory-size"); ui.escapeResetLayout = document.querySelector("#escape-reset-layout"); ui.escapeUnstuckEntity = document.querySelector("#escape-unstuck-entity"); ui.escapeNewWorld = document.querySelector("#escape-new-world"); ui.escapeExitMovie = document.querySelector("#escape-exit-movie"); ui.escapeSaveExit = document.querySelector("#escape-save-exit"); ui.escapeSaveChoice = document.querySelector("#escape-save-choice"); ui.escapeSaveExisting = document.querySelector("#escape-save-existing"); ui.escapeSaveNewName = document.querySelector("#escape-save-new-name"); ui.escapeSaveChoiceCancel = document.querySelector("#escape-save-choice-cancel"); ui.escapeSaveChoiceConfirm = document.querySelector("#escape-save-choice-confirm"); ui.escapeMainMenu = document.querySelector("#escape-main-menu"); ui.windowDock = document.querySelector("#window-dock");
+ui.showcaseHud = document.querySelector("#showcase-hud"); ui.showcaseScenario = document.querySelector("#showcase-scenario"); ui.showcasePresentation = document.querySelector("#showcase-presentation"); ui.showcasePlaybackMode = document.querySelector("#showcase-playback-mode"); ui.showcaseMap = document.querySelector("#showcase-map"); ui.showcaseHerbivoreCount = document.querySelector("#showcase-herbivore-count"); ui.showcaseCarnivoreCount = document.querySelector("#showcase-carnivore-count"); ui.showcaseBehaviour = document.querySelector("#showcase-behaviour"); ui.showcasePlayPause = document.querySelector("#showcase-play-pause"); ui.showcaseStep = document.querySelector("#showcase-step"); ui.showcaseJumpEvent = document.querySelector("#showcase-jump-event"); ui.showcaseTime = document.querySelector("#showcase-time"); ui.showcaseStatus = document.querySelector("#showcase-status"); ui.showcaseReload = document.querySelector("#showcase-reload"); ui.showcaseMainMenu = document.querySelector("#showcase-main-menu"); ui.showcaseHideControls = document.querySelector("#showcase-hide-controls"); ui.showcaseRestoreControls = document.querySelector("#showcase-restore-controls");
 ui.hudPerformance = document.querySelector("#hud-performance");
 ui.benchmarkDuration = document.querySelector("#benchmark-duration");
 ui.benchmarkStart = document.querySelector("#benchmark-start");
@@ -201,6 +207,7 @@ ui.benchmarkStatus = document.querySelector("#benchmark-status");
 ui.benchmarkLive = document.querySelector("#benchmark-live");
 ui.graphicsOpen = document.querySelector("#graphics-open"); ui.graphicsPanel = document.querySelector("#graphics-panel"); ui.graphicsClose = document.querySelector("#graphics-close"); ui.graphicsPreset = document.querySelector("#graphics-preset"); ui.graphicsResolution = document.querySelector("#graphics-resolution"); ui.graphicsVegetation = document.querySelector("#graphics-vegetation"); ui.graphicsAnimals = document.querySelector("#graphics-animals"); ui.graphicsFrameCap = document.querySelector("#graphics-frame-cap"); ui.graphicsEffects = document.querySelector("#graphics-effects"); ui.graphicsShadows = document.querySelector("#graphics-shadows"); ui.graphicsAdaptiveResolution = document.querySelector("#graphics-adaptive-resolution"); ui.graphicsAdaptiveMin = document.querySelector("#graphics-adaptive-min"); ui.graphicsAdaptiveMax = document.querySelector("#graphics-adaptive-max"); ui.graphicsSummary = document.querySelector("#graphics-summary");
 ui.graphicsIconQuality = document.querySelector("#graphics-icon-quality");
+ui.graphicsUnstuckEntity = document.querySelector("#graphics-unstuck-entity"); ui.entityUnstuckStatus = document.querySelector("#entity-unstuck-status");
 const displayScaleFieldset = ui.graphicsResolution?.closest("fieldset");
 // The constellation is one authored composition. Legacy builds exposed child
 // scales for its face, text, cues, clouds and standalone physiology windows.
@@ -209,18 +216,19 @@ const displayScaleFieldset = ui.graphicsResolution?.closest("fieldset");
 if (displayScaleFieldset && !document.querySelector("#graphics-entity-panel")) {
   const constellationFieldset = document.createElement("fieldset");
   constellationFieldset.className = "entity-constellation-settings";
-  constellationFieldset.innerHTML = `<legend>Entity constellations</legend><p class="hint">Panel size scales the complete unselected thick rail and selected instrument. Panel text size separately redraws identity, pregnancy, health, decision and physiology text inside the same fixed layout. Expressions, calls, actions and private bubbles retain their authored proportions. Wheel zoom then scales that complete root without switching designs.</p><label class="graphics-check"><input id="graphics-entity-panels-visible" type="checkbox" checked/><span>Show entity panels</span></label><label><span>Entity panel size · all contents</span><select id="graphics-entity-panel"><option value="0.6">Compact · 60%</option><option value="0.8">Small · 80%</option><option value="1">Standard · 100%</option><option value="1.25">Large · 125%</option><option value="1.5">Maximum · 150%</option></select></label><label><span>Entity panel text · labels and values</span><select id="graphics-entity-panel-text"><option value="0.75">Very small · 75%</option><option value="0.9">Small · 90%</option><option value="1">Standard · 100%</option><option value="1.15">Large · 115%</option><option value="1.3">Very large · 130%</option><option value="1.5">Maximum · 150%</option></select></label><div class="instrument-channel-settings"><strong>Panel contents</strong><p class="hint">Visibility remains independent and presentation-only. Health, performance and metabolic sections are controlled by the Reality overlay switches; their size follows the complete panel.</p><label class="graphics-check"><input id="graphics-instrument-expression" type="checkbox" checked/><span>Visible expression</span></label><label class="graphics-check"><input id="graphics-instrument-public-cue" type="checkbox" checked/><span>Public call or action</span></label><label class="graphics-check"><input id="graphics-instrument-thought" type="checkbox" checked/><span>Private priority bubble</span></label><label class="graphics-check"><input id="graphics-instrument-forecast" type="checkbox" checked/><span>Private forecast bubble</span></label></div>`;
+  constellationFieldset.innerHTML = `<legend>Entity constellations</legend><p class="hint">Choose a genuine panel design, then choose its information density. The original rail and full instrument remain available for comparison.</p><label class="graphics-check"><input id="graphics-entity-panels-visible" type="checkbox" checked/><span>Show entity panels and selected bubbles</span></label><label><span>Panel design</span><select id="graphics-entity-panel-style"><option value="identity-mast">Identity mast · vertical minimum</option><option value="status-mast">Status mast · vertical icons</option><option value="capsule">Entity capsule · compact horizontal</option><option value="classic-rail">Classic rail · original compact panel</option><option value="context-ribbon">Context ribbon · identity and decision</option><option value="vital-strip">Vital-sign strip · health and fuel</option><option value="predictive-view">Predictive view · rail and two bubbles</option><option value="full-instrument">Full instrument · original detailed panel</option></select></label><label><span>Information preset</span><select id="graphics-entity-panel-preset"><option value="classic">Classic · identity and public display</option><option value="essential">Essential · add health and concern</option><option value="predictive">Predictive · add both private bubbles</option><option value="full">Full instrument · every module</option><option value="custom">Custom · choose modules below</option></select></label><label><span>Entity panel size · all contents</span><select id="graphics-entity-panel"><option value="0.1">Marker · 10%</option><option value="0.2">Tiny · 20%</option><option value="0.3">Very compact · 30%</option><option value="0.4">Compact · 40%</option><option value="0.5">Compact plus · 50%</option><option value="0.6">Small · 60%</option><option value="0.8">Medium · 80%</option><option value="1">Standard · 100%</option><option value="1.25">Large · 125%</option><option value="1.5">Maximum · 150%</option></select></label><label><span>Entity panel text · labels and values</span><select id="graphics-entity-panel-text"><option value="0.75">Very small · 75%</option><option value="0.9">Small · 90%</option><option value="1">Standard · 100%</option><option value="1.15">Large · 115%</option><option value="1.3">Very large · 130%</option><option value="1.5">Maximum · 150%</option></select></label><label><span>Selected bubble size · relative to panel</span><select id="graphics-entity-bubble-scale"><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option></select></label><div class="entity-panel-module-grid"><strong>Panel modules</strong>${[["identity","Identity and sex"],["expression","Visible expression"],["public-cue","Public call or action"],["health","Health"],["concern","Immediate concern"],["forecast-effect","Forecast effect"],["metabolic","Metabolic reserves"],["performance","Fuel and performance"],["thought","Private thought bubble"],["forecast","Private forecast bubble"]].map(([id,label])=>`<label class="graphics-check"><input id="graphics-panel-${id}" type="checkbox"/><span>${label}</span></label>`).join("")}</div>`;
   displayScaleFieldset.insertAdjacentElement("afterend", constellationFieldset);
 }
-ui.graphicsEntityPanelsVisible = document.querySelector("#graphics-entity-panels-visible"); ui.graphicsEntityPanel = document.querySelector("#graphics-entity-panel"); ui.graphicsEntityPanelText = document.querySelector("#graphics-entity-panel-text"); ui.graphicsInstrumentExpression = document.querySelector("#graphics-instrument-expression"); ui.graphicsInstrumentPublicCue = document.querySelector("#graphics-instrument-public-cue"); ui.graphicsInstrumentThought = document.querySelector("#graphics-instrument-thought"); ui.graphicsInstrumentForecast = document.querySelector("#graphics-instrument-forecast");
+ui.graphicsEntityPanelsVisible = document.querySelector("#graphics-entity-panels-visible"); ui.graphicsEntityPanel = document.querySelector("#graphics-entity-panel"); ui.graphicsEntityPanelText = document.querySelector("#graphics-entity-panel-text"); ui.graphicsEntityPanelStyle = document.querySelector("#graphics-entity-panel-style"); ui.graphicsEntityPanelPreset = document.querySelector("#graphics-entity-panel-preset"); ui.graphicsEntityBubbleScale = document.querySelector("#graphics-entity-bubble-scale");
+ui.graphicsEntityPanelModules = Object.fromEntries(["identity","expression","public-cue","health","concern","forecast-effect","metabolic","performance","thought","forecast"].map(id => [id, document.querySelector(`#graphics-panel-${id}`)]));
 const menuBackgroundSettingsRoot = document.querySelector(".menu-background-settings");
-if (menuBackgroundSettingsRoot && !document.querySelector("#menu-background-mode")) menuBackgroundSettingsRoot.querySelector(".menu-background-heading")?.insertAdjacentHTML("afterend", `<div class="menu-background-mode-controls"><label><span>Background mode</span><select id="menu-background-mode"><option value="fixed">Fixed image</option><option value="cycle" selected>Random selected-image cycle</option></select></label><label id="menu-background-interval-row"><span>Change image every</span><select id="menu-background-interval"><option value="10">10 seconds</option><option value="20">20 seconds</option><option value="30" selected>30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option></select></label></div>`);
+if (menuBackgroundSettingsRoot && !document.querySelector("#menu-background-mode")) menuBackgroundSettingsRoot.querySelector(".menu-background-heading")?.insertAdjacentHTML("afterend", `<div class="menu-background-mode-controls"><label><span>Background mode</span><select id="menu-background-mode"><option value="fixed">Fixed image</option><option value="cycle" selected>Random selected-image cycle</option><option value="sequence">Selected images in order</option></select></label><label id="menu-background-interval-row"><span>Change image every</span><select id="menu-background-interval"><option value="10">10 seconds</option><option value="20">20 seconds</option><option value="30" selected>30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option></select></label></div>`);
 ui.menuBackground = document.querySelector("#menu-background"); ui.menuBackgroundLibrary = document.querySelector("#menu-background-library"); ui.menuBackgroundFiles = document.querySelector("#menu-background-files"); ui.menuBackgroundRemove = document.querySelector("#menu-background-remove"); ui.menuBackgroundStatus = document.querySelector("#menu-background-status"); ui.menuBackgroundMode = document.querySelector("#menu-background-mode"); ui.menuBackgroundInterval = document.querySelector("#menu-background-interval"); ui.menuBackgroundIntervalRow = document.querySelector("#menu-background-interval-row"); ui.menuBackgroundInstruction = document.querySelector(".menu-background-heading span"); ui.cinematicHudBindingEnabled = document.querySelector("#cinematic-hud-binding-enabled"); ui.cinematicHudKey = document.querySelector("#cinematic-hud-key"); ui.cinematicKeepSelection = document.querySelector("#cinematic-keep-selection"); ui.cinematicHudNow = document.querySelector("#cinematic-hud-now");
 const fontScaleLabel = document.querySelector("#font-scale")?.closest("label");
 if (fontScaleLabel && !document.querySelector("#font-body-scale")) {
   const scaleOptions = `<option value="0.75">Very small</option><option value="0.9">Small</option><option value="1">Standard</option><option value="1.15">Large</option><option value="1.3">Very large</option><option value="1.5">Extra large</option><option value="1.75">Maximum</option>`;
   fontScaleLabel.querySelector("span").textContent = "Overall font scale";
-  fontScaleLabel.insertAdjacentHTML("afterend", `<div class="typography-settings"><strong>Typography categories</strong><p class="hint">Adjust each semantic text role independently. Standard uses consistent defaults throughout the interface.</p><label><span>Small and supporting text</span><select id="font-small-scale">${scaleOptions}</select></label><label><span>Normal body text</span><select id="font-body-scale">${scaleOptions}</select></label><label><span>Buttons, tabs and fields</span><select id="font-control-scale">${scaleOptions}</select></label><label><span>Section headings</span><select id="font-heading-scale">${scaleOptions}</select></label><label><span>Panel and page titles</span><select id="font-title-scale">${scaleOptions}</select></label><button id="font-scales-reset" type="button">Reset typography to standard</button></div>`);
+  fontScaleLabel.insertAdjacentHTML("afterend", `<div class="typography-settings"><strong>Typography categories</strong><p class="hint">Adjust each semantic text role independently. Defaults preserve the requested readable hierarchy throughout the interface.</p><label><span>Small and supporting text</span><select id="font-small-scale">${scaleOptions}</select></label><label><span>Normal body text</span><select id="font-body-scale">${scaleOptions}</select></label><label><span>Buttons, tabs and fields</span><select id="font-control-scale">${scaleOptions}</select></label><label><span>Section headings</span><select id="font-heading-scale">${scaleOptions}</select></label><label><span>Panel and page titles</span><select id="font-title-scale">${scaleOptions}</select></label><button id="font-scales-reset" type="button">Reset typography to defaults</button></div>`);
 }
 ui.interfaceScale = document.querySelector("#interface-scale"); ui.fontScale = document.querySelector("#font-scale"); ui.fontSmallScale = document.querySelector("#font-small-scale"); ui.fontBodyScale = document.querySelector("#font-body-scale"); ui.fontControlScale = document.querySelector("#font-control-scale"); ui.fontHeadingScale = document.querySelector("#font-heading-scale"); ui.fontTitleScale = document.querySelector("#font-title-scale"); ui.fontScalesReset = document.querySelector("#font-scales-reset");
 ui.benchmarkReport = document.querySelector("#benchmark-report");
@@ -246,6 +254,9 @@ ui.southTemperature = document.querySelector("#south-temperature");
 ui.coldestTemperature = document.querySelector("#coldest-temperature");
 ui.hottestTemperature = document.querySelector("#hottest-temperature");
 ui.ecologyPreset = document.querySelector("#ecology-preset");
+ui.ecologyPopulationLevel = document.querySelector("#ecology-population-level");
+ui.ecologyPopulationScale = document.querySelector("#ecology-population-scale");
+ui.ecologyPopulationScaleValue = document.querySelector("#ecology-population-scale-value");
 ui.ecologyWarnings = document.querySelector("#ecology-warnings");
 ui.selectedBiology = document.querySelector("#selected-biology");
 ui.hudDetail = document.querySelector("#hud-detail-content");
@@ -355,8 +366,8 @@ const fogMats = {
   // is composited after transparent rivers and lakes rather than beneath them.
   // It must still respect the terrain depth buffer: otherwise an unknown
   // valley behind a discovered ridge is painted over that nearer ridge.
-  unknown: new THREE.MeshBasicMaterial({ color: 0x000000, depthTest: true, depthWrite: false, transparent: true, opacity: 1 }),
-  explored: new THREE.MeshBasicMaterial({ color: 0x030806, depthTest: true, depthWrite: false, transparent: true, opacity: .72 })
+  unknown: new THREE.MeshBasicMaterial({ color: 0x17211c, depthTest: true, depthWrite: false, transparent: true, opacity: 1, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+  explored: new THREE.MeshBasicMaterial({ color: 0x17211c, depthTest: true, depthWrite: false, transparent: true, opacity: .58, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })
 };
 const VISION_FOV = Math.PI * 1.45;
 const senseMats = { vision: new THREE.MeshBasicMaterial({ color: 0x86ffad, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }), smell: new THREE.MeshBasicMaterial({ color: 0x53d9ff, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide }), hearing: new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }), infrared: new THREE.MeshBasicMaterial({ color: 0xff6238, transparent: true, opacity: .75, depthWrite: false }), vibration: new THREE.MeshBasicMaterial({ color: 0xc58cff, transparent: true, opacity: .55, depthWrite: false }), sightContact: new THREE.MeshBasicMaterial({ color: 0x86ffad }), smellContact: new THREE.MeshBasicMaterial({ color: 0x53d9ff }), hearingContact: new THREE.MeshBasicMaterial({ color: 0xffd166 }) };
@@ -738,7 +749,13 @@ function updateOwnershipPanelSprite(sprite, animal, layout, cardProfile) {
   const style = layout?.style || { accent: "#75dfc1", shape: "circle", tetherPattern: "solid", key: "fallback" }, focused = Boolean(layout?.selected || layout?.hovered);
   const identity = entityIdentityPresentation(animal), pregnancy = ownershipPregnancySummary(animal), displayName = entityDisplayName(animal);
   const identityScale = graphicsSettings.entityPanelTextScale || 1;
-  const profileKey = [cardProfile?.screenSize?.width || 314, cardProfile?.screenSize?.height || 82, cardProfile?.sideCells?.expressionCell?.left, cardProfile?.sideCells?.expressionCell?.right, cardProfile?.sideCells?.outwardCell?.left, cardProfile?.sideCells?.outwardCell?.right].join(":");
+  const logicalWidth = Math.max(24, Math.round(cardProfile?.screenSize?.width || 314)), logicalHeight = Math.max(24, Math.round(cardProfile?.screenSize?.height || 82));
+  const desiredWidth = logicalWidth * 2, desiredHeight = logicalHeight * 2;
+  if (sprite.userData.ownershipCanvas.width !== desiredWidth || sprite.userData.ownershipCanvas.height !== desiredHeight) {
+    sprite.userData.ownershipCanvas.width = desiredWidth; sprite.userData.ownershipCanvas.height = desiredHeight;
+    sprite.userData.ownershipContext = sprite.userData.ownershipCanvas.getContext("2d"); sprite.userData.signature = ""; sprite.material.map.needsUpdate = true;
+  }
+  const profileKey = [cardProfile?.variant, logicalWidth, logicalHeight, cardProfile?.sideCells?.expressionCell?.left, cardProfile?.sideCells?.expressionCell?.right, cardProfile?.sideCells?.outwardCell?.left, cardProfile?.sideCells?.outwardCell?.right, Object.values(cardProfile?.settings || {}).map(Number).join("")].join(":");
   const signature = `${displayName}|${identity.compactText}|${pregnancy}|${style.key || `${style.accent}:${style.shape}:${style.tetherPattern}`}|${focused ? 1 : 0}|${profileKey}|text:${identityScale}`;
   if (sprite.userData.signature !== signature) {
     const c = sprite.userData.ownershipContext, canvasWidth = sprite.userData.ownershipCanvas.width, canvasHeight = sprite.userData.ownershipCanvas.height;
@@ -749,20 +766,31 @@ function updateOwnershipPanelSprite(sprite, animal, layout, cardProfile) {
     const geometry = cardProfile || ENTITY_CONSTELLATION_CARD_GEOMETRY.summary;
     const expressionGeometry = geometry.sideCells?.expressionCell || geometry.expressionCell;
     const outwardGeometry = geometry.sideCells?.outwardCell || geometry.outwardCell;
-    const expressionCell = ownershipProfileCanvasCell(geometry, expressionGeometry, canvasWidth, canvasHeight), outwardCell = ownershipProfileCanvasCell(geometry, outwardGeometry, canvasWidth, canvasHeight), leftDivider = expressionCell.right, rightDivider = outwardCell.left;
-    c.strokeStyle = "rgba(226,241,232,.15)"; c.lineWidth = 1.5; c.beginPath(); c.moveTo(leftDivider, 10); c.lineTo(leftDivider, canvasHeight - 10); c.moveTo(rightDivider, 10); c.lineTo(rightDivider, canvasHeight - 10); c.stroke();
+    const expressionCell = ownershipProfileCanvasCell(geometry, expressionGeometry, canvasWidth, canvasHeight), outwardCell = ownershipProfileCanvasCell(geometry, outwardGeometry, canvasWidth, canvasHeight), identityCell = ownershipProfileCanvasCell(geometry, geometry.identityCell || { left: expressionGeometry.right, right: outwardGeometry.left, top: geometry.panel.top, bottom: geometry.panel.bottom }, canvasWidth, canvasHeight), leftDivider = identityCell.left, rightDivider = identityCell.right;
+    c.strokeStyle = "rgba(226,241,232,.15)"; c.lineWidth = 1.5; c.beginPath();
+    if (geometry.variant === "status-mast") { c.moveTo(10, identityCell.top); c.lineTo(canvasWidth - 10, identityCell.top); c.moveTo(10, identityCell.bottom); c.lineTo(canvasWidth - 10, identityCell.bottom); }
+    else { c.moveTo(leftDivider, 10); c.lineTo(leftDivider, canvasHeight - 10); c.moveTo(rightDivider, 10); c.lineTo(rightDivider, canvasHeight - 10); }
+    c.stroke();
     // Ownership remains redundant but unobtrusive: one tiny corner mark,
     // leaving the full centre bay available to identity and pregnancy text.
-    const shapeX = leftDivider + 14, shapeY = 25, shapeRadius = focused ? 7 : 6;
+    const shapeX = identityCell.left + Math.min(14, identityCell.width * .16), shapeY = identityCell.top + Math.min(25, identityCell.height * .25), shapeRadius = focused ? 7 : 6;
     c.fillStyle = style.accent; traceOwnershipShape(c, style.shape, shapeX, shapeY, shapeRadius); c.fill();
     c.strokeStyle = "rgba(245,251,247,.9)"; c.lineWidth = 1.2; traceOwnershipShape(c, style.shape, shapeX, shapeY, shapeRadius); c.stroke();
     const name = displayName === identity.fullId ? identity.shortId : displayName;
     const identityText = [name, identity.sexGlyph, identity.lifeStageCode].filter(Boolean).join(" · ");
-    const identityLeft = leftDivider + 20, identityRight = rightDivider - 12, identityX = (identityLeft + identityRight) / 2, identityWidth = Math.max(80, identityRight - identityLeft);
-    let fontSize = 32 * identityScale; c.font = `800 ${fontSize}px system-ui`; while (fontSize > 20 && c.measureText(identityText).width > identityWidth) { fontSize -= 1; c.font = `800 ${fontSize}px system-ui`; }
-    c.fillStyle = "#f3f8f4"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(identityText, identityX, pregnancy ? 58 : 80, identityWidth);
-    if (pregnancy) { c.fillStyle = animal.speciesId === "hunter" ? "#e2a5ff" : "#f3d990"; c.font = `800 ${18 * identityScale}px system-ui`; c.fillText(pregnancy, identityX, 105, identityWidth + 8); }
-    c.strokeStyle = style.accent; c.lineWidth = 3; c.setLineDash(style.tetherPattern === "dotted" ? [3, 7] : style.tetherPattern === "dashed" ? [13, 9] : []); c.beginPath(); c.moveTo(identityLeft, 140); c.lineTo(identityRight, 140); c.stroke(); c.setLineDash([]);
+    const identityLeft = identityCell.left + Math.min(20, identityCell.width * .16), identityRight = identityCell.right - Math.min(12, identityCell.width * .1), identityX = (identityLeft + identityRight) / 2, identityWidth = Math.max(12, identityRight - identityLeft);
+    if (geometry.settings?.identityVisible !== false) {
+      c.fillStyle = "#f3f8f4"; c.textAlign = "center"; c.textBaseline = "middle";
+      if (geometry.variant === "identity-mast") {
+        const rows = [name, identity.sexGlyph, identity.lifeStageCode, ...(pregnancy ? ["P"] : [])].filter(Boolean), rowHeight = identityCell.height / Math.max(1, rows.length);
+        c.font = `800 ${Math.max(12, Math.min(22, rowHeight * .58)) * identityScale}px system-ui`; rows.forEach((row, index) => c.fillText(row, identityX, identityCell.top + rowHeight * (index + .5), identityWidth));
+      } else {
+        let fontSize = Math.min(32, identityCell.height * .34) * identityScale; c.font = `800 ${fontSize}px system-ui`; while (fontSize > 10 && c.measureText(identityText).width > identityWidth) { fontSize -= 1; c.font = `800 ${fontSize}px system-ui`; }
+        c.fillText(identityText, identityX, identityCell.y - (pregnancy ? identityCell.height * .12 : 0), identityWidth);
+        if (pregnancy) { c.fillStyle = animal.speciesId === "hunter" ? "#e2a5ff" : "#f3d990"; c.font = `800 ${Math.max(8, Math.min(18, identityCell.height * .2)) * identityScale}px system-ui`; c.fillText(pregnancy, identityX, identityCell.y + identityCell.height * .22, identityWidth); }
+      }
+      c.strokeStyle = style.accent; c.lineWidth = 3; c.setLineDash(style.tetherPattern === "dotted" ? [3, 7] : style.tetherPattern === "dashed" ? [13, 9] : []); c.beginPath(); c.moveTo(identityLeft, identityCell.bottom - Math.min(12, identityCell.height * .12)); c.lineTo(identityRight, identityCell.bottom - Math.min(12, identityCell.height * .12)); c.stroke(); c.setLineDash([]);
+    }
     sprite.material.map.needsUpdate = true; sprite.userData.signature = signature;
   }
   sprite.material.opacity = layout?.opacity ?? 1; sprite.userData.identity = identity; sprite.userData.ownershipStyle = style; sprite.userData.mode = "panel"; sprite.userData.pregnancySummary = pregnancy; sprite.userData.panelTextScale = identityScale;
@@ -870,19 +898,21 @@ function updateInstrumentBackdrop(sprite, animal, state, layout, profile, profil
     c.strokeStyle = "rgba(220,239,227,.15)"; c.lineWidth = 1;
     c.beginPath();
     for (const band of [profile.identityBand, profile.healthBand, profile.decisionBand, profile.physiologyBand].filter(Boolean).slice(1)) { c.moveTo(panel.left + 8, band.top); c.lineTo(panel.right - 8, band.top); }
-    c.moveTo(profile.sideCells.expressionCell.right, profile.identityBand.top + 7); c.lineTo(profile.sideCells.expressionCell.right, profile.identityBand.bottom - 7);
-    c.moveTo(profile.sideCells.outwardCell.left, profile.identityBand.top + 7); c.lineTo(profile.sideCells.outwardCell.left, profile.identityBand.bottom - 7);
+    if (profile.sideCells.expressionCell.width > 0) { c.moveTo(profile.sideCells.expressionCell.right, profile.identityBand.top + 7); c.lineTo(profile.sideCells.expressionCell.right, profile.identityBand.bottom - 7); }
+    if (profile.sideCells.outwardCell.width > 0) { c.moveTo(profile.sideCells.outwardCell.left, profile.identityBand.top + 7); c.lineTo(profile.sideCells.outwardCell.left, profile.identityBand.bottom - 7); }
     if (profile.metabolicCell && profile.performanceCell) { c.moveTo(profile.physiologyBand.x, profile.physiologyBand.top + 7); c.lineTo(profile.physiologyBand.x, profile.physiologyBand.bottom - 7); }
     c.stroke();
-    const shapeX = profile.identityCell.left + Math.min(12, profile.identityCell.width * .08), shapeY = profile.identityPrimaryRow.y;
-    c.fillStyle = style.accent; traceOwnershipShape(c, style.shape, shapeX, shapeY, layout?.selected ? 7 : 6); c.fill(); c.strokeStyle = "rgba(245,251,247,.9)"; c.lineWidth = 1; traceOwnershipShape(c, style.shape, shapeX, shapeY, layout?.selected ? 7 : 6); c.stroke();
-    const identityRect = { ...profile.identityPrimaryRow, left: shapeX + 11, width: profile.identityPrimaryRow.right - shapeX - 11 };
-    fittedInstrumentText(c, [name, identity.sexGlyph, identity.lifeStageCode].filter(Boolean).join(" · "), identityRect, { size: 17 * identityScale, minimum: 9, weight: 800, align: "center", padding: 4 });
-    if (pregnancy) fittedInstrumentText(c, pregnancy, profile.identitySecondaryRow, { size: 9 * identityScale, minimum: 6.5, weight: 800, colour: animal.speciesId === "hunter" ? "#e2a5ff" : "#f3d990", align: "center", padding: 5 });
-    c.strokeStyle = style.accent; c.lineWidth = 1.6; c.setLineDash(style.tetherPattern === "dotted" ? [2, 4] : style.tetherPattern === "dashed" ? [8, 5] : []); c.beginPath(); c.moveTo(profile.identitySecondaryRow.left + 14, profile.identitySecondaryRow.bottom - 7); c.lineTo(profile.identitySecondaryRow.right - 14, profile.identitySecondaryRow.bottom - 7); c.stroke(); c.setLineDash([]);
+    if (profile.settings.identityVisible && profile.identityCell.width > 16) {
+      const shapeX = profile.identityCell.left + Math.min(12, profile.identityCell.width * .08), shapeY = profile.identityPrimaryRow.y;
+      c.fillStyle = style.accent; traceOwnershipShape(c, style.shape, shapeX, shapeY, layout?.selected ? 7 : 6); c.fill(); c.strokeStyle = "rgba(245,251,247,.9)"; c.lineWidth = 1; traceOwnershipShape(c, style.shape, shapeX, shapeY, layout?.selected ? 7 : 6); c.stroke();
+      const identityRect = { ...profile.identityPrimaryRow, left: shapeX + 11, width: profile.identityPrimaryRow.right - shapeX - 11 };
+      fittedInstrumentText(c, [name, identity.sexGlyph, identity.lifeStageCode].filter(Boolean).join(" · "), identityRect, { size: 17 * identityScale, minimum: 9, weight: 800, align: "center", padding: 4 });
+      if (pregnancy) fittedInstrumentText(c, pregnancy, profile.identitySecondaryRow, { size: 9 * identityScale, minimum: 6.5, weight: 800, colour: animal.speciesId === "hunter" ? "#e2a5ff" : "#f3d990", align: "center", padding: 5 });
+      c.strokeStyle = style.accent; c.lineWidth = 1.6; c.setLineDash(style.tetherPattern === "dotted" ? [2, 4] : style.tetherPattern === "dashed" ? [8, 5] : []); c.beginPath(); c.moveTo(profile.identitySecondaryRow.left + 14, profile.identitySecondaryRow.bottom - 7); c.lineTo(profile.identitySecondaryRow.right - 14, profile.identitySecondaryRow.bottom - 7); c.stroke(); c.setLineDash([]);
+    }
     if (profile.decision && layout?.selected) {
-      fittedInstrumentText(c, `IMMEDIATE CONCERN · ${immediate}`, profile.decision.immediate, { size: 9 * physiologyTextScale, minimum: 6.5, weight: 800, colour: "#f3d990", padding: 2 });
-      fittedInstrumentText(c, `FORECAST EFFECT · ${effect}`, profile.decision.forecastEffect, { size: 8.5 * physiologyTextScale, minimum: 6, weight: 650, colour: "#75dfc1", padding: 2 });
+      if (profile.decision.immediate) fittedInstrumentText(c, `IMMEDIATE CONCERN · ${immediate}`, profile.decision.immediate, { size: 9 * physiologyTextScale, minimum: 6.5, weight: 800, colour: "#f3d990", padding: 2 });
+      if (profile.decision.forecastEffect) fittedInstrumentText(c, `FORECAST EFFECT · ${effect}`, profile.decision.forecastEffect, { size: 8.5 * physiologyTextScale, minimum: 6, weight: 650, colour: "#75dfc1", padding: 2 });
     } else if (profile.decision) {
       fittedInstrumentText(c, "CINEMA PHYSIOLOGY LENS · PRIVATE DECISION CONTEXT HIDDEN", profile.decision.content, { size: 8.5 * physiologyTextScale, minimum: 6, weight: 700, colour: "rgba(226,241,232,.72)", align: "center", padding: 4 });
     }
@@ -1195,6 +1225,8 @@ let running = false;
 let showcasePresentationMode = "complete";
 let showcaseFeaturedId = null;
 let showcaseVisibleIds = null;
+const SHOWCASE_BIRTH_WAIT_SECONDS = 8;
+let showcaseDirector = { scenario: "overview", mode: "live", map: "balanced", behaviour: "directed", herbivores: 4, carnivores: 2, playing: true, elapsed: 0, eventCompleted: false, lastTimeSecond: -1, actors: [] };
 const movieUi = {
   open: document.querySelector("#hud-movie"), panel: document.querySelector("#movie-hud"), captions: document.querySelector("#movie-captions"), transitionLayer: document.querySelector("#movie-transition-layer"), stop: document.querySelector("#movie-stop"), next: document.querySelector("#movie-next"), pause: document.querySelector("#movie-pause-camera"), pacing: document.querySelector("#movie-pacing"), lensPreset: document.querySelector("#movie-lens-preset"), eventPriority: document.querySelector("#movie-event-priority"), shotLength: document.querySelector("#movie-shot-length"), shotTypes: document.querySelector("#movie-shot-types"), motionTypes: document.querySelector("#movie-motion-types"), perceptionInserts: document.querySelector("#movie-perception-inserts"), kind: document.querySelector("#movie-shot-kind"), title: document.querySelector("#movie-shot-title"), detail: document.querySelector("#movie-shot-detail"), progress: document.querySelector("#movie-progress-fill"), lensSummary: document.querySelector("#movie-lens-summary span"), narrationEnabled: document.querySelector("#movie-narration-enabled"), captionsEnabled: document.querySelector("#movie-captions-enabled"), narrationPreset: document.querySelector("#movie-narration-preset"), narrationContext: document.querySelector("#movie-narration-context"), narrationLength: document.querySelector("#movie-narration-length"), narrationVolume: document.querySelector("#movie-narration-volume"), narrationRate: document.querySelector("#movie-narration-rate")
 };
@@ -1212,7 +1244,8 @@ movieUi.audienceLearning = document.querySelector("#movie-audience-learning"); m
 movieUi.audiencePrompt = document.querySelector("#movie-audience-prompt"); movieUi.audiencePromptText = document.querySelector("#movie-audience-prompt-text"); movieUi.audiencePromptOptions = document.querySelector("#movie-audience-prompt-options"); movieUi.audiencePromptDismiss = document.querySelector("#movie-audience-prompt-dismiss"); movieUi.audiencePromptStop = document.querySelector("#movie-audience-prompt-stop"); movieUi.audienceProfileStatus = document.querySelector("#movie-audience-profile-status"); movieUi.audiencePriming = document.querySelector("#movie-audience-priming"); movieUi.audiencePurpose = document.querySelector("#movie-audience-purpose"); movieUi.audienceCameraDistance = document.querySelector("#movie-audience-camera-distance"); movieUi.audienceCameraMotion = document.querySelector("#movie-audience-camera-motion"); movieUi.audienceNarrationDepth = document.querySelector("#movie-audience-narration-depth"); movieUi.audienceRemember = document.querySelector("#movie-audience-remember"); movieUi.audiencePrime = document.querySelector("#movie-audience-prime"); movieUi.audienceSkipPrime = document.querySelector("#movie-audience-skip-prime");
 movieUi.audienceWritten = document.querySelector("#movie-audience-written"); movieUi.audienceInterpret = document.querySelector("#movie-audience-interpret"); movieUi.audienceConfirmWritten = document.querySelector("#movie-audience-confirm-written"); movieUi.audienceDiscardWritten = document.querySelector("#movie-audience-discard-written"); movieUi.audienceWrittenStatus = document.querySelector("#movie-audience-written-status"); movieUi.audienceFaultCode = document.querySelector("#movie-audience-fault-code"); movieUi.audienceFaultSeverity = document.querySelector("#movie-audience-fault-severity"); movieUi.audienceReportFault = document.querySelector("#movie-audience-report-fault"); movieUi.audienceImplicitEnabled = document.querySelector("#movie-audience-implicit-enabled"); movieUi.audiencePromptsEnabled = document.querySelector("#movie-audience-prompts-enabled"); movieUi.audienceExport = document.querySelector("#movie-audience-export"); movieUi.audienceClearCamera = document.querySelector("#movie-audience-clear-camera"); movieUi.audienceRollback = document.querySelector("#movie-audience-rollback"); movieUi.audienceResetSession = document.querySelector("#movie-audience-reset-session"); movieUi.audienceResetAll = document.querySelector("#movie-audience-reset-all"); movieUi.audienceGuest = document.querySelector("#movie-audience-guest");
 movieUi.audienceProfileSelect = document.querySelector("#movie-audience-profile-select"); movieUi.audienceProfileName = document.querySelector("#movie-audience-profile-name"); movieUi.audienceProfileMode = document.querySelector("#movie-audience-profile-mode"); movieUi.audienceUseProfile = document.querySelector("#movie-audience-use-profile"); movieUi.audienceCreateProfile = document.querySelector("#movie-audience-create-profile"); movieUi.audienceStartGuest = document.querySelector("#movie-audience-start-guest");
-const movieState = { active: false, paused: false, overviewPlayback: false, presetName: "classic", shot: null, elapsed: 0, sequence: 0, pacing: "balanced", lensPreset: "documentary", eventPriority: "events", shotLength: "varied", shotTypes: "wildlife", motionTypes: "smooth", perceptionInserts: "frequent", saved: null, recentSubjects: [], history: [], queue: [], scenePriority: 0, eventSnapshots: new Map(), pendingEvents: [], interactionThread: null, overrides: {}, lens: {}, lastHudAt: 0, healthAccumulator: 0, interruptAccumulator: 0, occlusionSeconds: 0, cameraInvalidSeconds: 0, renderEmptySeconds: 0, cameraRecoveryCount: 0, lastCameraRecoveryAt: -Infinity, lastCameraRecoveryReason: null, webglContextLost: false, lastRenderInfo: null, lastPlanningProfile: null, lastEndReason: null, rejectedCandidates: 0, presentationPending: false, lastNarratedScene: null, narrative: null };
+const movieState = { active: false, paused: false, overviewPlayback: false, presetName: "classic", shot: null, elapsed: 0, sequence: 0, pacing: "balanced", lensPreset: "documentary", eventPriority: "events", shotLength: "varied", shotTypes: "wildlife", motionTypes: "smooth", perceptionInserts: "frequent", saved: null, recentSubjects: [], history: [], queue: [], scenePriority: 0, eventSnapshots: new Map(), lastEventScanTick: -1, pendingEvents: [], interactionThread: null, overrides: {}, lens: {}, lastHudAt: 0, healthAccumulator: 0, interruptAccumulator: 0, occlusionSeconds: 0, cameraInvalidSeconds: 0, lastFullCameraValidationAt: -Infinity, lastFullCameraMetrics: null, renderEmptySeconds: 0, cameraRecoveryCount: 0, lastCameraRecoveryAt: -Infinity, lastCameraRecoveryReason: null, webglContextLost: false, lastRenderInfo: null, lastPlanningProfile: null, lastEndReason: null, rejectedCandidates: 0, presentationPending: false, lastNarratedScene: null, narrative: null };
+let cinemaPresentationRefreshStage = 0, cinemaPresentationRefreshRequestedAt = -Infinity;
 if (movieUi.audienceFaultCode && !movieUi.audienceFaultCode.querySelector('[value="CAMERA_BLANK_VIEW"]')) { const option = document.createElement("option"); option.value = "CAMERA_BLANK_VIEW"; option.textContent = "Blank or grey viewport"; movieUi.audienceFaultCode.prepend(option); }
 renderer.domElement.addEventListener("webglcontextlost", event => { event.preventDefault(); movieState.webglContextLost = true; movieState.lastCameraRecoveryReason = "webgl-context-lost"; if (movieState.active) addEvent("Cinema renderer context was lost; waiting for browser restoration"); });
 renderer.domElement.addEventListener("webglcontextrestored", () => { movieState.webglContextLost = false; movieState.renderEmptySeconds = 0; renderAll(); if (movieState.active) recoverMovieCamera("webgl-context-restored", { force: true, announce: true, source: "renderer" }); });
@@ -1298,16 +1331,30 @@ function cinemaPanelSubjectId(shot = movieState.shot) {
   return null;
 }
 function movieFeaturedAnimal(animal, primaryOnly = false) { if (!movieState.active || !animal) return false; const ids = movieState.shot?.ids || [], primaryId = cinemaPanelSubjectId(); return primaryOnly ? animal.id === primaryId : animal.id === primaryId || ids.slice(0, 6).includes(animal.id); }
-function cinemaNarrationNeedsInstrument(shot = movieState.shot) { return shot?.entityPresentation ? cinemaPresentationNeedsInstrument(shot.entityPresentation) : movieChannelEnabled("physiology"); }
+function cinemaNarrationNeedsInstrument(shot = movieState.shot) {
+  const presentation = shot?.entityPresentation;
+  if (!presentation) return movieChannelEnabled("physiology");
+  // The integrated world instrument currently visualises health, metabolic
+  // reserves and performance. A narration contract may legitimately request
+  // deeper presentation for memory, perception or prediction, but those
+  // domains belong in the Laboratory and must not allocate an empty physiology
+  // shell in the world. Fall back to the compact identity rail/ring unless the
+  // shot both contains physiology evidence and permits that channel.
+  return cinemaPresentationNeedsInstrument(presentation)
+    && presentation.domains?.includes("physiology")
+    && movieChannelEnabled("physiology");
+}
 function moviePrimaryAnimal() { const id = cinemaPanelSubjectId(); return id ? animalById(id) : null; }
+function cinemaUsesConnectedStories() { return ["classic", "follow", "carnivore"].includes(movieState.presetName); }
+function cinemaCarnivoreOnly() { return movieState.presetName === "carnivore"; }
 function entityConstellationPanelFocus() {
-  if (movieState.active) return { exclusive: true, ownerId: cinemaPanelSubjectId(), reason: "cinema-focus" };
+  if (movieState.active) return cinemaUsesConnectedStories() ? { exclusive: true, ownerId: null, reason: "cinema-ring-only" } : { exclusive: true, ownerId: cinemaPanelSubjectId(), reason: "cinema-focus" };
   const animal = selectedId ? animalById(selectedId) : null;
   return animal?.alive ? { exclusive: true, ownerId: animal.id, reason: "selection-focus" } : { exclusive: false, ownerId: null, reason: null };
 }
 function updateMovieLens(context = movieState.shot?.context || "quiet-landscape", beat = movieState.shot?.beat) {
   const chainStage = movieState.shot?.chainStage;
-  let directed = chainStage && movieState.presetName === "classic" ? cinemaInteractionLens(chainStage) : MOVIE_LENSES[context] || MOVIE_LENSES["quiet-landscape"];
+  let directed = chainStage && cinemaUsesConnectedStories() ? cinemaInteractionLens(chainStage) : MOVIE_LENSES[context] || MOVIE_LENSES["quiet-landscape"];
   const presentation = movieState.shot?.entityPresentation;
   if (presentation?.domains?.length) {
     const narratedChannels = {};
@@ -1405,6 +1452,11 @@ let lastRealityUpdate = -Infinity;
 let realityTerrainCache = { key: "", html: "" };
 const MINIMAP_UPDATE_INTERVAL_MS = 650;
 const LABORATORY_DOM_UPDATE_INTERVAL_MS = 400;
+// Selected-panel detail is deliberately calmer than the simulation HUD. Replacing
+// its complete subtree at the general UI cadence makes typography and scrollbar
+// layout visibly pulse even when the window itself has not moved.
+const OBSERVER_DETAIL_UPDATE_INTERVAL_MS = 1000;
+let observerDetailRenderState = { key: "", markup: "", updatedAt: -Infinity };
 const REALITY_UPDATE_INTERVAL_MS = 750;
 const MINIMAP_MODE_KEY = "rss-laboratory-minimap-mode-v1";
 const MINIMAP_MODES = new Set(["combined", "organisms", "groups", "terrain"]);
@@ -1495,6 +1547,7 @@ let embodiedLookDragging = false;
 let embodiedLastPointer = null;
 const cameraFadedVegetation = new Map();
 const cameraHiddenVegetationInstances = new Map();
+let lastCinemaVegetationFadeAt = -Infinity;
 const cameraInstanceMatrix = new THREE.Matrix4();
 const cameraHiddenMatrix = new THREE.Matrix4();
 const cameraInstancePosition = new THREE.Vector3();
@@ -1757,7 +1810,7 @@ window.rssDiagnostics = Object.freeze({
       panelAdmitted: Boolean(projection.panelAdmitted), panelScale: layout.panelScale, panelSettingScale: graphicsSettings.entityPanelScale, panelTextSettingScale: graphicsSettings.entityPanelTextScale, panelDistance: projection.panelDistance, panelScaleRevision: projection.panelScaleRevision, panelDimensions: layout.panelDimensions ? { ...layout.panelDimensions } : null,
       style: { ...layout.style, dash: [...layout.style.dash] }, body: { ...layout.body }, anchor: { ...layout.anchor }, anchorOffset: { ...layout.anchorOffset }, footprint: { ...layout.footprint }, collisionBounds: { left: layout.anchor.x + layout.footprint.left, right: layout.anchor.x + layout.footprint.right, top: layout.anchor.y + layout.footprint.top, bottom: layout.anchor.y + layout.footprint.bottom }, tether: { ...layout.tether, from: { ...layout.tether.from }, to: { ...layout.tether.to }, dash: [...layout.tether.dash] },
       selected: layout.selected, cinemaInstrumentOwner: Boolean(projection.cinemaInstrumentOwner), hovered: layout.hovered, dimmed: layout.dimmed, opacity: layout.opacity, cue: cue ? { ...cue } : null,
-      render: { panelTexture: panel ? { width: panel.userData.ownershipCanvas?.width || panel.userData.instrumentCanvas?.width || 0, height: panel.userData.ownershipCanvas?.height || panel.userData.instrumentCanvas?.height || 0, logicalWidth: panel.userData.instrumentLogicalSize?.width || panel.userData.ownershipCanvas?.width || 0, logicalHeight: panel.userData.instrumentLogicalSize?.height || panel.userData.ownershipCanvas?.height || 0, quality: panel.userData.ownershipTextureQuality || panel.userData.instrumentQuality || 0 } : null, panelScreenSize: panel?.userData.screenSize ? { ...panel.userData.screenSize } : null, panelTextScale: panel?.userData.panelTextScale || graphicsSettings.entityPanelTextScale, effectivePanelScale: panel?.userData.panelScale || null, wheelPanelScale: panel?.userData.wheelPanelScale || null, uniformPanelScale: panel?.userData.uniformPanelScale || null, panelCenter: layout.panelDimensions ? { x: layout.panelDimensions.centerX, y: layout.panelDimensions.centerY } : { ...(integrated ? cardProfile.instrument : cardProfile.panel).panelCenter }, geometryKey: cardProfile.key, panelVisible: Boolean(panel?.visible), instrumentVisible: Boolean(instrumentBackdrop?.visible), instrumentMetricsVisible: Boolean(instrumentMetrics?.visible), integratedPhysiology: integrated ? { ...rendered?.userData.instrumentSectionVisibility, standaloneHealthVisible: Boolean(rendered?.userData.healthBar?.visible), standalonePerformanceVisible: Boolean(rendered?.userData.enduranceBar?.visible), standaloneMetabolicVisible: Boolean(rendered?.userData.compositionBar?.visible) } : null, ordinaryThoughtVisible: Boolean(parts?.thought?.visible), predictionVisible: Boolean(parts?.predictionThought?.visible), dualCloudsVisible: Boolean(parts?.thought?.visible && parts?.predictionThought?.visible), channelHolds: Object.fromEntries(Object.entries(rendered?.userData.presentationChannelHolds || {}).map(([channel, hold]) => [channel, { semanticKey: hold.semanticKey, placeholder: hold.placeholder, shownAt: hold.shownAt, holdUntil: hold.holdUntil, pendingKey: hold.pendingKey }])), thickTetherVisible: Boolean(parts?.ownershipTetherRibbon?.visible), endpointShape: layout.tether.endpointShape, visibleNotches: Object.entries(parts?.ownershipNotches || {}).filter(([, notch]) => notch.visible).map(([channel]) => channel) },
+      render: { panelTexture: panel ? { width: panel.userData.ownershipCanvas?.width || panel.userData.instrumentCanvas?.width || 0, height: panel.userData.ownershipCanvas?.height || panel.userData.instrumentCanvas?.height || 0, logicalWidth: panel.userData.instrumentLogicalSize?.width || panel.userData.ownershipCanvas?.width || 0, logicalHeight: panel.userData.instrumentLogicalSize?.height || panel.userData.ownershipCanvas?.height || 0, quality: panel.userData.ownershipTextureQuality || panel.userData.instrumentQuality || 0 } : null, panelScreenSize: panel?.userData.screenSize ? { ...panel.userData.screenSize } : null, panelTextScale: panel?.userData.panelTextScale || graphicsSettings.entityPanelTextScale, effectivePanelScale: panel?.userData.panelScale || null, wheelPanelScale: panel?.userData.wheelPanelScale || null, uniformPanelScale: panel?.userData.uniformPanelScale || null, panelCenter: layout.panelDimensions ? { x: layout.panelDimensions.centerX, y: layout.panelDimensions.centerY } : { ...(integrated ? cardProfile.selected : cardProfile.public).panelCenter }, geometryKey: cardProfile.key, panelVisible: Boolean(panel?.visible), instrumentVisible: Boolean(instrumentBackdrop?.visible), instrumentMetricsVisible: Boolean(instrumentMetrics?.visible), integratedPhysiology: integrated ? { ...rendered?.userData.instrumentSectionVisibility, standaloneHealthVisible: Boolean(rendered?.userData.healthBar?.visible), standalonePerformanceVisible: Boolean(rendered?.userData.enduranceBar?.visible), standaloneMetabolicVisible: Boolean(rendered?.userData.compositionBar?.visible) } : null, ordinaryThoughtVisible: Boolean(parts?.thought?.visible), predictionVisible: Boolean(parts?.predictionThought?.visible), dualCloudsVisible: Boolean(parts?.thought?.visible && parts?.predictionThought?.visible), channelHolds: Object.fromEntries(Object.entries(rendered?.userData.presentationChannelHolds || {}).map(([channel, hold]) => [channel, { semanticKey: hold.semanticKey, placeholder: hold.placeholder, shownAt: hold.shownAt, holdUntil: hold.holdUntil, pendingKey: hold.pendingKey }])), thickTetherVisible: Boolean(parts?.ownershipTetherRibbon?.visible), endpointShape: layout.tether.endpointShape, visibleNotches: Object.entries(parts?.ownershipNotches || {}).filter(([, notch]) => notch.visible).map(([channel]) => channel) },
       targetId: animal?.actionState?.target || animal?.actionTarget || animal?.predation?.targetId || null, verifiedCallReceiverIds: animal ? verifiedCallReceiverIds(animal) : []
     };
   }),
@@ -2064,7 +2117,7 @@ if (!TEST_MODE) document.body.classList.add("menu-open"); else ui.gameMenu.hidde
 function setRunning(next) { running = Boolean(next); const label = running ? "Pause" : "Play"; ui.playPause.textContent = label; ui.hudPlay.textContent = label; ui.runState.textContent = running ? "Running" : "Paused"; }
 function toggleRunning() { setRunning(!running); }
 let returnToGameMenuAfterModal = false;
-let gameSessionStarted = false, gameMenuWorldProbe = 0;
+let gameSessionStarted = false, gameMenuWorldProbe = 0, activeSaveSlotName = null;
 function gameMenuWorldSummary(world = sim) {
   const clock = ecologicalClockParts(world), living = (world?.animals || []).filter(animal => animal?.alive !== false).length, season = world?.season || "unknown season", weather = world?.weather?.type || "weather unrecorded";
   return { state: `Year ${clock.year} · Day ${clock.dayOfYear} · ${season}`, detail: `Seed ${world?.seed ?? "unknown"} · ${living} living ${living === 1 ? "animal" : "animals"} · ${weather}` };
@@ -2083,12 +2136,12 @@ function presentGameMenuWorld({ mode, source, action, world, explanation, savedA
 async function refreshGameMenuPrimaryAction() {
   if (!ui.menuContinue || TEST_MODE) return;
   const probe = ++gameMenuWorldProbe;
-  if (gameSessionStarted) return presentGameMenuWorld({ mode: "current", source: "Current session", action: "Return to current world", world: sim, explanation: "Returns exactly where you paused. It does not reload an older quick save." });
+  if (gameSessionStarted) return presentGameMenuWorld({ mode: "current", source: activeSaveSlotName ? `Current session · ${activeSaveSlotName}` : "Current session · unsaved", action: activeSaveSlotName ? `Return to “${activeSaveSlotName}”` : "Return to current world", world: sim, explanation: "Returns exactly where you paused. It does not reload an older quick save." });
   ui.menuContinue.disabled = true; ui.menuWorldSource.textContent = "Checking this browser"; ui.menuWorldAction.textContent = "Looking for a previous world…"; ui.menuWorldState.textContent = "Reading the latest quick save"; ui.menuWorldDetail.textContent = "Your current generated world remains untouched.";
   try {
     let snapshot = await readSnapshot("resume"); if (!snapshot) { const legacy = localStorage.getItem(SAVE_KEY); if (legacy) snapshot = JSON.parse(legacy); }
     if (probe !== gameMenuWorldProbe) return;
-    if (snapshot?.animals && Number.isFinite(snapshot.seed)) return presentGameMenuWorld({ mode: "saved", source: "Most recent quick save", action: "Resume previous world", world: snapshot, savedAt: snapshot.savedAt, explanation: "Loads the latest quick or automatic save shown above. Use Saved worlds to choose a named save instead." });
+    if (snapshot?.animals && Number.isFinite(snapshot.seed)) { const saveName = String(snapshot.saveSlotName || "").trim(); return presentGameMenuWorld({ mode: "saved", source: saveName ? `Selected save · ${saveName}` : "Most recent quick save", action: saveName ? `Continue “${saveName}”` : "Resume previous world", world: snapshot, savedAt: snapshot.savedAt, explanation: saveName ? `Loads the named save “${saveName}” shown above.` : "Loads the latest quick or automatic save shown above. Use Saved worlds to choose a named save instead." }); }
   } catch {}
   if (probe !== gameMenuWorldProbe) return;
   presentGameMenuWorld({ mode: "new", source: "New unsaved world", action: "Begin observing this world", world: sim, explanation: "Opens the generated ecosystem behind this menu. Use New world to change its setup first." });
@@ -2109,14 +2162,58 @@ function enterGame() {
   ui.gameMenu.hidden = true; document.body.classList.remove("menu-open", "menu-modal-open", "showcase-mode", "showcase-toolbar-hidden"); showcaseVisibleIds = null; if (ui.showcaseHud) ui.showcaseHud.hidden = true;
   gameSessionStarted = true; setRunning(true);
 }
+const LABORATORY_OVERLAY_GROUPS = Object.freeze([
+  Object.freeze({
+    title: "Selected organism — senses and evidence",
+    description: "Inspect only evidence available to the selected animal: what it can see, hear, smell, remember, receive and fallibly infer. Enabling a channel never grants new knowledge.",
+    open: true,
+    controls: Object.freeze([
+      ["overlayVision", "Vision and sight contacts"], ["overlaySmell", "Smell range, contacts and detected trails"],
+      ["overlaySound", "Ambient sound"], ["overlayCalls", "Calls, messages and receiver links"],
+      ["overlayMemory", "Remembered evidence"], ["overlayPredatorIntent", "Predator intent inference"],
+      ["overlayKnowledgeFog", "Knowledge fog"], ["overlayPersonalSpace", "Personal space"],
+      ["overlaySelectionRing", "Selection ring"], ["overlayNavigationCues", "Direction arrows and relational cues"],
+      ["overlayMotionTrails", "Recent movement trails"], ["overlayEntityFocus", "Known world only"]
+    ])
+  }),
+  Object.freeze({
+    title: "Selected organism — diagnostic presentation",
+    description: "Control the selected animal's observer-only presentation. These switches change rendering, not physiology, cognition or behaviour.",
+    controls: Object.freeze([
+      ["overlayEntitySymbols", "Expression, call, action and identity symbols"], ["overlayEntityNames", "Laboratory entity names"],
+      ["overlayHealthBars", "Health condition"], ["overlayEnduranceBar", "Fuel and performance"],
+      ["overlayCompositionBar", "Metabolic reserves"], ["overlayAnalysisStage", "Terrainless analysis stage"],
+      ["overlayOrganismOnly", "Body only"], ["overlayHideEntityPresentation", "No panel and bubbles"]
+    ])
+  }),
+  Object.freeze({
+    title: "World and ecology overlays",
+    description: "Display authoritative Laboratory-wide resources, trails, established claims and disputes independently of the selected animal's private evidence.",
+    controls: Object.freeze([
+      ["overlayBiomass", "Biomass"], ["overlayWater", "Water"], ["overlayPheromone", "All scent trails"],
+      ["overlayTerritories", "Territories and disputes"]
+    ])
+  })
+]);
+function laboratoryOverlayLabel(input, text) {
+  if (!input) return null;
+  input.hidden = false;
+  let label = input.closest("label");
+  if (!label) { label = document.createElement("label"); label.append(input, document.createTextNode(` ${text}`)); }
+  else {
+    const textNode = [...label.childNodes].find(node => node.nodeType === Node.TEXT_NODE);
+    if (textNode) textNode.textContent = ` ${text}`;
+  }
+  return label;
+}
 function configureLaboratoryLayout() {
-  const worldSetupCard = document.querySelector(".world-setup"), makeGroup = (title, open = false) => { const details = document.createElement("details"); details.className = "world-settings-group"; details.open = open; const summary = document.createElement("summary"); summary.textContent = title; const grid = document.createElement("div"); grid.className = "world-settings-grid"; details.append(summary, grid); return { details, grid }; };
+  const worldSetupCard = document.querySelector(".world-setup"), makeGroup = (title, open = false, description = "") => { const details = document.createElement("details"); details.className = "world-settings-group"; details.open = open; const summary = document.createElement("summary"); summary.textContent = title; const grid = document.createElement("div"); grid.className = "world-settings-grid"; details.append(summary); if (description) { const intro = document.createElement("p"); intro.className = "world-settings-group-intro"; intro.textContent = description; details.append(intro); } details.append(grid); return { details, grid }; };
   if (worldSetupCard && ui.newWorldSettings) {
-    const basic = makeGroup("Basic world settings", true), ecology = makeGroup("Species ecology", true), advanced = makeGroup("Advanced terrain, weather and climate");
-    const basicIds = new Set(["world-preset", "world-size", "custom-world-size", "hex-detail", "start-season", "start-herbivores", "start-carnivores"]);
-    for (const label of [...worldSetupCard.querySelectorAll("label")]) { const id = label.querySelector("input,select")?.id; (id === "ecology-preset" || id?.startsWith("start-species-") ? ecology.grid : basicIds.has(id) ? basic.grid : advanced.grid).append(label); }
-    if (ui.ecologyWarnings) ecology.grid.append(ui.ecologyWarnings);
-    ui.newWorldSettings.append(basic.details, ecology.details, advanced.details); worldSetupCard.hidden = true;
+    const basic = makeGroup("Basic world settings", true), basicEcology = makeGroup("Basic species ecology", false, "Set the total herbivore and carnivore populations. The Original preset uses the default Valley Grazer and Ridge Hunter; advanced presets distribute these totals across their selected species."), advancedEcology = makeGroup("Advanced species ecology", false, "Choose an ecology preset or edit exact populations for individual species. Basic total changes preserve and redistribute the currently selected advanced preset."), advanced = makeGroup("Advanced terrain, weather and climate");
+    const basicIds = new Set(["world-preset", "world-size", "custom-world-size", "hex-detail", "start-season"]), basicEcologyIds = new Set(["start-herbivores", "start-carnivores"]);
+    for (const label of [...worldSetupCard.querySelectorAll("label")]) { const id = label.querySelector("input,select")?.id; (id === "ecology-preset" || id?.startsWith("ecology-population-") || id?.startsWith("start-species-") ? advancedEcology.grid : basicEcologyIds.has(id) ? basicEcology.grid : basicIds.has(id) ? basic.grid : advanced.grid).append(label); }
+    if (ui.ecologyWarnings) advancedEcology.grid.append(ui.ecologyWarnings);
+    ui.newWorldSettings.append(basic.details, basicEcology.details, advancedEcology.details, advanced.details); worldSetupCard.hidden = true;
   }
   const controls = document.querySelector(".inspector > .controls");
   if (controls) {
@@ -2152,18 +2249,15 @@ function configureLaboratoryLayout() {
   const priorityCard = ui.priorityList?.closest("section"); if (priorityCard) priorityCard.hidden = false;
   const overlaySection = ui.overlayBiomass?.closest("section");
   if (overlaySection) {
-    const overlayGroup = (title, description, inputs, open = false) => {
+    const overlayGroup = ({ title, description, controls, open = false }) => {
       const details = document.createElement("details"); details.className = "laboratory-disclosure laboratory-overlay-group"; details.open = open;
       const summary = document.createElement("summary"); summary.textContent = title;
       const hint = document.createElement("p"); hint.className = "hint"; hint.textContent = description;
       const grid = document.createElement("div"); grid.className = "toggles laboratory-overlay-grid";
-      for (const input of inputs) { const label = input?.closest("label"); if (label) grid.append(label); }
+      for (const [property, labelText] of controls) { const label = laboratoryOverlayLabel(ui[property], labelText); if (label) grid.append(label); }
       details.append(summary, hint, grid); return details;
     };
-    const senses = overlayGroup("Selected organism — senses and evidence", "Inspect what the selected animal can see, hear, smell, remember and infer. These overlays never grant the animal information it has not sensed.", [ui.overlayVision, ui.overlayPersonalSpace, ui.overlayPredatorIntent, ui.overlayKnowledgeFog, ui.overlaySmell, ui.overlaySound, ui.overlayCalls, ui.overlayMemory, ui.overlayEntityFocus], true);
-    const presentation = overlayGroup("Selected organism — diagnostic presentation", "Terrainless analysis hides the physical map but retains sensed entities, resources, memory, direction and other selected overlays. Entity names are an optional Laboratory-only observer label. Body only is the fully stripped model inspection.", [ui.overlayEntitySymbols, ui.overlayEntityNames, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar, ui.overlayAnalysisStage, ui.overlayOrganismOnly]);
-    const world = overlayGroup("World and ecology overlays", "Display Laboratory-wide resource and trail evidence independently of the selected animal's private view.", [ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone]);
-    overlaySection.id = "laboratory-overlay-controls"; overlaySection.hidden = false; overlaySection.replaceChildren(senses, presentation, world);
+    overlaySection.id = "laboratory-overlay-controls"; overlaySection.hidden = false; overlaySection.replaceChildren(...LABORATORY_OVERLAY_GROUPS.map(overlayGroup));
   }
   const rssCard = ui.rssTrace?.closest("section");
   const diagnostics = document.createElement("details"); diagnostics.className = "laboratory-disclosure"; const diagnosticsSummary = document.createElement("summary"); diagnosticsSummary.textContent = "Experimental RSS instrumentation"; diagnostics.append(diagnosticsSummary);
@@ -2255,6 +2349,9 @@ function configureLaboratoryTabs({ controls, selectedCard, priorityCard, diagnos
   const pace = document.querySelector("#observation-pace")?.closest("label"), skip = document.querySelector("#time-skip")?.closest(".time-skip-control");
   move(controls, "world"); move(pace, "world"); move(skip, "world"); move(summary, "world");
   move(selectedCard, "entity"); move(priorityCard, "entity");
+  const worldEcology = document.createElement("section"); worldEcology.id = "world-ecology-workspace";
+  const entityEcology = document.createElement("section"); entityEcology.id = "entity-ecology-workspace";
+  panels.world.append(worldEcology); panels.entity.append(entityEcology);
   const planningTabs = document.createElement("div"); planningTabs.className = "planning-subtabs";
   const planningViews = {};
   for (const [id, label] of [["current", "Current situation"], ["matrix", "Need matrix"], ["methods", "Satisfier comparison"], ["protocols", "Protocol library"], ["history", "Outcome history"], ["population", "Population audit"]]) { const button = document.createElement("button"); button.type = "button"; button.dataset.planningView = id; button.textContent = label; planningTabs.append(button); const view = document.createElement("section"); view.className = "planning-subview"; view.dataset.planningSubview = id; planningViews[id] = view; }
@@ -2278,7 +2375,9 @@ function configureLaboratoryTabs({ controls, selectedCard, priorityCard, diagnos
   const overlay = document.querySelector("#laboratory-overlay-controls"), minimap = document.querySelector(".minimap-navigator")?.closest("details");
   move(minimap, "map"); move(overlay, "map");
   const visualLanguage = document.createElement("section"); visualLanguage.id = "visual-language-workspace"; visualLanguage.className = "visual-language-workspace";
-  const society = document.createElement("section"); society.id = "society-workspace"; panels.society.append(visualLanguage, society);
+  const society = document.createElement("section"); society.id = "society-workspace";
+  const societyEcology = document.createElement("section"); societyEcology.id = "society-ecology-workspace";
+  panels.society.append(visualLanguage, society, societyEcology);
   const predictive = document.createElement("section"); predictive.id = "predictive-systems-workspace"; predictive.className = "predictive-workspace"; predictive.innerHTML = `<div id="predictive-mini-summary" data-predictive-surface="mini"></div><div class="predictive-main-detail" data-predictive-surface="main"><section class="predictive-controls predictive-observer-banner"><p id="predictive-mode-explanation" class="predictive-callout"></p></section><div id="predictive-animal-detail"></div><div id="predictive-system-overview"></div><div id="predictive-cinema-detail"></div><div id="predictive-contract-reference"></div></div>`; panels.predictive.append(predictive);
   move(document.querySelector("#laboratory-benchmark"), "diagnostics"); move(diagnostics, "diagnostics");
   const performance = document.querySelector("#performance"); if (performance) { performance.hidden = false; move(performance, "diagnostics"); }
@@ -2297,6 +2396,7 @@ function configureLaboratoryTabs({ controls, selectedCard, priorityCard, diagnos
     if (id === "reference") mountReference();
     if (id === "predictive") renderPredictiveLaboratory(selectedAnimal());
     if (id === "planning") renderLiveNeedPlanning(selectedAnimal());
+    if (id === "world" || id === "entity" || id === "society") renderEcologyLaboratory(selectedAnimal(), selectedCorpse());
     if (id === "society") renderVisualLanguageLaboratory();
     if (id === "society") renderOntologyWorkspaces(selectedAnimal());
     try { localStorage.setItem(key, id); } catch {}
@@ -2445,6 +2545,42 @@ function renderCompleteNeedOntology() {
   if (!root || root.dataset.rendered === "true") return;
   root.dataset.rendered = "true";
   root.innerHTML = `<details class="laboratory-disclosure" open><summary>Complete need ontology</summary><p class="hint">This is the general architecture. Dashed links are alternative satisfaction methods; dependency chips show what must be true before a method can execute.</p><div class="ontology-root"><strong>Maintain survival</strong><span>terminal biological purpose</span></div><div class="ontology-branches">${NEED_ONTOLOGY.map((branch) => `<article class="ontology-branch"><h3>${escapeHtml(branch.label)}</h3><div class="ontology-methods">${branch.methods.map((method) => `<section class="ontology-method${method.optional ? " is-optional" : ""}"><strong>${escapeHtml(method.label)}</strong><div>${method.dependencies.map((dependency) => `<span>${escapeHtml(dependency)}</span>`).join("")}</div></section>`).join("")}</div></article>`).join("")}</div><div class="ontology-key"><span><i class="key-terminal"></i>terminal need</span><span><i class="key-active"></i>active</span><span><i class="key-satisfied"></i>satisfied</span><span><i class="key-blocked"></i>blocked</span><span>solid path = required</span><span>dashed border = alternative method</span></div></details>`;
+}
+
+function ecologyList(values = [], empty = "none recorded") {
+  return values.length ? values.map(value => escapeHtml(String(value).replaceAll("-", " "))).join(" · ") : empty;
+}
+
+function renderEcologyLaboratory(a = selectedAnimal(), corpse = selectedCorpse()) {
+  const entityRoot = document.querySelector("#entity-ecology-workspace"), worldRoot = document.querySelector("#world-ecology-workspace"), societyRoot = document.querySelector("#society-ecology-workspace");
+  if (entityRoot && laboratorySurfaceVisible(entityRoot)) {
+    let detail = `<p class="need-plan-empty">Select a living animal or carcass to inspect its complete food and spatial ecology.</p>`;
+    if (a) {
+      const profile = speciesProfile(a), food = foodPreferenceSummary(a), spatial = spatialEcology(a);
+      const claim = Object.values(sim.territoryClaims || {}).find(row => row.ownerId === a.id || (a.groupId && row.ownerId === a.groupId));
+      const disputes = (sim.territoryDisputes || []).filter(row => row.owners?.includes(claim?.ownerId));
+      detail = `<div class="society-summary-grid"><article><h3>Species ecology</h3><p>${escapeHtml(profile?.label || a.speciesId)} · ${escapeHtml(guildOf(a))} · ${escapeHtml(profile?.feeding || "unknown feeding")} · ${escapeHtml(profile?.habitat || "unknown habitat")}</p></article><article><h3>Preferred vegetation</h3><p>${ecologyList(food.preferredPlants, "no strongly preferred plant")}</p></article><article><h3>Avoided vegetation</h3><p>${ecologyList(food.avoidedPlants)}</p></article><article><h3>Preferred carcass sources</h3><p>${ecologyList(food.preferredCarrion, eatsMeat(a) ? "no specialist preference" : "does not eat carrion")}</p></article><article><h3>Avoided carcass sources</h3><p>${ecologyList(food.avoidedCarrion, eatsMeat(a) ? "none recorded" : "all carrion")}</p></article><article><h3>Tree browsing</h3><p>${isSustainableForage(a, "tree") ? "Can consume reachable foliage; a fully browsed crown remains standing and regenerates later." : "Tree foliage is not a sustainable food for this species."}</p></article><article><h3>Spatial system</h3><p>${escapeHtml(spatial.mode.replaceAll("-", " "))} · territoriality ${Math.round(spatial.territoriality * 100)}% · typical radius ${spatial.radius} m</p></article><article><h3>Current defended claim</h3><p>${claim ? `${claim.established ? "Established" : "Establishing"} · radius ${claim.radius.toFixed(1)} m · strength ${Math.round(claim.strength * 100)}% · stable occupancy ${claim.stableTicks} updates` : spatial.territoriality < .35 ? "Non-exclusive home range; no territory is expected." : "No stable claim. Remaining locally is required before establishment."}</p></article><article><h3>Territory conflict</h3><p>${disputes.length ? disputes.map(row => `${row.owners.map(escapeHtml).join(" ↔ ")} · ${Math.round(row.intensity * 100)}%`).join("; ") : "No established overlap dispute."}</p></article><article><h3>Current feeding context</h3><p>${escapeHtml(feedingState(a))} · cell ${escapeHtml(cellAt(a.x, a.z)?.plantType || "no vegetation")} · action ${escapeHtml(a.actionState?.label || a.actionState?.key || "none")}</p></article></div>`;
+    } else if (corpse) {
+      const source = speciesProfile(corpse), preferred = SPECIES_IDS.filter(id => carcassPreference(id, corpse) >= 1), avoided = SPECIES_IDS.filter(id => eatsMeat(id) && carcassPreference(id, corpse) < .2);
+      detail = `<div class="society-summary-grid"><article><h3>Carcass provenance</h3><p>${escapeHtml(source?.label || corpse.speciesId || "unknown species")} · ${escapeHtml(corpse.sex || "unknown sex")} · ${escapeHtml(corpse.lifeStage || "unknown life stage")}</p></article><article><h3>Remaining resource</h3><p>${Number(corpse.biomass || 0).toFixed(1)} of ${Number(corpse.initialBiomass || 0).toFixed(1)} food · age ${Number(corpse.age || 0).toFixed(0)} h · ${corpse.eaten ? "skeleton" : "available carcass"}</p></article><article><h3>Preferred consumers</h3><p>${ecologyList(preferred.map(id => species[id].label), "no specialist consumer")}</p></article><article><h3>Avoiding consumers</h3><p>${ecologyList(avoided.map(id => species[id].label))}</p></article><article><h3>Current use</h3><p>Claimed by ${escapeHtml(corpse.ownerId || "none")} · ${Math.round(corpse.feedingMinutes || 0)} feeding minutes · ${Number(corpse.biomassConsumed || 0).toFixed(1)} consumed</p></article></div>`;
+    }
+    updateLaboratoryMarkup(entityRoot, `<details class="laboratory-disclosure" open><summary>Food, carcass and spatial ecology</summary><p class="hint">Authoritative ecology for the selected subject. Preferences affect choice and assimilation; avoided foods remain last-resort evidence, not preferred targets.</p>${detail}</details>`);
+  }
+  if (worldRoot && laboratorySurfaceVisible(worldRoot)) {
+    const cells = sim?.hexWorld?.cells || sim?.cells || [], minute = sim?.ecologicalMinute || 0;
+    const trees = cells.filter(cell => cell.plantType === "tree" && !(cell.fallenTreeUntil > minute)), depleted = trees.filter(cell => cell.leafDepletedUntil > minute), claims = Object.values(sim.territoryClaims || {}), disputes = sim.territoryDisputes || [];
+    const sources = new Map(); for (const item of sim.corpses || []) sources.set(item.speciesId || "unknown", (sources.get(item.speciesId || "unknown") || 0) + 1);
+    const sourceRows = [...sources.entries()].sort((left, right) => right[1] - left[1]).map(([id, count]) => `<tr><td>${escapeHtml(species[id]?.label || id)}</td><td>${count}</td></tr>`).join("") || `<tr><td colspan="2">No carcasses remain.</td></tr>`;
+    const claimRows = claims.sort((left, right) => Number(right.established) - Number(left.established) || right.strength - left.strength).map(row => `<tr><td>${escapeHtml(row.ownerId)}</td><td>${escapeHtml(String(row.mode).replaceAll("-", " "))}</td><td>${row.established ? "established" : "establishing"}</td><td>${row.radius.toFixed(1)} m</td><td>${Math.round(row.strength * 100)}%</td></tr>`).join("") || `<tr><td colspan="5">No territorial species has established a claim.</td></tr>`;
+    updateLaboratoryMarkup(worldRoot, `<details class="laboratory-disclosure" open><summary>Live food ecology and territorial landscape</summary><p class="hint">Home ranges are ordinary, overlapping use areas. Only sufficiently territorial species create defended claims; only established overlapping claims become disputes.</p><div class="society-summary-grid"><article><h3>Tree foliage</h3><p>${trees.length} standing trees · ${depleted.length} browsed leafless · ${trees.length - depleted.length} with foliage</p></article><article><h3>Carcass resources</h3><p>${sim.corpses?.length || 0} retained carcasses across ${sources.size} source species</p></article><article><h3>Territory lifecycle</h3><p>${claims.filter(row => row.established).length} established · ${claims.filter(row => !row.established).length} establishing</p></article><article><h3>Disputed overlap</h3><p>${disputes.length} active dispute${disputes.length === 1 ? "" : "s"}${disputes[0] ? ` · strongest ${Math.round(disputes[0].intensity * 100)}%` : ""}</p></article></div><div class="table-scroll"><table class="method-table"><thead><tr><th>Claim owner</th><th>Spatial mode</th><th>Status</th><th>Radius</th><th>Strength</th></tr></thead><tbody>${claimRows}</tbody></table></div><h3>Carcasses by source species</h3><div class="table-scroll"><table class="method-table"><thead><tr><th>Original species</th><th>Carcasses</th></tr></thead><tbody>${sourceRows}</tbody></table></div><p class="hint">Moving away resets local occupancy and requires establishment again. Strength and radius can respond to species ecology, group size, breeding season and resource concentration. Browsed tree crowns remain standing and regenerate after their bounded recovery period.</p></details>`);
+  }
+  if (societyRoot && laboratorySurfaceVisible(societyRoot)) {
+    if (!a) updateLaboratoryMarkup(societyRoot, `<details class="laboratory-disclosure"><summary>Territorial social conflict</summary><p class="need-plan-empty">Select a living animal to inspect how defended space affects its group and conflicts.</p></details>`);
+    else {
+      const spatial = spatialEcology(a), claim = Object.values(sim.territoryClaims || {}).find(row => row.ownerId === a.id || (a.groupId && row.ownerId === a.groupId)), disputes = claim ? (sim.territoryDisputes || []).filter(row => row.owners?.includes(claim.ownerId)) : [];
+      updateLaboratoryMarkup(societyRoot, `<details class="laboratory-disclosure" open><summary>Territorial social conflict · ${escapeHtml(a.id)}</summary><p class="hint">Territory becomes a social constraint only after stable occupation establishes a claim. Ordinary home-range overlap is not automatically aggression.</p><div class="society-summary-grid"><article><h3>Species disposition</h3><p>${escapeHtml(spatial.mode.replaceAll("-", " "))} · ${Math.round(spatial.territoriality * 100)}% territoriality</p></article><article><h3>Claim owner</h3><p>${claim ? `${escapeHtml(claim.ownerId)} · ${claim.established ? "established" : "establishing"}` : "No defended claim"}</p></article><article><h3>Group contribution</h3><p>${a.groupId ? `Group ${escapeHtml(a.groupId)} can affect radius and strength through its size.` : "Individual occupancy only"}</p></article><article><h3>Overlap consequences</h3><p>${disputes.length ? `${disputes.length} dispute${disputes.length === 1 ? "" : "s"} feed intrusion and social-conflict behaviour.` : "No established rival overlap currently affects behaviour."}</p></article></div></details>`);
+    }
+  }
 }
 
 function renderOntologyWorkspaces(a) {
@@ -2779,13 +2915,13 @@ function buildSpeciesSetupControls() {
   for (const id of SPECIES_IDS) {
     const profile = species[id], label = document.createElement("label"); label.className = "world-setting number-setting species-population-setting";
     const title = document.createElement("span"); title.textContent = `${profile.label} · ${profile.guild} · ${profile.sizeClass}`;
-    const input = document.createElement("input"); input.id = `start-species-${id}`; input.type = "number"; input.min = "0"; input.step = "1"; input.value = String(ECOLOGY_PRESETS.original.includes(id) ? profile.defaultPopulation : 0);
+    const input = document.createElement("input"); input.id = `start-species-${id}`; input.type = "number"; input.min = "0"; input.step = "1"; input.value = String(ecologyPresetCounts("ridge-hunter-web")[id] || 0);
     const output = document.createElement("output"); output.textContent = `${profile.feeding} · ${profile.habitat}`;
     label.append(title, input, output); anchor.before(label); ui.startSpecies[id] = input;
   }
 }
 buildSpeciesSetupControls();
-for (const id of SPECIES_IDS) ui.startSpecies[id].value = String(ECOLOGY_PRESETS.original.includes(id) ? species[id].defaultPopulation : 0); if (ui.ecologyPreset) ui.ecologyPreset.value = "original";
+for (const id of SPECIES_IDS) ui.startSpecies[id].value = String(ecologyPresetCounts("ridge-hunter-web")[id] || 0); if (ui.ecologyPreset) ui.ecologyPreset.value = "ridge-hunter-web";
 configureLaboratoryLayout();
 const worldSymbolDisclosure = ui.symbolKeyContent?.closest("details.world-symbol-key");
 worldSymbolDisclosure?.addEventListener("toggle", () => { if (worldSymbolDisclosure.open) renderWorldSymbolKey(); });
@@ -3105,14 +3241,20 @@ ui.newWorldGenerate.addEventListener("click", () => { const request = selectedEm
 function syncGraphicsControls() {
   ui.graphicsPreset.value = graphicsSettings.preset; ui.graphicsIconQuality.value = String(graphicsSettings.iconTextureQuality); ui.graphicsResolution.value = String(graphicsSettings.renderScale); ui.graphicsVegetation.value = String(graphicsSettings.vegetationStride); ui.graphicsAnimals.value = String(graphicsSettings.animalDetail); ui.graphicsEntityPanel.value = String(graphicsSettings.entityPanelScale); ui.graphicsEntityPanelText.value = String(graphicsSettings.entityPanelTextScale); ui.interfaceScale.value = String(graphicsSettings.interfaceScale); ui.fontScale.value = String(graphicsSettings.fontScale); ui.fontSmallScale.value = String(graphicsSettings.smallTextScale); ui.fontBodyScale.value = String(graphicsSettings.bodyTextScale); ui.fontControlScale.value = String(graphicsSettings.controlTextScale); ui.fontHeadingScale.value = String(graphicsSettings.headingTextScale); ui.fontTitleScale.value = String(graphicsSettings.titleTextScale); ui.graphicsFrameCap.value = String(graphicsSettings.frameCap); ui.graphicsEffects.checked = graphicsSettings.effects; ui.graphicsShadows.checked = graphicsSettings.contactShadows; ui.graphicsAdaptiveResolution.checked = graphicsSettings.adaptiveResolution; ui.graphicsAdaptiveMin.value = String(graphicsSettings.adaptiveMinScale); ui.graphicsAdaptiveMax.value = String(graphicsSettings.adaptiveMaxScale);
   if (ui.graphicsEntityPanelsVisible) ui.graphicsEntityPanelsVisible.checked = graphicsSettings.entityPanelsVisible !== false;
+  if (ui.graphicsEntityPanelStyle) ui.graphicsEntityPanelStyle.value = graphicsSettings.entityPanelStyle;
+  if (ui.graphicsEntityPanelPreset) ui.graphicsEntityPanelPreset.value = graphicsSettings.entityPanelContentPreset;
+  if (ui.graphicsEntityBubbleScale) ui.graphicsEntityBubbleScale.value = String(graphicsSettings.entityBubbleScale);
+  const moduleValues = { identity: graphicsSettings.entityPanelIdentityVisible, expression: graphicsSettings.entityPanelExpressionVisible, "public-cue": graphicsSettings.entityPanelPublicCueVisible, health: graphicsSettings.entityPanelHealthVisible, concern: graphicsSettings.entityPanelConcernVisible, "forecast-effect": graphicsSettings.entityPanelForecastEffectVisible, metabolic: graphicsSettings.entityPanelMetabolicVisible, performance: graphicsSettings.entityPanelPerformanceVisible, thought: graphicsSettings.entityPanelThoughtVisible, forecast: graphicsSettings.entityPanelForecastVisible };
+  for (const [id, control] of Object.entries(ui.graphicsEntityPanelModules || {})) if (control) control.checked = moduleValues[id] !== false;
+  if (ui.overlayHideEntityPresentation) ui.overlayHideEntityPresentation.checked = graphicsSettings.entityPanelsVisible === false;
   const panelControlsDisabled = graphicsSettings.entityPanelsVisible === false;
-  for (const control of [ui.graphicsEntityPanel, ui.graphicsEntityPanelText, ui.graphicsInstrumentExpression, ui.graphicsInstrumentPublicCue, ui.graphicsInstrumentThought, ui.graphicsInstrumentForecast]) if (control) control.disabled = panelControlsDisabled;
+  for (const control of [ui.graphicsEntityPanel, ui.graphicsEntityPanelText, ui.graphicsEntityPanelStyle, ui.graphicsEntityPanelPreset, ui.graphicsEntityBubbleScale, ...Object.values(ui.graphicsEntityPanelModules || {})]) if (control) control.disabled = panelControlsDisabled;
   if (ui.graphicsInstrumentExpression) ui.graphicsInstrumentExpression.checked = graphicsSettings.instrumentExpressionVisible;
   if (ui.graphicsInstrumentPublicCue) ui.graphicsInstrumentPublicCue.checked = graphicsSettings.instrumentPublicCueVisible;
   if (ui.graphicsInstrumentThought) ui.graphicsInstrumentThought.checked = graphicsSettings.instrumentThoughtVisible;
   if (ui.graphicsInstrumentForecast) ui.graphicsInstrumentForecast.checked = graphicsSettings.instrumentForecastVisible;
   const adaptive = graphicsSettings.adaptiveResolution ? `${Math.round(graphicsSettings.adaptiveMinScale * 100)}–${Math.round(graphicsSettings.adaptiveMaxScale * 100)}% adaptive range · now ${Math.round(effectiveRenderScale * 100)}%` : `${Math.round(graphicsSettings.renderScale * 100)}% fixed resolution`;
-  const panelSummary = graphicsSettings.entityPanelsVisible === false ? "entity panels hidden" : `complete entity panels ${Math.round(graphicsSettings.entityPanelScale * 100)}% uniform · panel text ${Math.round(graphicsSettings.entityPanelTextScale * 100)}%`;
+  const panelSummary = graphicsSettings.entityPanelsVisible === false ? "entity panels hidden" : `${graphicsSettings.entityPanelStyle.replaceAll("-", " ")} panels ${Math.round(graphicsSettings.entityPanelScale * 100)}% · ${graphicsSettings.entityPanelContentPreset} contents · text ${Math.round(graphicsSettings.entityPanelTextScale * 100)}%`;
   ui.graphicsSummary.textContent = `${adaptive} · icon textures ${graphicsSettings.iconTextureQuality}× · ${panelSummary} · ${graphicsSettings.frameCap} FPS`;
 }
 // Presentation scaling belongs to the running simulation and its diagnostic
@@ -3204,18 +3346,35 @@ function applyGraphicsSettings(next, rebuild = true) {
   if (previousIconQuality !== graphicsSettings.iconTextureQuality) { clearEntityPresentation(); resetIconTextureCaches(); renderWorldSymbolKey(); }
   syncGraphicsControls(); applyInterfacePresentation(); if (rebuild) { renderAll(); updateUI(); applyInterfacePresentation(); }
 }
-function readCustomGraphicsControls() { return { preset: "custom", iconTextureQuality: Number(ui.graphicsIconQuality.value), renderScale: Number(ui.graphicsResolution.value), adaptiveMinScale: Number(ui.graphicsAdaptiveMin.value), adaptiveMaxScale: Number(ui.graphicsAdaptiveMax.value), vegetationStride: Number(ui.graphicsVegetation.value), animalDetail: Number(ui.graphicsAnimals.value), entityPanelsVisible: ui.graphicsEntityPanelsVisible?.checked !== false, entityPanelScale: Number(ui.graphicsEntityPanel.value), entityPanelTextScale: Number(ui.graphicsEntityPanelText.value), entityExpressionScale: graphicsSettings.entityExpressionScale, entityIdentityScale: graphicsSettings.entityIdentityScale, entityIconScale: graphicsSettings.entityIconScale, thoughtScale: graphicsSettings.thoughtScale, predictionScale: graphicsSettings.predictionScale, instrumentExpressionVisible: ui.graphicsInstrumentExpression?.checked !== false, instrumentPublicCueVisible: ui.graphicsInstrumentPublicCue?.checked !== false, instrumentThoughtVisible: ui.graphicsInstrumentThought?.checked !== false, instrumentForecastVisible: ui.graphicsInstrumentForecast?.checked !== false, diagnosticScale: graphicsSettings.diagnosticScale, diagnosticTextScale: graphicsSettings.diagnosticTextScale, interfaceScale: Number(ui.interfaceScale.value), fontScale: Number(ui.fontScale.value), smallTextScale: Number(ui.fontSmallScale.value), bodyTextScale: Number(ui.fontBodyScale.value), controlTextScale: Number(ui.fontControlScale.value), headingTextScale: Number(ui.fontHeadingScale.value), titleTextScale: Number(ui.fontTitleScale.value), frameCap: Number(ui.graphicsFrameCap.value), effects: ui.graphicsEffects.checked, contactShadows: ui.graphicsShadows.checked, adaptiveResolution: ui.graphicsAdaptiveResolution.checked }; }
-ui.graphicsOpen.addEventListener("click", () => { ui.graphicsPanel.hidden = false; ui.realityPanel.hidden = true; ui.newWorldPanel.hidden = true; syncGraphicsControls(); });
+function readCustomGraphicsControls() { const modules = ui.graphicsEntityPanelModules || {}; return { preset: "custom", iconTextureQuality: Number(ui.graphicsIconQuality.value), renderScale: Number(ui.graphicsResolution.value), adaptiveMinScale: Number(ui.graphicsAdaptiveMin.value), adaptiveMaxScale: Number(ui.graphicsAdaptiveMax.value), vegetationStride: Number(ui.graphicsVegetation.value), animalDetail: Number(ui.graphicsAnimals.value), entityPanelsVisible: ui.graphicsEntityPanelsVisible?.checked !== false, entityPanelScale: Number(ui.graphicsEntityPanel.value), entityPanelTextScale: Number(ui.graphicsEntityPanelText.value), entityPanelStyle: ui.graphicsEntityPanelStyle?.value, entityPanelContentPreset: ui.graphicsEntityPanelPreset?.value || "custom", entityBubbleScale: Number(ui.graphicsEntityBubbleScale?.value || 1), entityPanelIdentityVisible: modules.identity?.checked !== false, entityPanelExpressionVisible: modules.expression?.checked !== false, entityPanelPublicCueVisible: modules["public-cue"]?.checked !== false, entityPanelHealthVisible: modules.health?.checked !== false, entityPanelConcernVisible: modules.concern?.checked !== false, entityPanelForecastEffectVisible: modules["forecast-effect"]?.checked !== false, entityPanelMetabolicVisible: modules.metabolic?.checked !== false, entityPanelPerformanceVisible: modules.performance?.checked !== false, entityPanelThoughtVisible: modules.thought?.checked !== false, entityPanelForecastVisible: modules.forecast?.checked !== false, entityExpressionScale: graphicsSettings.entityExpressionScale, entityIdentityScale: graphicsSettings.entityIdentityScale, entityIconScale: graphicsSettings.entityIconScale, thoughtScale: graphicsSettings.thoughtScale, predictionScale: graphicsSettings.predictionScale, diagnosticScale: graphicsSettings.diagnosticScale, diagnosticTextScale: graphicsSettings.diagnosticTextScale, interfaceScale: Number(ui.interfaceScale.value), fontScale: Number(ui.fontScale.value), smallTextScale: Number(ui.fontSmallScale.value), bodyTextScale: Number(ui.fontBodyScale.value), controlTextScale: Number(ui.fontControlScale.value), headingTextScale: Number(ui.fontHeadingScale.value), titleTextScale: Number(ui.fontTitleScale.value), frameCap: Number(ui.graphicsFrameCap.value), effects: ui.graphicsEffects.checked, contactShadows: ui.graphicsShadows.checked, adaptiveResolution: ui.graphicsAdaptiveResolution.checked }; }
+ui.graphicsOpen.addEventListener("click", () => { ui.graphicsPanel.hidden = false; ui.realityPanel.hidden = true; ui.newWorldPanel.hidden = true; syncGraphicsControls(); void discoverMenuBackgrounds(); });
 ui.graphicsClose.addEventListener("click", () => { ui.graphicsPanel.hidden = true; if (returnToGameMenuAfterModal) showGameMenu(); else document.body.classList.remove("menu-modal-open"); returnToGameMenuAfterModal = false; });
 const currentTypographySettings = () => ({ entityPanelTextScale: graphicsSettings.entityPanelTextScale, interfaceScale: graphicsSettings.interfaceScale, fontScale: graphicsSettings.fontScale, smallTextScale: graphicsSettings.smallTextScale, bodyTextScale: graphicsSettings.bodyTextScale, controlTextScale: graphicsSettings.controlTextScale, headingTextScale: graphicsSettings.headingTextScale, titleTextScale: graphicsSettings.titleTextScale });
 ui.graphicsPreset.addEventListener("change", () => { if (ui.graphicsPreset.value !== "custom") applyGraphicsSettings({ ...graphicsPreset(ui.graphicsPreset.value), ...currentTypographySettings() }); });
-for (const control of [ui.graphicsIconQuality, ui.graphicsResolution, ui.graphicsVegetation, ui.graphicsAnimals, ui.graphicsEntityPanelsVisible, ui.graphicsEntityPanel, ui.graphicsEntityPanelText, ui.graphicsInstrumentExpression, ui.graphicsInstrumentPublicCue, ui.graphicsInstrumentThought, ui.graphicsInstrumentForecast, ui.interfaceScale, ui.fontScale, ui.fontSmallScale, ui.fontBodyScale, ui.fontControlScale, ui.fontHeadingScale, ui.fontTitleScale, ui.graphicsFrameCap, ui.graphicsEffects, ui.graphicsShadows, ui.graphicsAdaptiveResolution, ui.graphicsAdaptiveMin, ui.graphicsAdaptiveMax].filter(Boolean)) control.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
+const ENTITY_PANEL_PRESET_MODULES = Object.freeze({ classic: { identity: true, expression: true, "public-cue": true, health: false, concern: false, "forecast-effect": false, metabolic: false, performance: false, thought: false, forecast: false }, essential: { identity: true, expression: true, "public-cue": true, health: true, concern: true, "forecast-effect": false, metabolic: false, performance: false, thought: false, forecast: false }, predictive: { identity: true, expression: true, "public-cue": true, health: false, concern: false, "forecast-effect": false, metabolic: false, performance: false, thought: true, forecast: true }, full: { identity: true, expression: true, "public-cue": true, health: true, concern: true, "forecast-effect": true, metabolic: true, performance: true, thought: true, forecast: true } });
+ui.graphicsEntityPanelPreset?.addEventListener("change", () => { const preset = ENTITY_PANEL_PRESET_MODULES[ui.graphicsEntityPanelPreset.value]; if (!preset) return applyGraphicsSettings(readCustomGraphicsControls()); for (const [id, enabled] of Object.entries(preset)) if (ui.graphicsEntityPanelModules[id]) ui.graphicsEntityPanelModules[id].checked = enabled; applyGraphicsSettings(readCustomGraphicsControls()); });
+for (const control of Object.values(ui.graphicsEntityPanelModules || {})) control?.addEventListener("change", () => { if (ui.graphicsEntityPanelPreset) ui.graphicsEntityPanelPreset.value = "custom"; applyGraphicsSettings(readCustomGraphicsControls()); });
+for (const control of [ui.graphicsIconQuality, ui.graphicsResolution, ui.graphicsVegetation, ui.graphicsAnimals, ui.graphicsEntityPanelsVisible, ui.graphicsEntityPanel, ui.graphicsEntityPanelText, ui.graphicsEntityPanelStyle, ui.graphicsEntityBubbleScale, ui.interfaceScale, ui.fontScale, ui.fontSmallScale, ui.fontBodyScale, ui.fontControlScale, ui.fontHeadingScale, ui.fontTitleScale, ui.graphicsFrameCap, ui.graphicsEffects, ui.graphicsShadows, ui.graphicsAdaptiveResolution, ui.graphicsAdaptiveMin, ui.graphicsAdaptiveMax].filter(Boolean)) control.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
 ui.fontScalesReset?.addEventListener("click", () => applyGraphicsSettings({ ...graphicsSettings, preset: "custom", fontScale: 1, smallTextScale: 1, bodyTextScale: 1, controlTextScale: 1, headingTextScale: 1, titleTextScale: 1 }));
 syncGraphicsControls(); applyInterfacePresentation();
 const pendingTypographyRoots = new Set();
 let typographyFrame = 0;
 const typographyObserver = new MutationObserver((records) => {
-  for (const record of records) for (const node of record.addedNodes) if (node instanceof HTMLElement) { pendingTypographyRoots.add(node); if (node.matches(interfaceRoots)) typographyObserver.observe(node, { childList: true, subtree: true }); }
+  for (const record of records) for (const node of record.addedNodes) if (node instanceof HTMLElement) {
+    // Observer-detail reconciliation types structural additions synchronously
+    // before restoring its scroll position. Do not schedule a second whole-
+    // panel typography pass on the following frame for nodes already handled
+    // by that path; the redundant pass used to create the visible refresh.
+    if (node.closest("#hud-detail-content") && node.dataset.typographyManaged === "true") continue;
+    // Selected-organism and Cinema content is replaced dynamically. Measuring
+    // only the inserted descendants would read the already-scaled font size
+    // inherited from their retained parent, then apply the scale a second
+    // time. Promote those mutations to their complete authored panel so every
+    // managed inline size is cleared before a single, stable measurement pass.
+    const authoredPanel = node.closest("#observer-selection, #movie-hud");
+    pendingTypographyRoots.add(authoredPanel || node);
+    if (node.matches(interfaceRoots)) typographyObserver.observe(node, { childList: true, subtree: true });
+  }
   if (!pendingTypographyRoots.size || typographyFrame) return;
   typographyFrame = requestAnimationFrame(() => { typographyFrame = 0; const roots = [...pendingTypographyRoots]; pendingTypographyRoots.clear(); applyInterfacePresentation(roots); });
 });
@@ -3226,7 +3385,7 @@ const MANAGED_WINDOW_ADAPTERS = Object.freeze([
   { id: "selection", title: "Selected organism", element: () => ui.hudSelection, isOpen: () => !ui.hudSelection.classList.contains("is-window-closed"), open: () => ui.hudSelection.classList.remove("is-window-closed"), close: () => ui.hudSelection.classList.add("is-window-closed"), note: () => ui.hudSelection.hidden ? "Ready for selection" : null },
   { id: "laboratory", title: "Living Laboratory", element: () => ui.inspector, isOpen: () => !ui.inspector.classList.contains("is-closed"), available: () => !embodimentCapabilities() || ["full", "mini"].includes(embodimentCapabilities().laboratory), open: () => { if (embodimentCapabilities() && !["full", "mini"].includes(embodimentCapabilities().laboratory)) return; ui.inspector.classList.remove("is-closed"); ui.labToggle.checked = true; renderAll(); updateUI(); }, close: () => { ui.inspector.classList.add("is-closed"); ui.labToggle.checked = false; renderAll(); updateUI(); } },
   { id: "reality", title: "Reality overview", element: () => ui.realityPanel, isOpen: () => !ui.realityPanel.hidden, open: () => { ui.realityPanel.hidden = false; ui.graphicsPanel.hidden = true; ui.newWorldPanel.hidden = true; updateRealityPanel(true); }, close: () => { ui.realityPanel.hidden = true; } },
-  { id: "settings", title: "Settings", element: () => ui.graphicsPanel, isOpen: () => !ui.graphicsPanel.hidden, open: () => { ui.graphicsPanel.hidden = false; ui.realityPanel.hidden = true; ui.newWorldPanel.hidden = true; syncGraphicsControls(); }, close: () => { ui.graphicsPanel.hidden = true; } },
+  { id: "settings", title: "Settings", element: () => ui.graphicsPanel, isOpen: () => !ui.graphicsPanel.hidden, open: () => { ui.graphicsPanel.hidden = false; ui.realityPanel.hidden = true; ui.newWorldPanel.hidden = true; syncGraphicsControls(); void discoverMenuBackgrounds(); }, close: () => { ui.graphicsPanel.hidden = true; } },
   { id: "new-world", title: "New world", element: () => ui.newWorldPanel, isOpen: () => !ui.newWorldPanel.hidden, open: () => { ui.newWorldPanel.hidden = false; ui.graphicsPanel.hidden = true; ui.realityPanel.hidden = true; syncEmbodimentSetup(); updateWorldSetupLabels(); }, close: () => { ui.newWorldPanel.hidden = true; } },
   { id: "showcase", title: "Showcase controls", element: () => ui.showcaseHud, available: () => document.body.classList.contains("showcase-mode"), isOpen: () => !ui.showcaseHud?.hidden && !ui.showcaseHud?.classList.contains("is-window-closed"), open: () => { ui.showcaseHud?.classList.remove("is-window-closed"); if (ui.showcaseHud) ui.showcaseHud.hidden = false; document.body.classList.remove("showcase-toolbar-hidden"); }, close: () => ui.showcaseHud?.classList.add("is-window-closed") },
   { id: "cinema", title: "Cinema controls", element: () => movieUi.panel, available: () => movieState.active, isOpen: () => movieState.active && !movieUi.panel?.classList.contains("is-window-closed"), open: () => { movieUi.panel?.classList.remove("is-window-closed"); if (movieUi.panel) movieUi.panel.hidden = false; wakeMovieHud(); }, close: () => movieUi.panel?.classList.add("is-window-closed") }
@@ -3252,11 +3411,28 @@ function renderEscapeWindowList() {
   }
   if (ui.escapeLaboratorySize) ui.escapeLaboratorySize.textContent = ui.inspector.classList.contains("is-main-laboratory") ? "Use Mini Laboratory" : "Open Main Laboratory";
   if (ui.escapeExitMovie) ui.escapeExitMovie.hidden = !movieState.active;
+  if (ui.escapeUnstuckEntity) {
+    const target = inhabitedAnimal()?.alive ? inhabitedAnimal() : selectedAnimal();
+    ui.escapeUnstuckEntity.disabled = !target?.alive;
+    ui.escapeUnstuckEntity.textContent = target?.alive ? `Unstuck ${target.id}` : "Unstuck selected entity";
+  }
 }
 document.addEventListener("click", (event) => { const id = event.target.closest("[data-close-window]")?.dataset.closeWindow; if (id) setManagedWindowOpen(id, false); });
 ui.escapeWindowList?.addEventListener("click", (event) => { const id = event.target.closest("[data-escape-window]")?.dataset.escapeWindow, adapter = managedWindowAdapter(id); if (adapter) setManagedWindowOpen(id, managedWindowState(adapter) !== "shown"); });
 
 let escapeMenuSession = null;
+function renderEscapeSaveChoice() {
+  if (!ui.escapeSaveChoice || !ui.escapeSaveExisting) return;
+  const slots = savedSlotMetadata(), preferred = activeSaveSlotName && slots.some(slot => slot.name === activeSaveSlotName) ? activeSaveSlotName : slots[0]?.name || "";
+  ui.escapeSaveExisting.innerHTML = slots.length ? slots.map(slot => `<option value="${escapeHtml(slot.name)}"${slot.name === preferred ? " selected" : ""}>${escapeHtml(slot.name)} — seed ${escapeHtml(String(slot.seed))}, day ${escapeHtml(String(slot.day))}</option>`).join("") : `<option value="">No named saves yet</option>`;
+  const existingMode = ui.escapeSaveChoice.querySelector('input[name="escape-save-mode"][value="existing"]'), newMode = ui.escapeSaveChoice.querySelector('input[name="escape-save-mode"][value="new"]');
+  existingMode.disabled = !slots.length;
+  if (!slots.length) newMode.checked = true; else existingMode.checked = true;
+  ui.escapeSaveNewName.value = `World day ${sim.day}`;
+  ui.escapeSaveChoice.hidden = false;
+  (slots.length ? ui.escapeSaveExisting : ui.escapeSaveNewName).focus();
+}
+function escapeSaveMode() { return ui.escapeSaveChoice?.querySelector('input[name="escape-save-mode"]:checked')?.value || "new"; }
 function setMoviePauseState(paused) { movieState.paused = Boolean(paused); if (movieUi.pause) movieUi.pause.textContent = movieState.paused ? "Resume camera" : "Pause camera"; if ("speechSynthesis" in window) { if (movieState.paused) window.speechSynthesis.pause(); else window.speechSynthesis.resume(); } }
 function openEscapeMenu() {
   if (!ui.escapeMenu?.hidden || !ui.gameMenu?.hidden) return;
@@ -3268,7 +3444,7 @@ function openEscapeMenu() {
 }
 function closeEscapeMenu({ restore = true } = {}) {
   if (ui.escapeMenu?.hidden) return;
-  const session = escapeMenuSession; ui.escapeMenu.hidden = true; document.body.classList.remove("escape-menu-open"); escapeMenuSession = null;
+  const session = escapeMenuSession; ui.escapeMenu.hidden = true; if (ui.escapeSaveChoice) ui.escapeSaveChoice.hidden = true; document.body.classList.remove("escape-menu-open"); escapeMenuSession = null;
   if (restore && session) { setRunning(session.wasRunning); if (movieState.active) setMoviePauseState(session.movieWasPaused); session.focus?.focus?.(); }
 }
 ui.escapeResume?.addEventListener("click", () => closeEscapeMenu());
@@ -3276,8 +3452,28 @@ ui.escapeClose?.addEventListener("click", () => closeEscapeMenu());
 ui.escapeMenu?.querySelector("[data-escape-resume]")?.addEventListener("click", () => closeEscapeMenu());
 ui.escapeLaboratorySize?.addEventListener("click", () => { setManagedWindowOpen("laboratory", true); setLaboratoryDisplayMode(ui.inspector.classList.contains("is-main-laboratory") ? "mini" : "main"); renderEscapeWindowList(); });
 ui.escapeResetLayout?.addEventListener("click", () => { resetManagedWindowSizes(); renderEscapeWindowList(); ui.escapeResetLayout.textContent = "Window sizes reset"; window.setTimeout(() => { if (ui.escapeResetLayout) ui.escapeResetLayout.textContent = "Reset window sizes"; }, 1400); });
+ui.escapeUnstuckEntity?.addEventListener("click", () => { recoverStuckEntity(); renderEscapeWindowList(); });
 ui.escapeNewWorld?.addEventListener("click", () => { closeEscapeMenu({ restore: false }); setManagedWindowOpen("new-world", true); });
 ui.escapeExitMovie?.addEventListener("click", async () => { if (movieState.active) await stopMovieMode(true); renderEscapeWindowList(); });
+ui.escapeSaveExit?.addEventListener("click", () => { if (!ui.escapeSaveExit.disabled) renderEscapeSaveChoice(); });
+ui.escapeSaveChoiceCancel?.addEventListener("click", () => { ui.escapeSaveChoice.hidden = true; if (ui.escapeStatus) ui.escapeStatus.textContent = "Save and exit cancelled. The simulation remains paused."; ui.escapeSaveExit.focus(); });
+ui.escapeSaveChoice?.addEventListener("change", (event) => { if (event.target.matches('input[name="escape-save-mode"]')) { const mode = escapeSaveMode(); if (mode === "existing") ui.escapeSaveExisting.focus(); else if (mode === "new") ui.escapeSaveNewName.focus(); } });
+ui.escapeSaveChoiceConfirm?.addEventListener("click", async () => {
+  if (ui.escapeSaveChoiceConfirm.disabled) return;
+  const mode = escapeSaveMode(), name = mode === "existing" ? ui.escapeSaveExisting.value.trim() : mode === "new" ? ui.escapeSaveNewName.value.trim() : "";
+  if ((mode === "existing" || mode === "new") && !name) { if (ui.escapeStatus) ui.escapeStatus.textContent = mode === "existing" ? "Select a named save to update." : "Enter a name for the new save."; return; }
+  const label = ui.escapeSaveChoiceConfirm.textContent; ui.escapeSaveChoiceConfirm.disabled = true; ui.escapeSaveExit.disabled = true; ui.escapeSaveChoiceConfirm.textContent = "Saving world…"; ui.escapeSaveExit.setAttribute("aria-busy", "true");
+  if (ui.escapeStatus) ui.escapeStatus.textContent = mode === "quick" ? "Creating a quick save and preparing Continue. Please wait." : `Saving “${name}” and preparing Continue. Please wait.`;
+  const saved = mode === "quick" ? await saveProgress(true, { slotName: null }) : await saveNamedSlot({ name, alsoResume: true, silent: true });
+  if (!saved) {
+    ui.escapeSaveChoiceConfirm.disabled = false; ui.escapeSaveExit.disabled = false; ui.escapeSaveChoiceConfirm.textContent = label; ui.escapeSaveExit.removeAttribute("aria-busy");
+    if (ui.escapeStatus) ui.escapeStatus.textContent = "Save failed. The simulation remains paused and has not exited.";
+    return;
+  }
+  if (movieState.active) { ui.escapeSaveChoiceConfirm.textContent = "Closing Cinema session…"; await stopMovieMode(false); }
+  gameSessionStarted = false; closeEscapeMenu({ restore: false }); showGameMenu("main");
+  ui.escapeSaveChoiceConfirm.disabled = false; ui.escapeSaveExit.disabled = false; ui.escapeSaveChoiceConfirm.textContent = label; ui.escapeSaveExit.removeAttribute("aria-busy");
+});
 ui.escapeMainMenu?.addEventListener("click", () => { closeEscapeMenu({ restore: false }); showGameMenu("main"); });
 ui.escapeMenu?.addEventListener("keydown", (event) => { if (event.key !== "Tab") return; const focusable = [...ui.escapeMenu.querySelectorAll("button:not([disabled]):not([hidden]), [href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])")].filter(node => node.tabIndex >= 0 && node.getClientRects().length); if (!focusable.length) return; const first = focusable[0], last = focusable.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } });
 const CINEMATIC_HUD_KEY = "rss-cinematic-hud-controls-v1";
@@ -3285,24 +3481,52 @@ const MENU_BACKGROUND_KEY = "rss-menu-background-v1";
 const MENU_BACKGROUND_LIBRARY_KEY = "rss-menu-background-library-v1";
 const MENU_BACKGROUND_HIDDEN_KEY = "rss-menu-background-hidden-v1";
 const MENU_BACKGROUND_ROTATION_KEY = "rss-menu-background-rotation-v1";
-const menuBackgrounds = Object.freeze(Object.fromEntries([["cinematic-water-family", "./assets/menu/menu-cinematic-water-family.png"], ["cinematic-warning-line", "./assets/menu/menu-cinematic-warning-line.png"], ["cinematic-family-research", "./assets/menu/menu-cinematic-family-research.png"], ["cinematic-ecosystem-panorama", "./assets/menu/menu-cinematic-ecosystem-panorama.png"], ["featured-water-meadow", "./assets/menu/menu-water-meadow-common-symbols-concept.png"], ["featured-courtship", "./assets/menu/menu-courtship-after-rain-concept.png"], ["featured-family-crossing", "./assets/menu/menu-broken-family-crossing-concept.png"], ["featured-injured-escape", "./assets/menu/menu-injured-prey-escape-concept.png"], ["featured-group-warning", "./assets/menu/menu-group-warning-encounter-concept.png"], ["featured-family-memory", "./assets/menu/menu-pregnant-family-memory-concept.png"], ["featured-pursuit", "./assets/menu/menu-predator-pursuit-concept.png"], ...Array.from({ length: 23 }, (_, index) => [`chat-${String(index + 1).padStart(2, "0")}`, `./assets/menu/chat/chat-background-${String(index + 1).padStart(2, "0")}.png`])]));
-function menuBackgroundName(id) { if (id === "cinematic-water-family") return "Cinematic water family — newest"; if (id === "cinematic-warning-line") return "Cinematic warning line"; if (id === "cinematic-family-research") return "Cinematic family research"; if (id === "cinematic-ecosystem-panorama") return "Cinematic ecosystem panorama"; if (id === "featured-water-meadow") return "Morning water meadow concept"; if (id === "featured-courtship") return "Courtship after the rain concept"; if (id === "featured-family-crossing") return "Broken family crossing concept"; if (id === "featured-injured-escape") return "Injured prey escape concept"; if (id === "featured-group-warning") return "Group warning encounter concept"; if (id === "featured-family-memory") return "Pregnant family memory concept"; if (id === "featured-pursuit") return "Predator pursuit concept"; return `Chat image ${id.slice(5)}`; }
+let menuBackgrounds = Object.freeze(Object.fromEntries([["cinematic-water-family", "./assets/menu/menu-cinematic-water-family.png"], ["cinematic-warning-line", "./assets/menu/menu-cinematic-warning-line.png"], ["cinematic-family-research", "./assets/menu/menu-cinematic-family-research.png"], ["cinematic-ecosystem-panorama", "./assets/menu/menu-cinematic-ecosystem-panorama.png"], ["featured-water-meadow", "./assets/menu/menu-water-meadow-common-symbols-concept.png"], ["featured-courtship", "./assets/menu/menu-courtship-after-rain-concept.png"], ["featured-family-crossing", "./assets/menu/menu-broken-family-crossing-concept.png"], ["featured-injured-escape", "./assets/menu/menu-injured-prey-escape-concept.png"], ["featured-group-warning", "./assets/menu/menu-group-warning-encounter-concept.png"], ["featured-family-memory", "./assets/menu/menu-pregnant-family-memory-concept.png"], ["featured-pursuit", "./assets/menu/menu-predator-pursuit-concept.png"]]));
+let menuBackgroundLabels = Object.create(null), menuBackgroundDiscovery = null, menuBackgroundLibraryReady = false;
+function menuBackgroundSlug(value) { return String(value || "").replace(/\.[^.]+$/, "").replace(/^menu[-_ ]+/i, "").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "menu-image"; }
+function menuBackgroundTitle(value) { const clean = String(value || "").replace(/\.[^.]+$/, "").replace(/^menu[-_ ]+/i, "").replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim(); return clean.replace(/\b\w/g, letter => letter.toUpperCase()); }
+function menuBackgroundRegistry(images) {
+  const legacyIds = new Map(Object.entries(menuBackgrounds).map(([id, path]) => [String(path).replace(/^\.\//, "").toLowerCase(), id])), registry = {}, labels = {}, used = new Set();
+  for (const image of images) {
+    const path = String(image?.path || "").replace(/\\/g, "/").replace(/^\//, ""); if (!/^assets\/menu\/.+\.(png|jpe?g|webp|avif)$/i.test(path)) continue;
+    const legacy = legacyIds.get(path.toLowerCase()); let id = legacy || menuBackgroundSlug(path.slice("assets/menu/".length)); const base = id; let suffix = 2; while (used.has(id)) id = `${base}-${suffix++}`; used.add(id);
+    registry[id] = `./${path}`; labels[id] = menuBackgroundTitle(image.name || path.split("/").at(-1));
+  }
+  return { registry: Object.freeze(registry), labels };
+}
+async function discoverMenuBackgrounds() {
+  if (menuBackgroundDiscovery) return menuBackgroundDiscovery;
+  menuBackgroundLibraryReady = true;
+  const discovery = (async () => {
+    try {
+      const response = await fetch("/__menu-backgrounds", { cache: "no-store" }); if (!response.ok) throw new Error(`background manifest ${response.status}`);
+      const manifest = await response.json(), discovered = menuBackgroundRegistry(Array.isArray(manifest?.images) ? manifest.images : []); if (!Object.keys(discovered.registry).length) return false;
+      const previous = new Set(Object.keys(menuBackgrounds)); menuBackgrounds = discovered.registry; menuBackgroundLabels = discovered.labels;
+      const additions = Object.keys(menuBackgrounds).filter(id => !previous.has(id)); if (menuBackgroundModeCycles() && additions.length) { menuBackgroundRotation.selected = [...new Set([...menuBackgroundRotation.selected, ...additions])]; saveMenuBackgroundRotation(); menuBackgroundQueue = []; }
+      syncMenuBackgroundOptions(ui.menuBackground?.value); syncMenuBackgroundRotationControls(); return true;
+    } catch (error) { console.warn("Menu background folder discovery unavailable; using the built-in fallback registry.", error); syncMenuBackgroundOptions(ui.menuBackground?.value); return false; }
+  })();
+  menuBackgroundDiscovery = discovery; discovery.finally(() => { if (menuBackgroundDiscovery === discovery) menuBackgroundDiscovery = null; }); return discovery;
+}
+function menuBackgroundName(id) { if (menuBackgroundLabels[id]) return menuBackgroundLabels[id]; if (id === "cinematic-water-family") return "Cinematic water family — newest"; if (id === "cinematic-warning-line") return "Cinematic warning line"; if (id === "cinematic-family-research") return "Cinematic family research"; if (id === "cinematic-ecosystem-panorama") return "Cinematic ecosystem panorama"; if (id === "featured-water-meadow") return "Morning water meadow concept"; if (id === "featured-courtship") return "Courtship after the rain concept"; if (id === "featured-family-crossing") return "Broken family crossing concept"; if (id === "featured-injured-escape") return "Injured prey escape concept"; if (id === "featured-group-warning") return "Group warning encounter concept"; if (id === "featured-family-memory") return "Pregnant family memory concept"; if (id === "featured-pursuit") return "Predator pursuit concept"; return menuBackgroundTitle(id); }
 let activeMenuBackgroundUrl = null, menuBackgroundRequest = 0;
 const menuBackgroundThumbnailUrls = new Map();
 let menuBackgroundTimer = null, menuBackgroundQueue = [];
 function customMenuBackgrounds() { try { const items = JSON.parse(localStorage.getItem(MENU_BACKGROUND_LIBRARY_KEY) || "[]"); return Array.isArray(items) ? items.filter(item => item?.id && item?.name) : []; } catch { return []; } }
 function saveCustomMenuBackgrounds(items) { localStorage.setItem(MENU_BACKGROUND_LIBRARY_KEY, JSON.stringify(items)); }
 function hiddenMenuBackgrounds() { try { const ids = JSON.parse(localStorage.getItem(MENU_BACKGROUND_HIDDEN_KEY) || "[]"); return new Set(Array.isArray(ids) ? ids.filter(id => menuBackgrounds[id]) : []); } catch { return new Set(); } }
-function availableMenuBackgrounds() { const hidden = hiddenMenuBackgrounds(), entries = Object.entries(menuBackgrounds).filter(([id]) => !hidden.has(id)); return entries.length ? entries : [["chat-01", menuBackgrounds["chat-01"]]]; }
+function availableMenuBackgrounds() { const hidden = hiddenMenuBackgrounds(), entries = Object.entries(menuBackgrounds).filter(([id]) => !hidden.has(id)); return entries.length ? entries : Object.entries(menuBackgrounds).slice(0, 1); }
 function menuBackgroundChoiceCount() { return availableMenuBackgrounds().length + customMenuBackgrounds().length; }
 function menuBackgroundValues() { return [...availableMenuBackgrounds().map(([id]) => id), ...customMenuBackgrounds().map(item => `custom:${item.id}`)]; }
-function readMenuBackgroundRotation() { try { const raw = localStorage.getItem(MENU_BACKGROUND_ROTATION_KEY), saved = raw ? JSON.parse(raw) : {}, all = menuBackgroundValues(); if (saved.version !== 2) return { version: 2, mode: "cycle", interval: 30, selected: all }; return { version: 2, mode: saved.mode === "fixed" ? "fixed" : "cycle", interval: [10, 20, 30, 60, 120].includes(Number(saved.interval)) ? Number(saved.interval) : 30, selected: Array.isArray(saved.selected) && saved.selected.length ? [...new Set(saved.selected.filter(value => typeof value === "string"))] : all }; } catch { return { version: 2, mode: "cycle", interval: 30, selected: menuBackgroundValues() }; } }
+function readMenuBackgroundRotation() { try { const raw = localStorage.getItem(MENU_BACKGROUND_ROTATION_KEY), saved = raw ? JSON.parse(raw) : {}, all = menuBackgroundValues(); if (![2, 3].includes(saved.version)) return { version: 3, mode: "cycle", interval: 30, selected: all }; return { version: 3, mode: ["fixed", "cycle", "sequence"].includes(saved.mode) ? saved.mode : "cycle", interval: [10, 20, 30, 60, 120].includes(Number(saved.interval)) ? Number(saved.interval) : 30, selected: Array.isArray(saved.selected) && saved.selected.length ? [...new Set(saved.selected.filter(value => typeof value === "string"))] : all }; } catch { return { version: 3, mode: "cycle", interval: 30, selected: menuBackgroundValues() }; } }
 let menuBackgroundRotation = readMenuBackgroundRotation();
+function menuBackgroundModeCycles() { return menuBackgroundRotation.mode === "cycle" || menuBackgroundRotation.mode === "sequence"; }
 function validMenuBackgroundPool() { const available = new Set(menuBackgroundValues()); return menuBackgroundRotation.selected.filter(value => available.has(value)); }
-function saveMenuBackgroundRotation() { menuBackgroundRotation.version = 2; menuBackgroundRotation.selected = validMenuBackgroundPool(); localStorage.setItem(MENU_BACKGROUND_ROTATION_KEY, JSON.stringify(menuBackgroundRotation)); }
+function saveMenuBackgroundRotation() { menuBackgroundRotation.version = 3; menuBackgroundRotation.selected = validMenuBackgroundPool(); localStorage.setItem(MENU_BACKGROUND_ROTATION_KEY, JSON.stringify(menuBackgroundRotation)); }
 function shuffledMenuBackgroundPool(pool, current = "") { const queue = [...pool]; for (let index = queue.length - 1; index > 0; index -= 1) { const swap = Math.floor(Math.random() * (index + 1)); [queue[index], queue[swap]] = [queue[swap], queue[index]]; } if (queue.length > 1 && queue[0] === current) queue.push(queue.shift()); return queue; }
-function syncMenuBackgroundRotationControls() { const pool = validMenuBackgroundPool(); if (ui.menuBackgroundMode) ui.menuBackgroundMode.value = menuBackgroundRotation.mode; if (ui.menuBackgroundInterval) ui.menuBackgroundInterval.value = String(menuBackgroundRotation.interval); if (ui.menuBackgroundIntervalRow) ui.menuBackgroundIntervalRow.hidden = menuBackgroundRotation.mode !== "cycle"; if (ui.menuBackgroundInstruction) ui.menuBackgroundInstruction.textContent = menuBackgroundRotation.mode === "cycle" ? `Click images to add or remove them · ${pool.length} selected` : "Click an image to use it"; updateMenuBackgroundSelection(); }
-function scheduleMenuBackgroundCycle({ immediate = false } = {}) { if (menuBackgroundTimer) clearTimeout(menuBackgroundTimer); menuBackgroundTimer = null; if (menuBackgroundRotation.mode !== "cycle") return; const pool = validMenuBackgroundPool(); if (!pool.length) return; const advance = async () => { if (document.body.classList.contains("menu-open")) { if (!menuBackgroundQueue.length || menuBackgroundQueue.some(value => !pool.includes(value))) menuBackgroundQueue = shuffledMenuBackgroundPool(pool, ui.menuBackground?.value); const next = menuBackgroundQueue.shift(); if (next) await applyMenuBackground(next, { persistSelection: false }); } menuBackgroundTimer = setTimeout(advance, menuBackgroundRotation.interval * 1000); }; menuBackgroundTimer = setTimeout(advance, immediate ? 0 : menuBackgroundRotation.interval * 1000); }
+function sequentialMenuBackgroundPool(pool, current = "") { if (!pool.length) return []; const currentIndex = pool.indexOf(current); const start = currentIndex >= 0 ? currentIndex + 1 : 0; return [...pool.slice(start), ...pool.slice(0, start)]; }
+function syncMenuBackgroundRotationControls() { const pool = validMenuBackgroundPool(); if (ui.menuBackgroundMode) ui.menuBackgroundMode.value = menuBackgroundRotation.mode; if (ui.menuBackgroundInterval) ui.menuBackgroundInterval.value = String(menuBackgroundRotation.interval); if (ui.menuBackgroundIntervalRow) ui.menuBackgroundIntervalRow.hidden = !menuBackgroundModeCycles(); if (ui.menuBackgroundInstruction) ui.menuBackgroundInstruction.textContent = menuBackgroundModeCycles() ? `Click images to add or remove them · ${pool.length} selected` : "Click an image to use it"; updateMenuBackgroundSelection(); }
+function scheduleMenuBackgroundCycle({ immediate = false } = {}) { if (menuBackgroundTimer) clearTimeout(menuBackgroundTimer); menuBackgroundTimer = null; if (!menuBackgroundModeCycles()) return; const advance = async () => { const pool = validMenuBackgroundPool(); if (!pool.length) return; if (document.body.classList.contains("menu-open")) { if (!menuBackgroundQueue.length || menuBackgroundQueue.some(value => !pool.includes(value))) menuBackgroundQueue = menuBackgroundRotation.mode === "sequence" ? sequentialMenuBackgroundPool(pool, ui.menuBackground?.value) : shuffledMenuBackgroundPool(pool, ui.menuBackground?.value); const next = menuBackgroundQueue.shift(); if (next) await applyMenuBackground(next, { persistSelection: false }); } menuBackgroundTimer = setTimeout(advance, menuBackgroundRotation.interval * 1000); }; menuBackgroundTimer = setTimeout(advance, immediate ? 0 : menuBackgroundRotation.interval * 1000); }
 function syncMenuBackgroundOptions(preferredSelection = null) {
   if (!ui.menuBackground) return;
   const selected = preferredSelection || ui.menuBackground.value; ui.menuBackground.replaceChildren(); for (const [id] of availableMenuBackgrounds()) { const option = document.createElement("option"); option.value = id; option.textContent = menuBackgroundName(id); ui.menuBackground.append(option); }
@@ -3310,7 +3534,7 @@ function syncMenuBackgroundOptions(preferredSelection = null) {
   if (custom.length) { const group = document.createElement("optgroup"); group.label = "Imported images"; group.dataset.customBackgrounds = "true"; for (const item of custom) { const option = document.createElement("option"); option.value = `custom:${item.id}`; option.textContent = item.name; group.append(option); } ui.menuBackground.append(group); }
   if ([...ui.menuBackground.options].some(option => option.value === selected)) ui.menuBackground.value = selected;
   ui.menuBackgroundRemove.disabled = !ui.menuBackground.value || menuBackgroundChoiceCount() <= 1;
-  queueMicrotask(renderMenuBackgroundLibrary);
+  if (menuBackgroundLibraryReady) queueMicrotask(renderMenuBackgroundLibrary);
 }
 async function renderMenuBackgroundLibrary() {
   if (!ui.menuBackgroundLibrary) return;
@@ -3320,13 +3544,13 @@ async function renderMenuBackgroundLibrary() {
   for (const item of customMenuBackgrounds()) { const blob = await readSnapshot(`menu-background:${item.id}`).catch(() => null); if (!(blob instanceof Blob)) continue; const source = URL.createObjectURL(blob); menuBackgroundThumbnailUrls.set(item.id, source); entries.push({ value: `custom:${item.id}`, id: item.id, name: item.name, source, custom: true }); }
   for (const entry of entries) {
     const card = document.createElement("div"); card.className = "menu-background-card"; card.dataset.backgroundValue = entry.value; card.tabIndex = 0; card.setAttribute("role", "button"); card.setAttribute("aria-label", `Use ${entry.name} as the menu background`);
-    const preview = document.createElement("img"); preview.src = entry.source; preview.alt = ""; const footer = document.createElement("div"); footer.className = "menu-background-card-footer"; const name = document.createElement("span"); name.className = "menu-background-card-name"; name.textContent = entry.name; const kind = document.createElement("span"); kind.className = "menu-background-card-kind"; kind.textContent = entry.custom ? "Imported" : "Chat"; footer.append(name, kind);
+    const preview = document.createElement("img"); preview.loading = "lazy"; preview.decoding = "async"; preview.src = entry.source; preview.alt = ""; const footer = document.createElement("div"); footer.className = "menu-background-card-footer"; const name = document.createElement("span"); name.className = "menu-background-card-name"; name.textContent = entry.name; const kind = document.createElement("span"); kind.className = "menu-background-card-kind"; kind.textContent = entry.custom ? "Imported" : "Menu folder"; footer.append(name, kind);
     const remove = document.createElement("button"); remove.type = "button"; remove.className = "menu-background-card-delete"; remove.dataset.deleteBackground = entry.value; remove.textContent = "Delete"; remove.disabled = menuBackgroundChoiceCount() <= 1; footer.append(remove);
     card.append(preview, footer); ui.menuBackgroundLibrary.append(card);
   }
   updateMenuBackgroundSelection();
 }
-function updateMenuBackgroundSelection() { const selected = ui.menuBackground?.value, cycle = new Set(validMenuBackgroundPool()); for (const card of ui.menuBackgroundLibrary?.querySelectorAll(".menu-background-card") || []) { card.classList.toggle("is-active", card.dataset.backgroundValue === selected); card.classList.toggle("is-cycle-selected", menuBackgroundRotation.mode === "cycle" && cycle.has(card.dataset.backgroundValue)); } }
+function updateMenuBackgroundSelection() { const selected = ui.menuBackground?.value, cycle = new Set(validMenuBackgroundPool()); for (const card of ui.menuBackgroundLibrary?.querySelectorAll(".menu-background-card") || []) { card.classList.toggle("is-active", card.dataset.backgroundValue === selected); card.classList.toggle("is-cycle-selected", menuBackgroundModeCycles() && cycle.has(card.dataset.backgroundValue)); } }
 async function applyMenuBackground(choice = "chat-01", { persistSelection = true } = {}) {
   const request = ++menuBackgroundRequest; let selected = choice, source = null;
   if (availableMenuBackgrounds().some(([id]) => id === selected)) source = new URL(menuBackgrounds[selected], window.location.href).href;
@@ -3343,10 +3567,10 @@ const savedMenuBackground = (() => { try { return localStorage.getItem(MENU_BACK
 syncMenuBackgroundOptions(savedMenuBackground);
 if (availableMenuBackgrounds().some(([id]) => id === savedMenuBackground)) applyMenuBackground(savedMenuBackground); else queueMicrotask(() => applyMenuBackground(savedMenuBackground));
 ui.menuBackground?.addEventListener("change", () => applyMenuBackground(ui.menuBackground.value));
-async function chooseMenuBackgroundCard(value) { if (menuBackgroundRotation.mode !== "cycle") return applyMenuBackground(value); const selected = new Set(validMenuBackgroundPool()); if (selected.has(value)) selected.delete(value); else selected.add(value); if (!selected.size) { ui.menuBackgroundStatus.textContent = "Select at least one image for the random cycle."; return; } menuBackgroundRotation.selected = [...selected]; menuBackgroundQueue = []; saveMenuBackgroundRotation(); syncMenuBackgroundRotationControls(); await applyMenuBackground(value, { persistSelection: false }); scheduleMenuBackgroundCycle(); }
+async function chooseMenuBackgroundCard(value) { if (!menuBackgroundModeCycles()) return applyMenuBackground(value); const selected = new Set(validMenuBackgroundPool()); if (selected.has(value)) selected.delete(value); else selected.add(value); if (!selected.size) { ui.menuBackgroundStatus.textContent = "Select at least one image for the background cycle."; return; } menuBackgroundRotation.selected = menuBackgroundValues().filter(item => selected.has(item)); menuBackgroundQueue = []; saveMenuBackgroundRotation(); syncMenuBackgroundRotationControls(); await applyMenuBackground(value, { persistSelection: false }); scheduleMenuBackgroundCycle(); }
 ui.menuBackgroundLibrary?.addEventListener("click", async event => { const remove = event.target.closest("[data-delete-background]"); if (remove) { event.stopPropagation(); await deleteMenuBackground(remove.dataset.deleteBackground); return; } const card = event.target.closest("[data-background-value]"); if (card) await chooseMenuBackgroundCard(card.dataset.backgroundValue); });
 ui.menuBackgroundLibrary?.addEventListener("keydown", event => { if (!["Enter", " "].includes(event.key) || event.target.closest("button")) return; const card = event.target.closest("[data-background-value]"); if (card) { event.preventDefault(); chooseMenuBackgroundCard(card.dataset.backgroundValue); } });
-ui.menuBackgroundMode?.addEventListener("change", () => { menuBackgroundRotation.mode = ui.menuBackgroundMode.value === "cycle" ? "cycle" : "fixed"; if (menuBackgroundRotation.mode === "cycle" && !validMenuBackgroundPool().length) menuBackgroundRotation.selected = [ui.menuBackground?.value || menuBackgroundValues()[0]].filter(Boolean); menuBackgroundQueue = []; saveMenuBackgroundRotation(); syncMenuBackgroundRotationControls(); if (menuBackgroundRotation.mode === "fixed") applyMenuBackground(ui.menuBackground?.value || menuBackgroundValues()[0]); scheduleMenuBackgroundCycle({ immediate: menuBackgroundRotation.mode === "cycle" }); });
+ui.menuBackgroundMode?.addEventListener("change", () => { menuBackgroundRotation.mode = ["fixed", "cycle", "sequence"].includes(ui.menuBackgroundMode.value) ? ui.menuBackgroundMode.value : "fixed"; if (menuBackgroundModeCycles() && !validMenuBackgroundPool().length) menuBackgroundRotation.selected = [ui.menuBackground?.value || menuBackgroundValues()[0]].filter(Boolean); menuBackgroundQueue = []; saveMenuBackgroundRotation(); syncMenuBackgroundRotationControls(); if (menuBackgroundRotation.mode === "fixed") applyMenuBackground(ui.menuBackground?.value || menuBackgroundValues()[0]); scheduleMenuBackgroundCycle({ immediate: menuBackgroundModeCycles() }); });
 ui.menuBackgroundInterval?.addEventListener("change", () => { menuBackgroundRotation.interval = Number(ui.menuBackgroundInterval.value) || 30; saveMenuBackgroundRotation(); scheduleMenuBackgroundCycle(); });
 ui.menuBackgroundFiles?.addEventListener("change", async () => {
   const files = [...(ui.menuBackgroundFiles.files || [])], accepted = files.filter(file => file.type.startsWith("image/") && file.size <= 25 * 1024 * 1024); ui.menuBackgroundFiles.value = "";
@@ -3354,7 +3578,7 @@ ui.menuBackgroundFiles?.addEventListener("change", async () => {
   const library = customMenuBackgrounds(); let newest = null; const addedValues = [];
   try {
     for (const file of accepted) { const id = crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`; await writeSnapshot(`menu-background:${id}`, file); library.push({ id, name: file.name, size: file.size, addedAt: Date.now() }); newest = `custom:${id}`; addedValues.push(newest); }
-    saveCustomMenuBackgrounds(library.slice(-30)); if (menuBackgroundRotation.mode === "cycle") { menuBackgroundRotation.selected.push(...addedValues); saveMenuBackgroundRotation(); } syncMenuBackgroundOptions(); await applyMenuBackground(newest, { persistSelection: menuBackgroundRotation.mode === "fixed" }); syncMenuBackgroundRotationControls(); scheduleMenuBackgroundCycle(); ui.menuBackgroundStatus.textContent = `${accepted.length} background image${accepted.length === 1 ? "" : "s"} added and saved in this browser.`;
+    saveCustomMenuBackgrounds(library.slice(-30)); if (menuBackgroundModeCycles()) { menuBackgroundRotation.selected.push(...addedValues); saveMenuBackgroundRotation(); } syncMenuBackgroundOptions(); await applyMenuBackground(newest, { persistSelection: menuBackgroundRotation.mode === "fixed" }); syncMenuBackgroundRotationControls(); scheduleMenuBackgroundCycle(); ui.menuBackgroundStatus.textContent = `${accepted.length} background image${accepted.length === 1 ? "" : "s"} added and saved in this browser.`;
   } catch { ui.menuBackgroundStatus.textContent = "The image could not be saved. Browser storage may be full or unavailable."; }
 });
 async function deleteCustomMenuBackground(id) { const selected = ui.menuBackground?.value || "", value = `custom:${id}`, library = customMenuBackgrounds().filter(item => item.id !== id); await deleteSnapshot(`menu-background:${id}`).catch(() => {}); saveCustomMenuBackgrounds(library); menuBackgroundRotation.selected = menuBackgroundRotation.selected.filter(item => item !== value); saveMenuBackgroundRotation(); syncMenuBackgroundOptions(); if (selected === value) await applyMenuBackground(menuBackgroundValues()[0] || "chat-01"); syncMenuBackgroundRotationControls(); scheduleMenuBackgroundCycle(); ui.menuBackgroundStatus.textContent = "Imported background deleted."; }
@@ -3399,8 +3623,169 @@ function applyShowcasePresentation(mode = "complete") {
   selectedId = showcasePresentationMode === "clean" ? null : showcaseFeaturedId;
   clearEntityPresentation(); renderAll(); updateUI();
 }
+function readShowcaseDirectorControls() {
+  return {
+    scenario: ui.showcaseScenario?.value || showcaseDirector.scenario || "overview",
+    mode: ["static", "live", "natural"].includes(ui.showcasePlaybackMode?.value) ? ui.showcasePlaybackMode.value : "live",
+    map: ["balanced", "grassland", "woodland", "waterside", "highland"].includes(ui.showcaseMap?.value) ? ui.showcaseMap.value : "balanced",
+    behaviour: ["directed", "natural", "hold"].includes(ui.showcaseBehaviour?.value) ? ui.showcaseBehaviour.value : "directed",
+    herbivores: clamp(Math.round(Number(ui.showcaseHerbivoreCount?.value) || 1), 1, 12),
+    carnivores: clamp(Math.round(Number(ui.showcaseCarnivoreCount?.value) || 0), 0, 8),
+  };
+}
+const SHOWCASE_SCENARIO_CAST = Object.freeze({
+  mating: { herbivores: 2, carnivores: 0, lockCarnivores: true },
+  chase: { minimumHerbivores: 2, minimumCarnivores: 1 },
+  "pack-hunt": { minimumHerbivores: 4, minimumCarnivores: 2 },
+  "separated-young": { minimumHerbivores: 4, carnivores: 0, lockCarnivores: true },
+  birth: { minimumHerbivores: 4, carnivores: 0, lockCarnivores: true },
+  demographics: { minimumHerbivores: 5, minimumCarnivores: 5 },
+});
+function applyShowcaseScenarioCast(requested) {
+  const policy = SHOWCASE_SCENARIO_CAST[requested.scenario] || {};
+  if (Number.isFinite(policy.herbivores)) requested.herbivores = policy.herbivores;
+  if (Number.isFinite(policy.carnivores)) requested.carnivores = policy.carnivores;
+  requested.herbivores = Math.max(policy.minimumHerbivores || 1, requested.herbivores);
+  requested.carnivores = Math.max(policy.minimumCarnivores || 0, requested.carnivores);
+  if (ui.showcaseHerbivoreCount) ui.showcaseHerbivoreCount.value = String(requested.herbivores);
+  if (ui.showcaseCarnivoreCount) { ui.showcaseCarnivoreCount.value = String(requested.carnivores); ui.showcaseCarnivoreCount.disabled = Boolean(policy.lockCarnivores); ui.showcaseCarnivoreCount.title = policy.lockCarnivores ? "Predators are excluded from this authored scene" : ""; }
+  return requested;
+}
+function authorShowcaseCourtshipMatch(female, male, matingDuration = 12) {
+  if (female?.sex !== "F" || male?.sex !== "M") return null;
+  // Presentation-only authorship: make the showcase pair a deliberate match
+  // without weakening mate choice anywhere in the ordinary simulation.
+  migrateSocialState(female, species[female.speciesId]);
+  const maleLibido = inferredLibido(male);
+  female.matePreferences = {
+    ...female.matePreferences,
+    preferredMass: male.bodyMass,
+    massTolerance: Math.max(1, male.bodyMass * .08),
+    preferredAge: male.age,
+    ageTolerance: Math.max(1, species[male.speciesId].matureAge * .08),
+    preferredAggression: male.aggression,
+    aggressionTolerance: .08,
+    preferredLibido: maleLibido,
+    libidoTolerance: .1,
+    preferredMatingDuration: matingDuration,
+    matingDurationTolerance: 1,
+    injuryTolerance: (male.injuries || []).length ? "obvious-injury" : "none",
+    valuesForaging: clamp(Number(male.foodSkill) || .5, .2, 1),
+    valuesCare: clamp(Number(male.careAffinity) || .5, .2, 1),
+    valuesCalmMovement: clamp(1 - (Number(male.aggression) || .5), .2, 1),
+    valuesAttentiveness: clamp(Number(male.scentSkill) || .55, .2, 1)
+  };
+  female.femaleMateGraph ||= {};
+  female.femaleMateGraph[male.id] = { maleId: male.id, alignment: 1, averageDuration: matingDuration, firsthand: 1, shared: 0, sources: [], updatedTick: sim.tick };
+  female.socialMemory ||= {}; male.socialMemory ||= {};
+  female.socialMemory[male.id] = { partnerId: male.id, affinity: 1, courtshipAttempts: 1, matings: 0, foragingHours: 4, lastInteractionTick: sim.tick, observedCues: { apparentMass: male.bodyMass, apparentAge: male.age, aggressionDisplay: male.aggression, injury: (male.injuries || []).length ? "obvious-injury" : "none", movementPace: "calm", activity: "foraging", headMovement: "listening", emittedSignal: "care" }, events: [{ event: "courtship", tick: sim.tick }] };
+  male.socialMemory[female.id] = { partnerId: female.id, affinity: 1, courtshipAttempts: 1, matings: 0, foragingHours: 4, lastInteractionTick: sim.tick, events: [{ event: "courtship", tick: sim.tick }] };
+  male.maleFemaleRatings ||= {}; male.maleFemaleRatings[female.id] = { femaleId: female.id, rating: 1, firsthand: 1, updatedTick: sim.tick, observation: { lifeStage: female.lifeStage, reproductiveCue: "available", confidence: 1, provenance: "showcase-authored", observedTick: sim.tick } };
+  male.currentLibido = maleLibido;
+  return female.matePreferences;
+}
+function formatShowcaseElapsed(seconds) {
+  const whole = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${String(Math.floor(whole / 60)).padStart(2, "0")}:${String(whole % 60).padStart(2, "0")}`;
+}
+function showcaseBirthMother() { return animalById(showcaseDirector.birthMotherId) || showcaseDirector.actors.map(actor => animalById(actor.id)).find(animal => animal?.sex === "F" && (animal.pregnant || animal.birthEvent)); }
+function refreshShowcaseTime(force = false) {
+  if (!ui.showcaseTime) return;
+  const second = Math.floor(showcaseDirector.elapsed || 0); if (!force && second === showcaseDirector.lastTimeSecond) return;
+  showcaseDirector.lastTimeSecond = second;
+  const parts = [`World · ${formatEcologicalClock(sim)}`, `Scene · ${formatShowcaseElapsed(showcaseDirector.elapsed)}`];
+  if (showcaseDirector.scenario === "birth") parts.push(showcaseDirector.eventCompleted ? "Birth complete" : `Birth in about ${Math.max(0, Math.ceil(SHOWCASE_BIRTH_WAIT_SECONDS - showcaseDirector.elapsed))} s`);
+  ui.showcaseTime.textContent = parts.join(" · ");
+}
+function stageShowcaseBirth() {
+  const mother = showcaseBirthMother(); if (!mother || showcaseDirector.eventCompleted) return { mother, newborns: [] };
+  const before = new Set(mother.offspringIds || []);
+  if (mother.pregnant) {
+    mother.pregnant.age = species[mother.speciesId].gestation; mother.birthEvent = null;
+    giveBirth(mother, species[mother.speciesId], { count: mother.pregnant?.offspringCount || 1 });
+  }
+  const newborns = (mother.offspringIds || []).filter(id => !before.has(id) || animalById(id)?.birthTick === sim.tick).map(animalById).filter(Boolean);
+  for (const [index, child] of newborns.entries()) {
+    child.x = child.fx = mother.x + .38 + index * .22; child.z = child.fz = mother.z + .25; child.showcaseExpression = "calm";
+    showcaseVisibleIds?.add(child.id);
+    if (!showcaseDirector.actors.some(actor => actor.id === child.id)) showcaseDirector.actors.push({ id: child.id, role: "rest", targetId: mother.id, originX: child.x, originZ: child.z, originOrientation: child.orientation || 0, phase: 0 });
+  }
+  showcaseDirector.eventCompleted = true; refreshShowcaseTime(true);
+  return { mother, newborns };
+}
+function syncShowcaseTransport() {
+  const natural = showcaseDirector.mode === "natural" || showcaseDirector.behaviour === "natural";
+  if (ui.showcasePlayPause) ui.showcasePlayPause.textContent = showcaseDirector.playing ? "Pause scene" : "Play scene";
+  if (ui.showcaseJumpEvent) { const available = ["mating", "chase", "pack-hunt", "separated-young", "birth"].includes(showcaseDirector.scenario); ui.showcaseJumpEvent.disabled = !available; ui.showcaseJumpEvent.textContent = showcaseDirector.scenario === "birth" ? "Jump to birth" : available ? "Jump to event" : "No event jump"; }
+  if (ui.showcaseStatus) ui.showcaseStatus.textContent = `${showcaseDirector.mode === "static" ? "Static composition" : natural ? "Live autonomous simulation" : "Live staged action"} · ${showcaseDirector.map.replaceAll("-", " ")} · ${showcaseDirector.herbivores} herbivore${showcaseDirector.herbivores === 1 ? "" : "s"} · ${showcaseDirector.carnivores} carnivore${showcaseDirector.carnivores === 1 ? "" : "s"}${showcaseDirector.playing ? "" : " · frozen for capture"}.`;
+  refreshShowcaseTime(true);
+}
+function setShowcasePlayback(playing) {
+  showcaseDirector.playing = showcaseDirector.mode !== "static" && showcaseDirector.behaviour !== "hold" && Boolean(playing);
+  const autonomous = showcaseDirector.mode === "natural" || showcaseDirector.behaviour === "natural";
+  setRunning(showcaseDirector.playing && autonomous);
+  if (!showcaseDirector.playing) setRunning(false);
+  syncShowcaseTransport();
+}
+function showcaseActorTarget(actor) { return actor?.targetId ? animalById(actor.targetId) : null; }
+function moveShowcaseActor(animal, dx, dz, distance) {
+  const magnitude = Math.hypot(dx, dz); if (!animal || magnitude < .0001 || distance <= 0) return;
+  const nx = dx / magnitude, nz = dz / magnitude;
+  animal.x = animal.fx = clamp(animal.x + nx * distance, -HALF + 2, HALF - 2);
+  animal.z = animal.fz = clamp(animal.z + nz * distance, -HALF + 2, HALF - 2);
+  animal.orientation = Math.atan2(nz, nx); animal.stationaryTicks = 0;
+}
+function advanceShowcaseDirector(deltaMs, force = false) {
+  if (!document.body.classList.contains("showcase-mode") || !showcaseDirector.playing && !force) return false;
+  const seconds = Math.min(force ? 1 / 12 : deltaMs / 1000, .08); showcaseDirector.elapsed += seconds;
+  let changed = false; refreshShowcaseTime();
+  if (showcaseDirector.scenario === "birth" && !showcaseDirector.eventCompleted && showcaseDirector.elapsed >= SHOWCASE_BIRTH_WAIT_SECONDS) {
+    const result = stageShowcaseBirth(); changed = Boolean(result.newborns.length);
+    if (changed) { sim.occupied = rebuildOccupancy(sim.animals, key); buildEntityIndex(); clearEntityPresentation(); addEvent(`Showcase birth completed after ${SHOWCASE_BIRTH_WAIT_SECONDS} real seconds`); }
+  }
+  if (showcaseDirector.mode !== "live" || showcaseDirector.behaviour !== "directed") return changed;
+  for (const actor of showcaseDirector.actors) {
+    const animal = animalById(actor.id), target = showcaseActorTarget(actor); if (!animal?.alive) continue;
+    if (actor.role === "flee" && target) { moveShowcaseActor(animal, animal.x - target.x, animal.z - target.z, 1.15 * seconds); changed = true; }
+    else if (["chase", "stalk", "evaluate-prey"].includes(actor.role) && target) { moveShowcaseActor(animal, target.x - animal.x, target.z - animal.z, (actor.role === "chase" ? 1.02 : .48) * seconds); changed = true; }
+    else if (["coordinate-group", "attend-birth"].includes(actor.role) && target) { const distance = Math.hypot(target.x - animal.x, target.z - animal.z); if (distance > 1.15) { moveShowcaseActor(animal, target.x - animal.x, target.z - animal.z, .42 * seconds); changed = true; } }
+    else if (actor.role === "mating" && target) { const distance = Math.hypot(target.x - animal.x, target.z - animal.z); if (distance > .48) { moveShowcaseActor(animal, target.x - animal.x, target.z - animal.z, .28 * seconds); changed = true; } }
+    else if (["orient", "graze", "guard", "listen"].includes(actor.role)) { const angle = actor.phase + showcaseDirector.elapsed * .18; animal.orientation = angle; animal.x = animal.fx = actor.originX + Math.cos(angle) * .16; animal.z = animal.fz = actor.originZ + Math.sin(angle) * .16; changed = true; }
+  }
+  const chaseActors = showcaseDirector.actors.filter(actor => ["chase", "flee"].includes(actor.role));
+  if (chaseActors.length && chaseActors.some(actor => Math.hypot((animalById(actor.id)?.x || 0) - actor.originX, (animalById(actor.id)?.z || 0) - actor.originZ) > 10)) {
+    for (const actor of showcaseDirector.actors) { const animal = animalById(actor.id); if (animal) { animal.x = animal.fx = actor.originX; animal.z = animal.fz = actor.originZ; animal.orientation = actor.originOrientation; } }
+  }
+  return changed;
+}
+function jumpShowcaseToEvent() {
+  const scenario = showcaseDirector.scenario, actors = showcaseDirector.actors.map(actor => ({ actor, animal: animalById(actor.id) })).filter(item => item.animal?.alive);
+  let message = "This scene has no later event moment.";
+  if (scenario === "birth") {
+    const { mother, newborns } = stageShowcaseBirth();
+    if (mother) message = `Birth moment staged · ${newborns.length || mother.offspringIds?.length || 1} newborn${(newborns.length || mother.offspringIds?.length || 1) === 1 ? "" : "s"} beside ${mother.id}.`;
+  } else if (["chase", "pack-hunt"].includes(scenario)) {
+    for (const { actor, animal } of actors.filter(item => ["chase", "stalk", "evaluate-prey"].includes(item.actor.role))) { const target = showcaseActorTarget(actor); if (!target) continue; const dx = animal.x - target.x, dz = animal.z - target.z, length = Math.max(.001, Math.hypot(dx, dz)); animal.x = animal.fx = target.x + dx / length * 1.35; animal.z = animal.fz = target.z + dz / length * 1.35; }
+    message = scenario === "chase" ? "Pursuit climax staged · hunter is closing on the prey." : "Pack confrontation staged · hunters and herd are at close range.";
+  } else if (scenario === "separated-young") {
+    const young = actors.find(({ animal }) => animal.lifeStage === "dependent")?.animal;
+    const family = actors.filter(item => item.animal.id !== young?.id);
+    for (const [index, { animal }] of family.entries()) { animal.x = animal.fx = young.x + .75 + (index % 2) * .42; animal.z = animal.fz = young.z + (index - 1) * .46; }
+    message = "Reunion moment staged · the family has reached the separated young.";
+  } else if (scenario === "mating") {
+    for (const { actor, animal } of actors) { const target = showcaseActorTarget(actor); if (target) { animal.x = animal.fx = target.x + (animal.id < target.id ? -.24 : .24); animal.z = animal.fz = target.z; } }
+    message = "Courtship contact moment staged.";
+  }
+  setShowcasePlayback(false); sim.occupied = rebuildOccupancy(sim.animals, key); buildEntityIndex(); clearEntityPresentation(); renderAll(); updateUI(); if (ui.showcaseStatus) ui.showcaseStatus.textContent = `${message} Scene frozen for capture.`;
+}
 ui.showcaseScenario?.addEventListener("change", () => loadScreenshotShowcaseWorld(ui.showcaseScenario.value));
 ui.showcasePresentation?.addEventListener("change", () => applyShowcasePresentation(ui.showcasePresentation.value));
+for (const control of [ui.showcaseMap, ui.showcaseHerbivoreCount, ui.showcaseCarnivoreCount]) control?.addEventListener("change", () => loadScreenshotShowcaseWorld(ui.showcaseScenario?.value || "overview"));
+ui.showcasePlaybackMode?.addEventListener("change", () => { showcaseDirector.mode = readShowcaseDirectorControls().mode; setShowcasePlayback(showcaseDirector.mode !== "static"); });
+ui.showcaseBehaviour?.addEventListener("change", () => { showcaseDirector.behaviour = readShowcaseDirectorControls().behaviour; setShowcasePlayback(showcaseDirector.mode !== "static"); });
+ui.showcasePlayPause?.addEventListener("click", () => setShowcasePlayback(!showcaseDirector.playing));
+ui.showcaseStep?.addEventListener("click", () => { setShowcasePlayback(false); if (showcaseDirector.mode === "natural" || showcaseDirector.behaviour === "natural") tickWorld(); else advanceShowcaseDirector(1000 / 12, true); renderAll(); updateUI(); });
+ui.showcaseJumpEvent?.addEventListener("click", jumpShowcaseToEvent);
 ui.showcaseReload?.addEventListener("click", () => loadScreenshotShowcaseWorld(ui.showcaseScenario?.value || "overview"));
 ui.showcaseMainMenu?.addEventListener("click", () => showGameMenu("main"));
 ui.showcaseHideControls?.addEventListener("click", () => { document.body.classList.add("showcase-toolbar-hidden"); if (ui.showcaseRestoreControls) ui.showcaseRestoreControls.hidden = false; });
@@ -3431,6 +3816,26 @@ ui.hudLock.addEventListener("click", toggleCameraLock);
 ui.hudFavourite.addEventListener("click", () => ui.favouriteEntity.click());
 ui.observerTabs.forEach((tab, tabIndex) => { tab.addEventListener("click", () => { observerDetailTab = tab.dataset.observerTab; ui.observerTabs.forEach((item) => { const active = item === tab; item.classList.toggle("is-active", active); item.setAttribute("aria-selected", String(active)); }); updateUI(); }); tab.addEventListener("keydown", (event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" ? 0 : event.key === "End" ? ui.observerTabs.length - 1 : (tabIndex + (event.key === "ArrowRight" ? 1 : -1) + ui.observerTabs.length) % ui.observerTabs.length; ui.observerTabs[next].focus(); ui.observerTabs[next].click(); }); });
 ui.hudDetail.addEventListener("click", (event) => {
+  const laboratoryLink = event.target.closest("[data-open-laboratory-section]");
+  if (laboratoryLink) {
+    if (ui.inspector.classList.contains("is-closed")) ui.labToggle.click();
+    setLaboratoryDisplayMode("main");
+    requestAnimationFrame(() => {
+      const section = laboratoryLink.dataset.openLaboratorySection;
+      document.querySelector(`[data-lab-tab="${CSS.escape(section)}"]`)?.click();
+      const destinations = {
+        entity: "#entity-ecology-workspace, #selected-card",
+        planning: "#need-planning-live",
+        predictive: "#predictive-animal-detail",
+        society: "#society-workspace",
+        map: "#laboratory-overlay-controls",
+        reference: "#reference-workspace"
+      };
+      const selectedRecord = document.querySelector(destinations[section] || "#selected-card");
+      selectedRecord?.scrollIntoView({ block: "start" });
+    });
+    return;
+  }
   if (event.target.closest("[data-open-observer-predictions]")) { ui.observerTabs.find(tab => tab.dataset.observerTab === "predictive")?.click(); return; }
   const herdToggle = event.target.closest("[data-herd-groups-toggle]");
   if (herdToggle) {
@@ -3457,7 +3862,12 @@ ui.hudDetail.addEventListener("click", (event) => {
   if (socialNodeId && animalById(socialNodeId)?.alive) return focusMember(socialNodeId);
   const overlay = event.target.closest("input")?.dataset.observerOverlay;
   if (!overlay) return;
-  const source = ({ vision: ui.overlayVision, personal: ui.overlayPersonalSpace, intent: ui.overlayPredatorIntent, fog: ui.overlayKnowledgeFog, smell: ui.overlaySmell, sound: ui.overlaySound, calls: ui.overlayCalls, memory: ui.overlayMemory, focus: ui.overlayEntityFocus, symbols: ui.overlayEntitySymbols, names: ui.overlayEntityNames, health: ui.overlayHealthBars, endurance: ui.overlayEnduranceBar, composition: ui.overlayCompositionBar, stage: ui.overlayAnalysisStage, clean: ui.overlayOrganismOnly, biomass: ui.overlayBiomass, water: ui.overlayWater, scent: ui.overlayPheromone })[overlay];
+  if (overlay === "presentation") {
+    applyGraphicsSettings({ ...graphicsSettings, preset: "custom", entityPanelsVisible: !event.target.checked, instrumentExpressionVisible: true, instrumentPublicCueVisible: true, instrumentThoughtVisible: true, instrumentForecastVisible: true });
+    for (const control of [ui.overlayEntitySymbols, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar]) if (control) control.checked = !event.target.checked;
+    return;
+  }
+  const source = ({ vision: ui.overlayVision, personal: ui.overlayPersonalSpace, intent: ui.overlayPredatorIntent, fog: ui.overlayKnowledgeFog, smell: ui.overlaySmell, sound: ui.overlaySound, calls: ui.overlayCalls, memory: ui.overlayMemory, ring: ui.overlaySelectionRing, navigation: ui.overlayNavigationCues, trails: ui.overlayMotionTrails, focus: ui.overlayEntityFocus, symbols: ui.overlayEntitySymbols, names: ui.overlayEntityNames, health: ui.overlayHealthBars, endurance: ui.overlayEnduranceBar, composition: ui.overlayCompositionBar, stage: ui.overlayAnalysisStage, clean: ui.overlayOrganismOnly, biomass: ui.overlayBiomass, water: ui.overlayWater, scent: ui.overlayPheromone, territories: ui.overlayTerritories })[overlay];
   if (source) { source.checked = event.target.checked; source.dispatchEvent(new Event("change")); }
 });
 ui.selectedMemory.addEventListener("click", focusSocialNetworkNode);
@@ -3514,9 +3924,70 @@ function toggleCameraLock() {
   updateUI();
 }
 ui.lockEntity.addEventListener("click", toggleCameraLock);
-ui.favouriteEntity.addEventListener("click", () => { const a = selectedAnimal(); if (!a) return; const items = readLocalList(FAVOURITES_KEY); const entry = { id: a.id, seed: sim.seed, label: `${a.id} ${species[a.speciesId].label}` }; if (!items.some((x) => x.id === entry.id && x.seed === entry.seed)) { items.unshift(entry); writeLocalList(FAVOURITES_KEY, items.slice(0, 18)); addEvent(`${a.id} saved as favourite`); } updateUI(); });
+function entityBookmarkSaveKey() { return activeSaveSlotName ? `slot:${activeSaveSlotName}` : "resume"; }
+function entityBookmarkKey(item) { return `${item.saveKey || `legacy-seed:${item.seed}`}::${item.id}`; }
+function readEntityBookmarks() {
+  const items = readLocalList(FAVOURITES_KEY), slots = savedSlotMetadata(); let changed = false;
+  const migrated = items.map(item => {
+    if (item.saveKey) return item;
+    const matching = slots.filter(slot => Number(slot.seed) === Number(item.seed));
+    const slot = matching.find(candidate => candidate.name === activeSaveSlotName) || (matching.length === 1 ? matching[0] : null);
+    const saveKey = slot ? `slot:${slot.name}` : Number(sim.seed) === Number(item.seed) ? entityBookmarkSaveKey() : null;
+    if (!saveKey) return item;
+    changed = true; return { ...item, saveKey, saveLabel: slot?.name || "Quick save" };
+  });
+  if (changed) writeLocalList(FAVOURITES_KEY, migrated);
+  return migrated;
+}
+function entityBookmarkTarget(id) {
+  const living = animalById(id);
+  if (living?.alive) return { entity: living, kind: "living animal", selectedId: living.id };
+  const remains = (sim.corpses || []).find(corpse => corpse.sourceId === id || corpse.id === id);
+  if (remains) return { entity: remains, kind: remains.eaten ? "skeleton" : "remains", selectedId: remains.id };
+  const record = sim.lineageRecords?.[id];
+  if (!record) return null;
+  const resolveRelative = relativeId => {
+    const animal = animalById(relativeId);
+    if (animal?.alive) return { entity: animal, selectedId: animal.id };
+    const corpse = (sim.corpses || []).find(item => item.sourceId === relativeId || item.id === relativeId);
+    return corpse ? { entity: corpse, selectedId: corpse.id } : null;
+  };
+  const ancestors = Object.entries(record.ancestorDepths || {}).map(([relativeId, depth]) => ({ relativeId, depth: Number(depth) || 99 })).sort((left, right) => left.depth - right.depth);
+  for (const ancestor of ancestors) { const target = resolveRelative(ancestor.relativeId); if (target) return { ...target, kind: generationLabel(ancestor.depth, "ancestor") }; }
+  const descendants = Object.values(sim.lineageRecords || {}).map(relative => ({ relative, depth: Number(relative.ancestorDepths?.[id]) || 0 })).filter(item => item.depth > 0).sort((left, right) => left.depth - right.depth);
+  for (const descendant of descendants) { const target = resolveRelative(descendant.relative.id); if (target) return { ...target, kind: generationLabel(descendant.depth, "descendant") }; }
+  return null;
+}
+function focusEntityBookmark(target, originalId) {
+  selectedId = target.selectedId; selectedGroupId = null; selectedTerrain = null; entityLocked = true;
+  const y = terrainHeight(target.entity.x, target.entity.z), dx = target.entity.x - controls.target.x, dz = target.entity.z - controls.target.z;
+  camera.position.x += dx; camera.position.z += dz; controls.target.set(target.entity.x, y, target.entity.z); controls.update();
+  addEvent(target.selectedId === originalId ? `Opened saved entity ${originalId}` : `Saved entity ${originalId} is unavailable; showing its ${target.kind}`);
+  renderAll(); updateUI();
+}
+async function openEntityBookmark(item) {
+  const saveKey = String(item.saveKey || "");
+  if (!saveKey) { addEvent(`Saved entity ${item.id} is an old unbound bookmark; save it again from its named world`); updateUI(); return false; }
+  const currentKey = entityBookmarkSaveKey();
+  if (currentKey !== saveKey || Number(sim.seed) !== Number(item.seed)) {
+    const snapshot = await readSnapshot(saveKey);
+    if (!snapshot) { addEvent(`The save belonging to ${item.id} no longer exists`); updateUI(); return false; }
+    activateSnapshot(snapshot, `Opened ${item.saveLabel || "saved world"} without rewinding to the entity bookmark time`);
+  }
+  const target = entityBookmarkTarget(item.id);
+  if (!target) { addEvent(`${item.id}, its remains, and its recorded close lineage are no longer present in this save`); updateUI(); return false; }
+  focusEntityBookmark(target, item.id); return true;
+}
+ui.favouriteEntity.addEventListener("click", async () => {
+  const a = selectedAnimal(); if (!a) return;
+  if (!activeSaveSlotName && !(await saveProgress(true, { slotName: null }))) { addEvent("Save the world before bookmarking an entity"); updateUI(); return; }
+  const items = readEntityBookmarks(), saveKey = entityBookmarkSaveKey();
+  const entry = { id: a.id, seed: sim.seed, saveKey, saveLabel: activeSaveSlotName || "Quick save", label: `${a.id} ${species[a.speciesId].label}` };
+  if (!items.some(item => entityBookmarkKey(item) === entityBookmarkKey(entry))) { items.unshift(entry); writeLocalList(FAVOURITES_KEY, items.slice(0, 18)); addEvent(`${a.id} saved for ${entry.saveLabel}`); }
+  updateUI();
+});
 ui.saveSeed.addEventListener("click", () => { const items = readLocalList(SEEDS_KEY); if (!items.includes(sim.seed)) { items.unshift(sim.seed); writeLocalList(SEEDS_KEY, items.slice(0, 18)); addEvent(`Saved world seed ${sim.seed}`); } updateUI(); });
-ui.favouriteList.addEventListener("click", (event) => { const button = event.target.closest("button"), remove = button?.dataset.deleteFavourite; if (remove) { writeLocalList(FAVOURITES_KEY, readLocalList(FAVOURITES_KEY).filter((item) => !(item.id === remove && item.seed === Number(button.dataset.seed)))); addEvent(`Removed saved entity ${remove}`); return updateUI(); } const id = button?.dataset.favourite; if (!id) return; const item = readLocalList(FAVOURITES_KEY).find((x) => x.id === id && x.seed === Number(button.dataset.seed)); if (!item) return; if (sim.seed !== item.seed) loadSeedWorld(item.seed); selectedId = item.id; entityLocked = true; renderAll(); updateUI(); });
+ui.favouriteList.addEventListener("click", (event) => { const button = event.target.closest("button"), key = button?.dataset.bookmarkKey; if (!key) return; const items = readEntityBookmarks(), item = items.find(entry => entityBookmarkKey(entry) === key); if (!item) return; if (button.dataset.deleteFavourite != null) { writeLocalList(FAVOURITES_KEY, items.filter(entry => entityBookmarkKey(entry) !== key)); addEvent(`Removed saved entity ${item.id}`); return updateUI(); } if (button.dataset.favourite != null) void openEntityBookmark(item); });
 ui.seedList.addEventListener("click", (event) => { const button = event.target.closest("button"), remove = Number(button?.dataset.deleteSeed); if (Number.isFinite(remove)) { writeLocalList(SEEDS_KEY, readLocalList(SEEDS_KEY).filter((seed) => seed !== remove)); addEvent(`Removed saved seed ${remove}`); return updateUI(); } const seed = Number(button?.dataset.seed); if (Number.isFinite(seed)) loadSeedWorld(seed); });
 const worldPresets = {
   mixed: { startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, relief: .15, mountains: 1, hills: 1, valleys: 1, rivers: 1.25, lakes: 1.25, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1.2, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36, temperatureVariation: 1, climate: 1 },
@@ -3542,17 +4013,41 @@ function updateEcologySetupSummary() {
   if (ui.startCarnivores) ui.startCarnivores.value = setup.carnivores;
   if (ui.ecologyWarnings) { ui.ecologyWarnings.textContent = warnings.length ? warnings.join(" ") : `${Object.values(setup.speciesCounts).filter(Boolean).length} enabled species · ${setup.herbivores + setup.carnivores} starting animals · food web compatible.`; ui.ecologyWarnings.classList.toggle("has-warning", warnings.length > 0); }
 }
+function ecologyPopulationScalePercent() { return clamp(Math.round(Number(ui.ecologyPopulationScale?.value) || 100), 20, 200); }
+function syncEcologyPopulationScaleControls(percent = ecologyPopulationScalePercent()) {
+  const value = clamp(Math.round(Number(percent) || 100), 20, 200), namedLevel = ECOLOGY_POPULATION_LEVELS.find(level => level.percent === value);
+  if (ui.ecologyPopulationScale) ui.ecologyPopulationScale.value = String(value);
+  if (ui.ecologyPopulationLevel) ui.ecologyPopulationLevel.value = namedLevel ? String(value) : "custom";
+  if (ui.ecologyPopulationScaleValue) ui.ecologyPopulationScaleValue.textContent = `${namedLevel?.label || "Custom"} · ${value}%`;
+  return value;
+}
 function applyEcologyPreset(name) {
-  const ids = ECOLOGY_PRESETS[name]; if (!ids) return;
-  for (const id of SPECIES_IDS) if (ui.startSpecies[id]) ui.startSpecies[id].value = ids.includes(id) ? species[id].defaultPopulation : 0;
+  if (!ECOLOGY_PRESETS[name]) return;
+  const counts = ecologyPresetCounts(name, ecologyPopulationScalePercent());
+  for (const id of SPECIES_IDS) if (ui.startSpecies[id]) ui.startSpecies[id].value = String(counts[id] || 0);
   updateEcologySetupSummary(); updateWorldSetupLabels();
 }
+function applyEcologyPopulationScale(percent) {
+  syncEcologyPopulationScaleControls(percent);
+  if (ECOLOGY_PRESETS[ui.ecologyPreset?.value]) applyEcologyPreset(ui.ecologyPreset.value);
+  else { updateEcologySetupSummary(); updateWorldSetupLabels(); }
+}
 function redistributeGuildTotal(guild, requested) {
-  const ids = SPECIES_IDS.filter(id => (guild === "herbivore") === isHerbivore(id) && Number(ui.startSpecies[id]?.value) > 0), candidates = ids.length ? ids : SPECIES_IDS.filter(id => (guild === "herbivore") === isHerbivore(id)).slice(0, 1), total = Math.max(0, Math.floor(Number(requested) || 0)), weight = candidates.reduce((sum, id) => sum + species[id].defaultPopulation, 0) || 1;
-  let assigned = 0; candidates.forEach((id, index) => { const value = index === candidates.length - 1 ? total - assigned : Math.floor(total * species[id].defaultPopulation / weight); ui.startSpecies[id].value = value; assigned += value; });
-  if (ui.ecologyPreset) ui.ecologyPreset.value = "custom"; updateEcologySetupSummary(); updateWorldSetupLabels();
+  const matchesGuild = id => (guild === "herbivore") === isHerbivore(id), presetName = ui.ecologyPreset?.value || "custom", presetIds = ECOLOGY_PRESETS[presetName]?.filter(matchesGuild) || [], activeIds = SPECIES_IDS.filter(id => matchesGuild(id) && Number(ui.startSpecies[id]?.value) > 0), candidates = presetIds.length ? presetIds : activeIds.length ? activeIds : SPECIES_IDS.filter(matchesGuild).slice(0, 1), total = Math.max(0, Math.floor(Number(requested) || 0));
+  const central = ECOLOGY_PRESET_POPULATIONS[presetName];
+  const weights = candidates.map(id => Math.max(1, presetIds.length ? central?.[id] ?? species[id].defaultPopulation : Number(ui.startSpecies[id]?.value) || species[id].defaultPopulation)), weightTotal = weights.reduce((sum, value) => sum + value, 0) || 1;
+  const shares = candidates.map((id, index) => { const exact = total * weights[index] / weightTotal, value = Math.floor(exact); return { id, value, remainder: exact - value, index }; });
+  let remaining = total - shares.reduce((sum, share) => sum + share.value, 0);
+  for (const share of [...shares].sort((a, b) => b.remainder - a.remainder || a.index - b.index)) { if (remaining-- <= 0) break; share.value += 1; }
+  for (const id of SPECIES_IDS.filter(matchesGuild)) ui.startSpecies[id].value = "0";
+  for (const share of shares) ui.startSpecies[share.id].value = String(share.value);
+  // A Basic edit changes only the population scale. Retain a named advanced
+  // preset so later edits continue to use its species membership and ratios.
+  updateEcologySetupSummary(); updateWorldSetupLabels();
 }
 ui.ecologyPreset?.addEventListener("change", () => applyEcologyPreset(ui.ecologyPreset.value));
+ui.ecologyPopulationLevel?.addEventListener("change", () => { if (ui.ecologyPopulationLevel.value !== "custom") applyEcologyPopulationScale(ui.ecologyPopulationLevel.value); });
+ui.ecologyPopulationScale?.addEventListener("input", () => applyEcologyPopulationScale(ui.ecologyPopulationScale.value));
 for (const input of Object.values(ui.startSpecies || {})) input.addEventListener("input", () => { if (ui.ecologyPreset) ui.ecologyPreset.value = "custom"; updateEcologySetupSummary(); updateWorldSetupLabels(); });
 ui.startHerbivores?.addEventListener("change", () => redistributeGuildTotal("herbivore", ui.startHerbivores.value));
 ui.startCarnivores?.addEventListener("change", () => redistributeGuildTotal("carnivore", ui.startCarnivores.value));
@@ -3577,8 +4072,13 @@ ui.eventLimit?.addEventListener("change", updateUI);
 ui.benchmarkDuration?.addEventListener("change", () => { if (!populationBenchmarkSweep) ui.benchmarkStatus.textContent = `Ready · full sweep duration ${Number(ui.benchmarkDuration.value) * BENCHMARK_POPULATIONS.length} minutes.`; });
 try { if (ui.overlayEntityNames) ui.overlayEntityNames.checked = localStorage.getItem("rss-laboratory-entity-names-v1") === "true"; } catch {}
 ui.overlayEntityNames?.addEventListener("change", () => { try { localStorage.setItem("rss-laboratory-entity-names-v1", String(ui.overlayEntityNames.checked)); } catch {} });
-[ui.overlayVision, ui.overlayPersonalSpace, ui.overlayPredatorIntent, ui.overlayKnowledgeFog, ui.overlaySmell, ui.overlaySound, ui.overlayCalls, ui.overlayMemory, ui.overlayEntityFocus, ui.overlayEntitySymbols, ui.overlayEntityNames, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar, ui.overlayAnalysisStage, ui.overlayOrganismOnly, ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone].forEach((el) => el?.addEventListener("change", () => { renderAll(); updateUI(); }));
+[ui.overlayVision, ui.overlayPersonalSpace, ui.overlayPredatorIntent, ui.overlayKnowledgeFog, ui.overlaySmell, ui.overlaySound, ui.overlayCalls, ui.overlayMemory, ui.overlaySelectionRing, ui.overlayNavigationCues, ui.overlayMotionTrails, ui.overlayEntityFocus, ui.overlayEntitySymbols, ui.overlayEntityNames, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar, ui.overlayAnalysisStage, ui.overlayOrganismOnly, ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone, ui.overlayTerritories].forEach((el) => el?.addEventListener("change", () => { renderAll(); updateUI(); }));
+ui.overlayHideEntityPresentation?.addEventListener("change", () => {
+  applyGraphicsSettings({ ...graphicsSettings, preset: "custom", entityPanelsVisible: !ui.overlayHideEntityPresentation.checked, instrumentExpressionVisible: true, instrumentPublicCueVisible: true, instrumentThoughtVisible: true, instrumentForecastVisible: true });
+  for (const control of [ui.overlayEntitySymbols, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar]) if (control) control.checked = !ui.overlayHideEntityPresentation.checked;
+});
 ui.overlayCalls?.addEventListener("change", () => { renderAll(); updateUI(); });
+ui.graphicsUnstuckEntity?.addEventListener("click", () => recoverStuckEntity());
 ui.feedbackMode.addEventListener("change", () => addEvent(`Feedback pathway changed to ${ui.feedbackMode.value}`));
 function requestedTicksPerSecond() { return Number(ui.speed.value); }
 function updateSpeedLabel() { const value = `${requestedTicksPerSecond()} minute ticks/s`; ui.speedValue.textContent = value; ui.hudSpeedValue.textContent = value; ui.hudSpeed.value = ui.speed.value; }
@@ -3713,6 +4213,7 @@ function loop(now) {
     accumulator = result.accumulator;
     completedTicksLastFrame = result.completed;
   }
+  advanceShowcaseDirector(delta);
   // A simulation tick can be substantial. Do not add the complete scene and
   // Laboratory DOM refresh to that same frame; distribute them over the next
   // two animation frames while continuous controls and camera remain live.
@@ -3737,7 +4238,16 @@ function loop(now) {
   // their UI hidden by default. Perform it before the per-frame projection so
   // those roots receive their layout in this same rendered frame, avoiding a
   // one-frame overlay flash.
-  if (entityPanelVisibilityRefreshPending && now - lastEntityPanelVisibilityRefresh >= 120) {
+  if (cinemaPresentationRefreshStage && !completedTicksLastFrame && now - cinemaPresentationRefreshRequestedAt >= 8) {
+    if (cinemaPresentationRefreshStage === 1) {
+      refreshCameraAdmission();
+      cinemaPresentationRefreshStage = 2;
+      cinemaPresentationRefreshRequestedAt = performance.now();
+    } else {
+      refreshCinemaShotOverlays();
+      cinemaPresentationRefreshStage = 0;
+    }
+  } else if (entityPanelVisibilityRefreshPending && now - lastEntityPanelVisibilityRefresh >= 120) {
     entityPanelVisibilityRefreshPending = false;
     lastEntityPanelVisibilityRefresh = now;
     refreshCameraAdmission();
@@ -3772,18 +4282,22 @@ function selectedWorldSetup() {
   const span = clamp(Math.round(Number(ui.worldSize?.value) || 3), 1, 4), spans = { 1: 90, 2: 150, 3: 220, 4: 300 }, enteredSpan = Math.floor(Number(ui.customWorldSize?.value)), customSpan = Number.isFinite(enteredSpan) && enteredSpan > 0 ? enteredSpan : null;
   const northTemperature = clamp(Number(ui.northTemperature?.value ?? 8), -12, 18), southTemperature = clamp(Number(ui.southTemperature?.value ?? 24), 8, 38), coldestTemperature = clamp(Number(ui.coldestTemperature?.value ?? -12), -30, 5), hottestTemperature = clamp(Number(ui.hottestTemperature?.value ?? 36), 18, 50);
   const speciesCounts = enabledSpeciesCounts(Object.fromEntries(SPECIES_IDS.map(id => [id, Number(ui.startSpecies?.[id]?.value) || 0]))), totals = speciesCategoryTotals(speciesCounts);
-  return { size: customSpan || spans[span], span, customSpan, hexDetail: clamp(Number(ui.hexDetail?.value) || 5000, 5000, 40000), startSeason: seasons.includes(ui.startSeason?.value) ? ui.startSeason.value : "Spring", windDirection: ["west", "southwest", "south", "southeast", "east"].includes(ui.windDirection?.value) ? ui.windDirection.value : "west", windStrength: slider(ui.windStrength, 1, 3), stormIntensity: slider(ui.stormIntensity, 1, 3), rainShadow: slider(ui.rainShadow, 1, 3), sedimentTransport: slider(ui.sedimentTransport, 1, 3), ecologyPreset: ui.ecologyPreset?.value || "custom", speciesCounts, ...totals, relief: slider(ui.terrainRelief), mountains: slider(ui.mountainAmount), hills: slider(ui.hillAmount), valleys: slider(ui.valleyAmount), rivers: slider(ui.riverAmount, 1, 3), lakes: slider(ui.lakeAmount, 1, 3), woodland: slider(ui.woodlandAmount), trees: slider(ui.treeDensity, 1, 3), bushes: slider(ui.bushDensity, 1, 3), longGrass: slider(ui.longGrass, 1, 3), rainfall: slider(ui.rainfallAmount, 1, 3), northTemperature: Math.min(northTemperature, southTemperature), southTemperature: Math.max(northTemperature, southTemperature), coldestTemperature: Math.min(coldestTemperature, hottestTemperature - 1), hottestTemperature: Math.max(hottestTemperature, coldestTemperature + 1), temperatureVariation: slider(ui.temperatureVariation, 1, 3), climate: slider(ui.climateAmount) };
+  return { size: customSpan || spans[span], span, customSpan, hexDetail: clamp(Number(ui.hexDetail?.value) || 5000, 5000, 40000), startSeason: seasons.includes(ui.startSeason?.value) ? ui.startSeason.value : "Spring", windDirection: ["west", "southwest", "south", "southeast", "east"].includes(ui.windDirection?.value) ? ui.windDirection.value : "west", windStrength: slider(ui.windStrength, 1, 3), stormIntensity: slider(ui.stormIntensity, 1, 3), rainShadow: slider(ui.rainShadow, 1, 3), sedimentTransport: slider(ui.sedimentTransport, 1, 3), ecologyPreset: ui.ecologyPreset?.value || "custom", ecologyPopulationScale: ecologyPopulationScalePercent(), speciesCounts, ...totals, relief: slider(ui.terrainRelief), mountains: slider(ui.mountainAmount), hills: slider(ui.hillAmount), valleys: slider(ui.valleyAmount), rivers: slider(ui.riverAmount, 1, 3), lakes: slider(ui.lakeAmount, 1, 3), woodland: slider(ui.woodlandAmount), trees: slider(ui.treeDensity, 1, 3), bushes: slider(ui.bushDensity, 1, 3), longGrass: slider(ui.longGrass, 1, 3), rainfall: slider(ui.rainfallAmount, 1, 3), northTemperature: Math.min(northTemperature, southTemperature), southTemperature: Math.max(northTemperature, southTemperature), coldestTemperature: Math.min(coldestTemperature, hottestTemperature - 1), hottestTemperature: Math.max(hottestTemperature, coldestTemperature + 1), temperatureVariation: slider(ui.temperatureVariation, 1, 3), climate: slider(ui.climateAmount) };
 }
-function setWorldSetup(setup = worldSetup) { const legacyCounts = !setup.speciesCounts ? { grazer: setup.herbivores ?? worldSetup.herbivores ?? 18, hunter: setup.carnivores ?? worldSetup.carnivores ?? 4 } : setup.speciesCounts; const speciesCounts = enabledSpeciesCounts(legacyCounts), totals = speciesCategoryTotals(speciesCounts); worldSetup = { ...worldSetup, ...setup, speciesCounts, ...totals }; WORLD = worldSetup.size; HALF = WORLD / 2; }
-function updateWorldSetupLabels() { const setup = selectedWorldSetup(); const set = (id, value) => { const el = document.querySelector(id); if (el) el.textContent = value; }; const amount = (v) => v === 0 ? "None · 0.00×" : `${v < 0.75 ? "Low" : v > 1.25 ? "High" : "Normal"} · ${v.toFixed(2)}×`; const contrast = setup.temperatureVariation === 0 ? "Uniform · temperate" : setup.temperatureVariation < .75 ? "Subtle · mixed regions" : setup.temperatureVariation > 1.6 ? "Strong · hot/cold regions" : "Normal · mixed regions"; const spanName = ["", "Compact", "Medium", "Standard", "Vast"][setup.span]; set("#world-size-value", `${spanName} physical span`); if (ui.hexDetailValue) ui.hexDetailValue.textContent = `${setup.hexDetail.toLocaleString()} connected hexes`; set("#start-herbivores-value", String(setup.herbivores)); set("#start-carnivores-value", String(setup.carnivores)); set("#terrain-relief-value", setup.relief === 0 ? "Flat · 0.00×" : amount(setup.relief)); set("#mountain-amount-value", amount(setup.mountains)); set("#hill-amount-value", amount(setup.hills)); set("#valley-amount-value", amount(setup.valleys)); set("#river-amount-value", amount(setup.rivers)); set("#lake-amount-value", amount(setup.lakes)); set("#woodland-amount-value", amount(setup.woodland)); set("#tree-density-value", amount(setup.trees)); set("#bush-density-value", amount(setup.bushes)); set("#long-grass-value", amount(setup.longGrass)); set("#rainfall-amount-value", amount(setup.rainfall)); set("#wind-strength-value", amount(setup.windStrength)); set("#storm-intensity-value", amount(setup.stormIntensity)); set("#rain-shadow-value", amount(setup.rainShadow)); set("#sediment-transport-value", amount(setup.sedimentTransport)); set("#north-temperature-value", `${setup.northTemperature <= 4 ? "Cold" : "Cool"} · ${setup.northTemperature}°C`); set("#south-temperature-value", `${setup.southTemperature >= 28 ? "Hot" : "Warm"} · ${setup.southTemperature}°C`); set("#coldest-temperature-value", `${setup.coldestTemperature}°C`); set("#hottest-temperature-value", `${setup.hottestTemperature}°C`); set("#temperature-variation-value", contrast); set("#climate-amount-value", amount(setup.climate)); }
-function syncWorldSetupInputs() { if (ui.worldSize) ui.worldSize.value = worldSetup.span ?? 3; if (ui.hexDetail) ui.hexDetail.value = worldSetup.hexDetail ?? 5000; if (ui.startSeason) ui.startSeason.value = seasons.includes(worldSetup.startSeason) ? worldSetup.startSeason : "Spring"; if (ui.windDirection) ui.windDirection.value = worldSetup.windDirection ?? "west"; if (ui.windStrength) ui.windStrength.value = worldSetup.windStrength ?? 1; if (ui.stormIntensity) ui.stormIntensity.value = worldSetup.stormIntensity ?? 1; if (ui.rainShadow) ui.rainShadow.value = worldSetup.rainShadow ?? 1; if (ui.sedimentTransport) ui.sedimentTransport.value = worldSetup.sedimentTransport ?? 1; if (ui.startHerbivores) ui.startHerbivores.value = worldSetup.herbivores; if (ui.startCarnivores) ui.startCarnivores.value = worldSetup.carnivores; if (ui.terrainRelief) ui.terrainRelief.value = worldSetup.relief; if (ui.mountainAmount) ui.mountainAmount.value = worldSetup.mountains; if (ui.hillAmount) ui.hillAmount.value = worldSetup.hills; if (ui.valleyAmount) ui.valleyAmount.value = worldSetup.valleys; if (ui.riverAmount) ui.riverAmount.value = worldSetup.rivers; if (ui.lakeAmount) ui.lakeAmount.value = worldSetup.lakes; if (ui.woodlandAmount) ui.woodlandAmount.value = worldSetup.woodland; if (ui.treeDensity) ui.treeDensity.value = worldSetup.trees ?? 1; if (ui.bushDensity) ui.bushDensity.value = worldSetup.bushes ?? 1; if (ui.longGrass) ui.longGrass.value = worldSetup.longGrass ?? 1; if (ui.rainfallAmount) ui.rainfallAmount.value = worldSetup.rainfall ?? 1; if (ui.northTemperature) ui.northTemperature.value = worldSetup.northTemperature ?? 8; if (ui.southTemperature) ui.southTemperature.value = worldSetup.southTemperature ?? 24; if (ui.coldestTemperature) ui.coldestTemperature.value = worldSetup.coldestTemperature ?? -12; if (ui.hottestTemperature) ui.hottestTemperature.value = worldSetup.hottestTemperature ?? 36; if (ui.temperatureVariation) ui.temperatureVariation.value = worldSetup.temperatureVariation ?? 1; if (ui.climateAmount) ui.climateAmount.value = worldSetup.climate; updateWorldSetupLabels(); }
+function setWorldSetup(setup = worldSetup) { const legacyCounts = !setup.speciesCounts ? { grazer: setup.herbivores ?? worldSetup.herbivores ?? 18, hunter: setup.carnivores ?? worldSetup.carnivores ?? 4 } : setup.speciesCounts; const speciesCounts = enabledSpeciesCounts(legacyCounts), totals = speciesCategoryTotals(speciesCounts); worldSetup = { ...worldSetup, ...setup, ecologyPopulationScale: clamp(Number(setup.ecologyPopulationScale ?? worldSetup.ecologyPopulationScale) || 100, 20, 200), speciesCounts, ...totals }; WORLD = worldSetup.size; HALF = WORLD / 2; }
+function updateWorldSetupLabels() { const setup = selectedWorldSetup(); const set = (id, value) => { const el = document.querySelector(id); if (el) el.textContent = value; }; const amount = (v) => v === 0 ? "None · 0.00×" : `${v < 0.75 ? "Low" : v > 1.25 ? "High" : "Normal"} · ${v.toFixed(2)}×`; const contrast = setup.temperatureVariation === 0 ? "Uniform · temperate" : setup.temperatureVariation < .75 ? "Subtle · mixed regions" : setup.temperatureVariation > 1.6 ? "Strong · hot/cold regions" : "Normal · mixed regions"; const spanName = ["", "Compact", "Medium", "Standard", "Vast"][setup.span], presetSpan = { 1: 90, 2: 150, 3: 220, 4: 300 }[setup.span]; set("#world-size-value", setup.customSpan ? `Custom · ${setup.size} world units (overrides ${spanName} · ${presetSpan})` : `${spanName} · ${setup.size} world units`); if (ui.hexDetailValue) ui.hexDetailValue.textContent = `${setup.hexDetail.toLocaleString()} connected hexes`; set("#start-herbivores-value", String(setup.herbivores)); set("#start-carnivores-value", String(setup.carnivores)); set("#terrain-relief-value", setup.relief === 0 ? "Flat · 0.00×" : amount(setup.relief)); set("#mountain-amount-value", amount(setup.mountains)); set("#hill-amount-value", amount(setup.hills)); set("#valley-amount-value", amount(setup.valleys)); set("#river-amount-value", amount(setup.rivers)); set("#lake-amount-value", amount(setup.lakes)); set("#woodland-amount-value", amount(setup.woodland)); set("#tree-density-value", amount(setup.trees)); set("#bush-density-value", amount(setup.bushes)); set("#long-grass-value", amount(setup.longGrass)); set("#rainfall-amount-value", amount(setup.rainfall)); set("#wind-strength-value", amount(setup.windStrength)); set("#storm-intensity-value", amount(setup.stormIntensity)); set("#rain-shadow-value", amount(setup.rainShadow)); set("#sediment-transport-value", amount(setup.sedimentTransport)); set("#north-temperature-value", `${setup.northTemperature <= 4 ? "Cold" : "Cool"} · ${setup.northTemperature}°C`); set("#south-temperature-value", `${setup.southTemperature >= 28 ? "Hot" : "Warm"} · ${setup.southTemperature}°C`); set("#coldest-temperature-value", `${setup.coldestTemperature}°C`); set("#hottest-temperature-value", `${setup.hottestTemperature}°C`); set("#temperature-variation-value", contrast); set("#climate-amount-value", amount(setup.climate)); }
+function syncWorldSetupInputs() { if (ui.ecologyPreset) ui.ecologyPreset.value = ECOLOGY_PRESETS[worldSetup.ecologyPreset] ? worldSetup.ecologyPreset : "custom"; syncEcologyPopulationScaleControls(worldSetup.ecologyPopulationScale ?? 100); for (const id of SPECIES_IDS) if (ui.startSpecies?.[id]) ui.startSpecies[id].value = String(worldSetup.speciesCounts?.[id] || 0); if (ui.worldSize) ui.worldSize.value = worldSetup.span ?? 3; if (ui.hexDetail) ui.hexDetail.value = worldSetup.hexDetail ?? 5000; if (ui.startSeason) ui.startSeason.value = seasons.includes(worldSetup.startSeason) ? worldSetup.startSeason : "Spring"; if (ui.windDirection) ui.windDirection.value = worldSetup.windDirection ?? "west"; if (ui.windStrength) ui.windStrength.value = worldSetup.windStrength ?? 1; if (ui.stormIntensity) ui.stormIntensity.value = worldSetup.stormIntensity ?? 1; if (ui.rainShadow) ui.rainShadow.value = worldSetup.rainShadow ?? 1; if (ui.sedimentTransport) ui.sedimentTransport.value = worldSetup.sedimentTransport ?? 1; if (ui.startHerbivores) ui.startHerbivores.value = worldSetup.herbivores; if (ui.startCarnivores) ui.startCarnivores.value = worldSetup.carnivores; if (ui.terrainRelief) ui.terrainRelief.value = worldSetup.relief; if (ui.mountainAmount) ui.mountainAmount.value = worldSetup.mountains; if (ui.hillAmount) ui.hillAmount.value = worldSetup.hills; if (ui.valleyAmount) ui.valleyAmount.value = worldSetup.valleys; if (ui.riverAmount) ui.riverAmount.value = worldSetup.rivers; if (ui.lakeAmount) ui.lakeAmount.value = worldSetup.lakes; if (ui.woodlandAmount) ui.woodlandAmount.value = worldSetup.woodland; if (ui.treeDensity) ui.treeDensity.value = worldSetup.trees ?? 1; if (ui.bushDensity) ui.bushDensity.value = worldSetup.bushes ?? 1; if (ui.longGrass) ui.longGrass.value = worldSetup.longGrass ?? 1; if (ui.rainfallAmount) ui.rainfallAmount.value = worldSetup.rainfall ?? 1; if (ui.northTemperature) ui.northTemperature.value = worldSetup.northTemperature ?? 8; if (ui.southTemperature) ui.southTemperature.value = worldSetup.southTemperature ?? 24; if (ui.coldestTemperature) ui.coldestTemperature.value = worldSetup.coldestTemperature ?? -12; if (ui.hottestTemperature) ui.hottestTemperature.value = worldSetup.hottestTemperature ?? 36; if (ui.temperatureVariation) ui.temperatureVariation.value = worldSetup.temperatureVariation ?? 1; if (ui.climateAmount) ui.climateAmount.value = worldSetup.climate; updateWorldSetupLabels(); }
 
 function initialGroupCount(population) { return population < 2 ? 0 : Math.max(1, Math.floor(Math.sqrt(population) / 5)); }
 function initialCarcassCount(population) { return population < 1 ? 0 : Math.max(1, Math.min(14, Math.round(Math.sqrt(population) / 2.5))); }
 function startingDemographyThreshold() { return 10; }
 function startingDemographicPlan(speciesId, population, rng) {
   const s = species[speciesId];
-  if (population < startingDemographyThreshold()) return Array.from({ length: population }, (_, index) => ({ sex: index % 2 === 0 ? "F" : "M", age: s.matureAge * (1.15 + rng() * .75), stage: "adult" }));
+  if (population < startingDemographyThreshold()) {
+    const plan = Array.from({ length: population }, (_, index) => ({ sex: index % 2 === 0 ? "F" : "M", age: s.matureAge * (1.15 + rng() * .75), stage: "adult" }));
+    if (needsPregnantPredatorFounder(speciesId, population) && plan[0]) plan[0] = { ...plan[0], sex: "F", stage: "adult" };
+    return plan;
+  }
   const stages = ["adult", "adult", "dependent", "juvenile", "subadult", "old", "adult", "juvenile", "subadult", "dependent"];
   const ageFor = stage => ({ dependent: s.dependency * (.12 + rng() * .45), juvenile: s.matureAge * (.18 + rng() * .22), subadult: s.matureAge * (.52 + rng() * .38), adult: s.matureAge * (1.08 + rng() * 1.45), old: s.oldAge + rng() * Math.max(2, (s.maxAge - s.oldAge) * .45) })[stage];
   return Array.from({ length: population }, (_, index) => { const stage = stages[index % stages.length]; return { sex: index % 2 === 0 ? "F" : "M", age: ageFor(stage), stage }; });
@@ -3793,17 +4307,19 @@ function seedStartingPregnancies(animals, rng) {
   for (const speciesId of SPECIES_IDS) {
     const population = animals.filter(a => a.speciesId === speciesId), eligible = population.filter(a => a.sex === "F" && a.lifeStage === "adult");
     if (!eligible.length) continue;
+    const protectPredatorFounder = needsPregnantPredatorFounder(speciesId, population.length);
     const males = population.filter(a => a.sex === "M" && ["adult", "old"].includes(a.lifeStage));
     const probability = clamp(.12 + .78 / Math.max(1, population.length ** .65), .14, .9);
     const selected = eligible.filter((female, index) => index === 0 || rng() < probability);
-    for (const female of selected) {
+    for (const [selectedIndex, female] of selected.entries()) {
       const s = species[speciesId], father = males.length ? males[Math.floor(rng() * males.length)] : null;
-      female.pregnant = { age: s.gestation * (.08 + rng() * .68), fatherId: father?.id || null, viability: .88 + rng() * .12, offspringCount: chooseOffspringCount(s.litter, rng()), startedBeforeObservation: true };
+      const protectedFounder = protectPredatorFounder && selectedIndex === 0;
+      female.pregnant = { age: s.gestation * (protectedFounder ? .95 : .08 + rng() * .68), fatherId: father?.id || null, viability: .88 + rng() * .12, offspringCount: chooseOffspringCount(s.litter, rng()), startedBeforeObservation: true, ...(protectedFounder ? { lowPopulationFounderSafeguard: true } : {}) };
       female.pregnancyHormones = pregnancyHormonalCycle(female.pregnant, s.gestation);
       const profile = compositionProfile(female.speciesId, female.sex), targetFat = profile.idealHigh * .94 / 100;
       female.fatMass = female.leanMass * targetFat / Math.max(.01, 1 - targetFat); female.bodyMass = female.leanMass + female.fatMass; female.bodyFatPercent = targetFat * 100;
       initializeMetabolism(female); recordNutrientIntake(female, { calories: female.leanMass * profile.stomachCaloriesPerKg, carbohydrate: .2, fat: .22, protein: .2, fermentable: .38 }); female.hydration = 100;
-      female.timeline.push(`observation began during pregnancy${father ? ` with ${father.id}` : ""}`);
+      female.timeline.push(`${protectedFounder ? "observation began at 95% gestation under the low-predator founder safeguard" : "observation began during pregnancy"}${father ? ` with ${father.id}` : ""}`);
     }
   }
 }
@@ -4436,8 +4952,8 @@ function growPlants(ecologyHour = Math.floor((sim.ecologicalMinute || 0) / MINUT
   for (let i = ecologyHour % cadence; i < sim.cells.length; i += cadence) {
     const cell = sim.cells[i];
     const biomassBefore = Math.max(0, Number(cell.biomass) || 0);
-    const visualBefore = `${cell.terrainClass}|${cell.plantType}|${cell.woodland}|${cell.shrubland}|${cell.woodyStage}|${cell.leaflessTreeUntil > sim.ecologicalMinute}|${cell.fallenTreeUntil > sim.ecologicalMinute}`;
-    const commitVisualChange = () => { const after = `${cell.terrainClass}|${cell.plantType}|${cell.woodland}|${cell.shrubland}|${cell.woodyStage}|${cell.leaflessTreeUntil > sim.ecologicalMinute}|${cell.fallenTreeUntil > sim.ecologicalMinute}`; if (after !== visualBefore) markLandscapeCell(cell, "terrain", "vegetation"); };
+    const visualBefore = `${cell.terrainClass}|${cell.plantType}|${cell.woodland}|${cell.shrubland}|${cell.woodyStage}|${cell.leaflessTreeUntil > sim.ecologicalMinute}|${cell.leafDepletedUntil > sim.ecologicalMinute}|${cell.fallenTreeUntil > sim.ecologicalMinute}`;
+    const commitVisualChange = () => { const after = `${cell.terrainClass}|${cell.plantType}|${cell.woodland}|${cell.shrubland}|${cell.woodyStage}|${cell.leaflessTreeUntil > sim.ecologicalMinute}|${cell.leafDepletedUntil > sim.ecologicalMinute}|${cell.fallenTreeUntil > sim.ecologicalMinute}`; if (after !== visualBefore) markLandscapeCell(cell, "terrain", "vegetation"); };
     if (cell.water || cell.rocky || cell.sandy || cell.wetland) { cell.biomass = 0; ecologicalAccounting.record("plantNaturalLoss", biomassBefore); cell.terrainClass = landClass(cell, cachedWeatherAt(cell).temp); commitVisualChange(); continue; }
     const type = plantTypes[cell.plantType];
     const local = cachedWeatherAt(cell), localTemp = local.temp;
@@ -4457,6 +4973,22 @@ function growPlants(ecologyHour = Math.floor((sim.ecologicalMinute || 0) / MINUT
       cell.woodyStage = "none";
       cell.biomass = Math.min(cell.biomass, 0.16);
       cell.plantAge = 0;
+    }
+    // Browsing removes the reachable foliage, not the living trunk. Keep the
+    // tree visibly bare and unavailable until its bounded recovery interval
+    // expires, then restore a small leaf crop which must regrow normally.
+    if (cell.plantType === "tree" && cell.leafDepletedUntil > sim.ecologicalMinute) {
+      cell.biomass = 0;
+      cell.plantStage = "browsed-leafless";
+      ecologicalAccounting.record("plantNaturalLoss", biomassBefore);
+      commitVisualChange();
+      continue;
+    }
+    if (cell.plantType === "tree" && cell.leafDepletedUntil) {
+      cell.leafDepletedUntil = 0;
+      cell.biomass = Math.max(cell.biomass, .18);
+      cell.plantStage = "growing";
+      requestVegetationPresentationUpdate(cell, true);
     }
     cell.plantAge = (cell.plantAge || 0) + cadence / 24;
     cell.vegetationAgeDays = cell.plantAge;
@@ -4754,7 +5286,7 @@ function executeEmbodiedContextAction(a, kind) {
   if (kind === "survival") { const need = chooseEmbodiedSurvivalNeed(a); a.playerActionObjective = null; a.playerRequestedSatisfier = need; a.playerSatisfierObjective = need; chooseAndAct(a); return true; }
   if (kind === "attack") { const target = nearestEmbodiedTarget(a, () => true, 8); if (!target) { setBlockedAction(a, "no organism is close enough to target", { label: "unable to attack", intendedOutcome: "strike a nearby organism" }); return true; } a.playerSatisfierObjective = null; a.playerActionObjective = { kind: "attack", targetId: target.id }; return continueEmbodiedActionObjective(a); }
   if (kind === "court") { const target = nearestEmbodiedTarget(a, other => other.speciesId === a.speciesId && other.sex !== a.sex && other.lifeStage === "adult", 10); if (!target || a.lifeStage !== "adult") { setBlockedAction(a, "no biologically compatible adult is nearby", { label: "unable to begin courtship", intendedOutcome: "seek a compatible mate" }); return true; } a.playerSatisfierObjective = null; a.playerActionObjective = { kind: "court", targetId: target.id }; return continueEmbodiedActionObjective(a); }
-  if (kind === "rest") { a.playerSatisfierObjective = null; a.playerActionObjective = { kind: "rest" }; a.movementRequest = null; a.routeState = null; if (a.locomotion) a.locomotion.vx = a.locomotion.vz = 0; return continueEmbodiedActionObjective(a); }
+  if (kind === "rest") { a.playerSatisfierObjective = null; a.playerActionObjective = { kind: "rest" }; a.playerStandTransition = null; a.movementRequest = null; a.routeState = null; if (a.locomotion) a.locomotion.vx = a.locomotion.vz = 0; return continueEmbodiedActionObjective(a); }
   return false;
 }
 
@@ -4778,9 +5310,10 @@ function ensureEmbodiedWheel() {
   wheel = document.createElement("div"); wheel.id = "embodied-radial-wheel"; wheel.hidden = true; wheel.innerHTML = `<div class="embodied-wheel-disc"><svg viewBox="0 0 480 480" aria-hidden="true"></svg><div class="embodied-wheel-items"></div><div class="embodied-wheel-centre"><strong></strong><span>Move mouse to select</span></div></div>`; document.body.append(wheel); return wheel;
 }
 function renderEmbodiedWheel() {
-  const wheel = ensureEmbodiedWheel(), choices = embodiedWheelChoices(embodiedWheelState.kind), svg = wheel.querySelector("svg"), items = wheel.querySelector(".embodied-wheel-items");
+  const wheel = ensureEmbodiedWheel(), choices = embodiedWheelChoices(embodiedWheelState.kind), svg = wheel.querySelector("svg"), items = wheel.querySelector(".embodied-wheel-items"), showPeripheralLabels = currentEmbodiment().difficulty !== "standard";
   svg.innerHTML = choices.map((_, index) => `<path d="${radialSectorPath(index, choices.length)}" class="${index === embodiedWheelState.selectedIndex ? "is-selected" : ""}"></path>`).join("");
-  items.innerHTML = choices.map((item, index) => { const angle = -Math.PI / 2 + index * Math.PI * 2 / choices.length, x = 50 + Math.cos(angle) * 35, y = 50 + Math.sin(angle) * 35; return `<div class="embodied-wheel-item ${index === embodiedWheelState.selectedIndex ? "is-selected" : ""}" style="left:${x}%;top:${y}%"><span class="embodied-wheel-icon">${item.glyph}</span><small>${item.label}</small></div>`; }).join("");
+  wheel.classList.toggle("has-peripheral-labels", showPeripheralLabels);
+  items.innerHTML = choices.map((item, index) => { const angle = -Math.PI / 2 + index * Math.PI * 2 / choices.length, x = 50 + Math.cos(angle) * 35, y = 50 + Math.sin(angle) * 35, label = showPeripheralLabels ? `<small>${item.label}</small>` : ""; return `<div class="embodied-wheel-item ${index === embodiedWheelState.selectedIndex ? "is-selected" : ""}" style="left:${x}%;top:${y}%" aria-label="${item.label}"><span class="embodied-wheel-icon">${item.glyph}</span>${label}</div>`; }).join("");
   const selected = choices[embodiedWheelState.selectedIndex]; wheel.querySelector(".embodied-wheel-centre strong").textContent = selected?.label || (embodiedWheelState.kind === "expression" ? "Expressions" : "Calls");
 }
 function openEmbodiedWheel(kind) {
@@ -4801,6 +5334,14 @@ function closeEmbodiedWheel({ cancel = false } = {}) {
 function applyEmbodiedDecision(a, before) {
   const embodiment = currentEmbodiment(), caps = embodimentCapabilities();
   if (caps?.control === "influence") { sim.embodiment.influence = decayInfluence(embodiment.influence); return applyAnimalDecision(a, before); }
+  if (a.playerStandTransition && performance.now() < a.playerStandTransition.readyAt) {
+    a.movementRequest = null; a.routeState = null;
+    if (a.locomotion) a.locomotion.vx = a.locomotion.vz = 0;
+    setAction(a, "wake", { label: "rising fully before moving", intendedOutcome: "regain a stable standing posture before locomotion" });
+    a.stationaryTicks = (a.stationaryTicks || 0) + 1;
+    profiler.measure("causal trace capture", () => recordCausalLoop(a, before));
+    return;
+  }
   if (continueEmbodiedActionObjective(a)) {
     a.stationaryTicks = Math.hypot((a.fx ?? a.x) - before.fx, (a.fz ?? a.z) - before.fz) < 0.01 ? (a.stationaryTicks || 0) + 1 : 0;
     profiler.measure("causal trace capture", () => recordCausalLoop(a, before)); return;
@@ -4974,7 +5515,7 @@ function sense(a) {
       }
     }
     if (visible && cell.drinkable && rand() > d / (visionRange + 3)) contacts.push({ type: "water", x: cell.x, z: cell.z, confidence: 0.92, age: 0, channel: "sight" });
-    if (visible && !cell.water && (!cell.woodland || cell.plantType === "shrub") && cell.biomass > 0.28 && eatsPlants(a) && isSustainableForage(a, cell.plantType) && rand() > d / (visionRange + 3)) contacts.push({ type: "food", plantType: cell.plantType, quality: plantQuality(cell) * plantPreference(a, cell.plantType), x: cell.x, z: cell.z, confidence: clamp(cell.biomass, 0.15, 1), age: 0, channel: "sight" });
+    if (visible && !cell.water && cell.biomass > 0.28 && eatsPlants(a) && isSustainableForage(a, cell.plantType) && !(cell.plantType === "tree" && cell.leafDepletedUntil > sim.ecologicalMinute) && rand() > d / (visionRange + 3)) contacts.push({ type: "food", plantType: cell.plantType, quality: plantQuality(cell) * plantPreference(a, cell.plantType), x: cell.x, z: cell.z, confidence: clamp(cell.biomass, 0.15, 1), age: 0, channel: "sight" });
     const scentType = speciesCanHunt(a) ? "grazer" : "hunter";
     // Scent has no line-of-sight requirement, but it must still obey the
     // animal's actual smell range. Previously it quietly inherited vision
@@ -6093,7 +6634,7 @@ function refreshGroupNames(alive) {
     for (const individualId of organization.individualIds || []) { const member = alive.find((animal) => animal.id === individualId); if (member) { member.largeGroupId = organization.id; member.largeGroupName = organization.name; } }
   }
   const territorialOwners = [...localGroups, ...alive.filter((animal) => !animal.groupId && mature(animal) && organizationProfile(species[animal.speciesId]).territoriality >= .35).map((animal) => ({ id: animal.id, speciesId: animal.speciesId, count: 1, centroid: { x: animal.x, z: animal.z }, type: "individual" }))];
-  const territory = updateTerritoryClaims(sim.territoryClaims, territorialOwners, species, sim.tick, { worldSize: WORLD, population: alive.length });
+  const territory = updateTerritoryClaims(sim.territoryClaims, territorialOwners, species, sim.tick, { worldSize: WORLD, population: alive.length, breedingSeason: ["Spring", "Summer"].includes(sim.season), resourceConcentration: clamp((sim.worldStocks?.plantBiomass || 0) / Math.max(1, alive.length * 12), 0, 1), establishmentTicks: 3 });
   sim.territoryClaims = territory.claims; sim.territoryDisputes = territory.disputes;
   for (const animal of alive) { animal.territoryPressure = 0; animal.territoryRivalId = null; }
   for (const dispute of territory.disputes) for (const ownerId of dispute.owners) {
@@ -6715,7 +7256,7 @@ function moveByLongMemory(a, type, label) {
   memory.bearing += (rand() - 0.5) * 0.12;
   return true;
 }
-function graze(a) { if (!canEat(a)) return rest(a, "resting while full"); if (a.feedingHeadRaised) { setAction(a, "listen", { label: "pausing feeding with head raised", intendedOutcome: "check surroundings before resuming feeding" }); return; } const c = cellAt(a.x, a.z), shrub = (c.woodland || c.shrubland) && c.plantType === "shrub", food = shrub ? "shrub" : "grass", preference = plantPreference(a, food), digestion = digestiveEfficiency(a, food); if (!grazeableCellFor(a, c)) return wander(a, "search", "seeking suitable vegetation"); const bite = Math.min(c.biomass, forageBite(food, a.bodyMass) * ecologicalMinutesThisTick() * preference), hydrationBefore = a.hydration; c.biomass -= bite; ecologicalAccounting.record("plantConsumed", bite); c.shrubBiomass = shrub ? c.biomass : 0; c.grazingPressure = clamp((c.grazingPressure || 0) + bite * 2.5, 0, 1.5); c.grassHeight = clamp((c.grassHeight || 0) - bite * 1.6, 0, 1); if (shrub && c.biomass < 0.06) { c.woodland = false; c.shrubland = false; c.plantType = "grass"; c.woodyStage = "none"; } requestVegetationPresentationUpdate(c, shrub && c.biomass < 0.06); a.hydration = clamp(a.hydration + forageHydrationGain(bite, c, a), 0, 100); ecologicalAccounting.record("forageWaterGained", Math.max(0, a.hydration - hydrationBefore)); const calories = bite * (shrub ? 5200 : 4200) * digestion; recordNutrientIntake(a, { calories, carbohydrate: .12, fat: .04, protein: shrub ? .18 : .12, fermentable: shrub ? .66 : .72 }); ecologicalAccounting.record("feedingEnergyGained", calories); a.lastMealTick = sim.tick; a.lastDigestionEfficiency = digestion; if ((c.plantStage === "reproductive" || c.seedStore > 0.45) && rand() < seedChanceForBite(bite, shrub ? .11 : .16)) a.seedLoad.push({ plantType: c.plantType, age: 0, viability: 0.65 + rand() * 0.3 }); setAction(a, shrub ? "browse" : "graze", { label: shrub ? "browsing shrub slowly" : c.grassHeight > 0.65 ? "grazing long grass steadily" : "grazing short grass steadily", intendedOutcome: "consume vegetation over time" }); }
+function graze(a) { if (!canEat(a)) return rest(a, "resting while full"); if (a.feedingHeadRaised) { setAction(a, "listen", { label: "pausing feeding with head raised", intendedOutcome: "check surroundings before resuming feeding" }); return; } const c = cellAt(a.x, a.z), food = c.plantType || "grass", shrub = food === "shrub", tree = food === "tree", preference = plantPreference(a, food), digestion = digestiveEfficiency(a, food); if (!grazeableCellFor(a, c)) return wander(a, "search", "seeking suitable vegetation"); const bite = Math.min(c.biomass, forageBite(tree ? "shrub" : food, a.bodyMass) * ecologicalMinutesThisTick() * preference), hydrationBefore = a.hydration; c.biomass -= bite; ecologicalAccounting.record("plantConsumed", bite); c.shrubBiomass = shrub ? c.biomass : 0; c.grazingPressure = clamp((c.grazingPressure || 0) + bite * 2.5, 0, 1.5); if (!tree) c.grassHeight = clamp((c.grassHeight || 0) - bite * 1.6, 0, 1); if (shrub && c.biomass < 0.06) { c.woodland = false; c.shrubland = false; c.plantType = "grass"; c.woodyStage = "none"; } if (tree && c.biomass < 0.08) { c.biomass = 0; c.leafDepletedUntil = sim.ecologicalMinute + MINUTES_PER_DAY * 20; c.plantStage = "browsed-leafless"; } requestVegetationPresentationUpdate(c, (shrub && c.biomass < 0.06) || tree); a.hydration = clamp(a.hydration + forageHydrationGain(bite, c, a), 0, 100); ecologicalAccounting.record("forageWaterGained", Math.max(0, a.hydration - hydrationBefore)); const calories = bite * (tree || shrub ? 5200 : 4200) * digestion; recordNutrientIntake(a, { calories, carbohydrate: .12, fat: .04, protein: tree || shrub ? .18 : .12, fermentable: tree || shrub ? .66 : .72 }); ecologicalAccounting.record("feedingEnergyGained", calories); a.lastMealTick = sim.tick; a.lastDigestionEfficiency = digestion; if ((c.plantStage === "reproductive" || c.seedStore > 0.45) && rand() < seedChanceForBite(bite, tree || shrub ? .11 : .16)) a.seedLoad.push({ plantType: c.plantType, age: 0, viability: 0.65 + rand() * 0.3 }); setAction(a, tree || shrub ? "browse" : "graze", { label: tree ? "browsing reachable tree foliage" : shrub ? "browsing shrub slowly" : c.grassHeight > 0.65 ? "grazing long grass steadily" : "grazing short grass steadily", intendedOutcome: "consume preferred vegetation over time" }); }
 function drink(a) {
   const source = drinkableSource(a);
   if (a.hydration >= 92) { a.drinkingSource = null; return wander(a, "wander", "leaving water, thirst satisfied"); }
@@ -7052,7 +7593,7 @@ function projectConstellationEntry(rendered, a, state, channels) {
   // Reserve both private attachment bays for the selected owner even during a
   // quiet heartbeat phase. Otherwise an empty-state pulse would resize the
   // complete constellation every time it appeared or disappeared.
-  const privateCognitionVisible = privateOwnerSelected && graphicsSettings.instrumentThoughtVisible !== false && state.permittedChannels.includes("thought"), predictionAvailable = privateOwnerSelected && graphicsSettings.instrumentForecastVisible !== false && state.permittedChannels.includes("thought");
+  const privateCognitionVisible = privateOwnerSelected && graphicsSettings.entityPanelThoughtVisible !== false && state.permittedChannels.includes("thought"), predictionAvailable = privateOwnerSelected && graphicsSettings.entityPanelForecastVisible !== false && state.permittedChannels.includes("thought");
   const projectedBodyPx = clamp(animalVisualScale(a) * 1.8 * pixelsPerWorld, 4, 180);
   return {
     id: a.id,
@@ -7068,7 +7609,7 @@ function projectConstellationEntry(rendered, a, state, channels) {
     instrumentOwner,
     cinemaInstrumentOwner,
     interactionIds: constellationInteractionIds(a, state),
-    visibleChannels: ["identity", ...(graphicsSettings.instrumentPublicCueVisible !== false ? ["signal", "action"] : []), ...(privateCognitionVisible ? ["thought"] : []), ...(predictionAvailable ? ["prediction"] : []), ...(graphicsSettings.instrumentExpressionVisible !== false ? ["expression"] : []), "urgent"]
+    visibleChannels: [...(graphicsSettings.entityPanelIdentityVisible !== false ? ["identity"] : []), ...(graphicsSettings.entityPanelPublicCueVisible !== false ? ["signal", "action"] : []), ...(privateCognitionVisible ? ["thought"] : []), ...(predictionAvailable ? ["prediction"] : []), ...(graphicsSettings.entityPanelExpressionVisible !== false ? ["expression"] : []), "urgent"]
   };
 }
 function entityConstellationViewportBounds() {
@@ -7092,19 +7633,26 @@ function entityConstellationViewportBounds() {
 }
 function currentEntityConstellationCardProfile() {
   const cinemaPhysiology = movieState.active && movieChannelEnabled("physiology");
-  const healthVisible = cinemaPhysiology || ui.overlayHealthBars?.checked !== false;
-  const metabolicVisible = cinemaPhysiology || ui.overlayCompositionBar?.checked !== false;
-  const performanceVisible = cinemaPhysiology || ui.overlayEnduranceBar?.checked !== false;
-  const thoughtAttachmentEnabled = graphicsSettings.instrumentThoughtVisible !== false;
-  const forecastAttachmentEnabled = graphicsSettings.instrumentForecastVisible !== false;
+  const style = graphicsSettings.entityPanelStyle;
+  const contextOnly = style === "context-ribbon";
+  const vitalsOnly = style === "vital-strip";
+  const healthVisible = !contextOnly && (cinemaPhysiology || graphicsSettings.entityPanelHealthVisible);
+  const metabolicVisible = !contextOnly && (cinemaPhysiology || graphicsSettings.entityPanelMetabolicVisible);
+  const performanceVisible = !contextOnly && (cinemaPhysiology || graphicsSettings.entityPanelPerformanceVisible);
+  const immediateConcernVisible = !vitalsOnly && graphicsSettings.entityPanelConcernVisible;
+  const forecastEffectVisible = !vitalsOnly && graphicsSettings.entityPanelForecastEffectVisible;
+  const decisionContextVisible = immediateConcernVisible || forecastEffectVisible;
+  const thoughtAttachmentEnabled = graphicsSettings.entityPanelThoughtVisible !== false;
+  const forecastAttachmentEnabled = graphicsSettings.entityPanelForecastVisible !== false;
   // Internal geometry is authored once at 100%. The user's panel setting is
   // applied later to the complete root and its collision profile, ensuring the
   // thick rail, full instrument and every child retain identical proportions.
-  const key = [healthVisible ? 1 : 0, metabolicVisible ? 1 : 0, performanceVisible ? 1 : 0, thoughtAttachmentEnabled ? 1 : 0, forecastAttachmentEnabled ? 1 : 0].join(":");
+  const key = [style, healthVisible ? 1 : 0, immediateConcernVisible ? 1 : 0, forecastEffectVisible ? 1 : 0, metabolicVisible ? 1 : 0, performanceVisible ? 1 : 0, thoughtAttachmentEnabled ? 1 : 0, forecastAttachmentEnabled ? 1 : 0, graphicsSettings.entityBubbleScale, graphicsSettings.entityPanelIdentityVisible ? 1 : 0, graphicsSettings.entityPanelExpressionVisible ? 1 : 0, graphicsSettings.entityPanelPublicCueVisible ? 1 : 0].join(":");
   if (entityConstellationCardProfileCache.key !== key || !entityConstellationCardProfileCache.value) {
     entityConstellationCardProfileCache = {
       key,
       value: entityConstellationCardProfile({
+        style,
         // Preserve the authored asymmetric composition as canonical artwork:
         // square expression, fixed identity and wide outward-cue bays. These
         // are design ratios, not user controls; the setting scales the complete
@@ -7113,23 +7661,35 @@ function currentEntityConstellationCardProfile() {
         identityScale: 1,
         expressionScale: 1,
         publicCueScale: 1,
-        thoughtScale: 1.25,
-        predictionScale: 1.25,
+        // Both selected-only clouds fill their panel-owned half-width bays.
+        // The layout caps them proportionally, so whole-panel scaling remains
+        // the sole user-facing size control.
+        thoughtScale: graphicsSettings.entityBubbleScale,
+        predictionScale: graphicsSettings.entityBubbleScale,
         healthScale: 1.25,
         physiologyScale: 1.25,
         physiologyTextScale: 1.15,
         healthVisible,
+        decisionContextVisible,
+        immediateConcernVisible,
+        forecastEffectVisible,
         metabolicVisible,
         performanceVisible,
         thoughtAttachmentEnabled,
-        forecastAttachmentEnabled
+        forecastAttachmentEnabled,
+        identityVisible: graphicsSettings.entityPanelIdentityVisible,
+        expressionVisible: graphicsSettings.entityPanelExpressionVisible,
+        publicCueVisible: graphicsSettings.entityPanelPublicCueVisible
       })
     };
   }
-  return entityConstellationCardProfileCache.value;
+  const value = entityConstellationCardProfileCache.value;
+  const styleUsesInstrumentSurface = ["context-ribbon", "vital-strip", "full-instrument"].includes(style);
+  const enabledBandsNeedInstrumentSurface = healthVisible || decisionContextVisible || metabolicVisible || performanceVisible;
+  return { ...value, public: value.panel, selected: styleUsesInstrumentSurface || enabledBandsNeedInstrumentSurface ? value.instrument : value.panel };
 }
 function constellationResolverProfile(profile, uniformScale = 1) {
-  const scale = clamp(Number(uniformScale) || 1, .6, 1.5);
+  const scale = clamp(Number(uniformScale) || 1, .1, 1.5);
   const scaledSlot = slot => slot ? { x: slot.x * scale, y: slot.y * scale } : slot;
   const scaledSize = size => size ? { width: size.width * scale, height: size.height * scale } : size;
   return {
@@ -7197,10 +7757,10 @@ function resolveVisibleEntityConstellations(entries) {
   const cardProfile = currentEntityConstellationCardProfile();
   const canvasViewport = { left: 0, top: 0, right: Math.max(1, renderer.domElement.clientWidth), bottom: Math.max(1, renderer.domElement.clientHeight) };
   const renderedById = new Map(entries.map(({ rendered, a }) => [String(a.id), rendered]));
-  const panelResolverProfile = constellationResolverProfile(cardProfile.panel, graphicsSettings.entityPanelScale);
+  const panelResolverProfile = constellationResolverProfile(cardProfile.public, graphicsSettings.entityPanelScale);
   const onScreenProjected = entries.map(({ rendered, a, state, channels }) => {
     const projection = projectConstellationEntry(rendered, a, state, channels), onScreen = projectedEntityIntersectsViewport(projection, canvasViewport);
-    projection.layoutProfile = constellationResolverProfile(projection.instrumentOwner ? cardProfile.instrument : cardProfile.panel, graphicsSettings.entityPanelScale);
+    projection.layoutProfile = constellationResolverProfile(projection.instrumentOwner ? cardProfile.selected : cardProfile.public, graphicsSettings.entityPanelScale);
     projection.viewportAdmitted = onScreen;
     rendered.userData.constellationProjection = { screenX: projection.screenX, screenY: projection.screenY, projectedBodyPx: projection.projectedBodyPx, clipZ: projection.clipZ, viewDepth: projection.viewDepth, onScreen, panelAdmitted: false, instrumentOwner: projection.instrumentOwner, cinemaInstrumentOwner: projection.cinemaInstrumentOwner };
     return projection;
@@ -7231,7 +7791,7 @@ function resolveVisibleEntityConstellations(entries) {
   // movable window is recoverable, while clipping the panel off-screen is not.
   const usableWidth = usableViewport.right - usableViewport.left, usableHeight = usableViewport.bottom - usableViewport.top;
   const requiresFullCanvas = projected.some((projection) => {
-    const profile = projection.instrumentOwner ? cardProfile.instrument : cardProfile.panel;
+    const profile = projection.instrumentOwner ? cardProfile.selected : cardProfile.public;
     const bounds = projection.instrumentOwner ? profile.selectedFootprint || profile.panel : profile.panel;
     const effectiveScale = layoutScale * projection.panelScale;
     return bounds.width * effectiveScale > usableWidth || bounds.height * effectiveScale > usableHeight;
@@ -7370,7 +7930,7 @@ function applyEntityConstellationLayout(rendered, a, state) {
   root.visible = showEntitySymbols || instrumentVisualAllowed;
   const cue = observableConstellationCue(a, state), heldExpression = presentationChannelHolds.snapshot(a.id, "expression").displayed, expressionGlyph = facialExpressionSymbol(heldExpression?.key || state.expression.key).glyph;
   const identityAllowed = integratedInstrument ? instrumentVisualAllowed : showEntitySymbols && showcaseChannel("identity") && (!movieState.active || movieFeaturedAnimal(a));
-  const cardProfile = currentEntityConstellationCardProfile(), panelProfile = integratedInstrument ? cardProfile.instrument : cardProfile.panel;
+  const cardProfile = currentEntityConstellationCardProfile(), projection = rendered.userData.constellationProjection, panelProfile = projection?.instrumentOwner ? cardProfile.selected : cardProfile.public;
   // `layout.panelScale` is the camera-wheel distance response. The settings
   // multiplier belongs to the complete authored surface, so combine the two
   // once and use that same result for the rail/instrument and every child.
@@ -7425,10 +7985,11 @@ function applyEntityConstellationLayout(rendered, a, state) {
   if (parts.courtshipHearts) parts.courtshipHearts.forEach((heart, index) => { const slot = layout.slots.action; if (slot) { const spread = Math.min(13, (sideCells?.outwardCell.width || 52) * .18) * panelScale; heart.position.set((slot.x + (index ? spread : -spread)) * unitsPerPixel, -(slot.y - index * spread) * unitsPerPixel, .004); } });
   setConstellationSlot(parts.thought, layout.slots.thought, unitsPerPixel, .006);
   setConstellationSlot(parts.predictionThought, layout.slots.prediction, unitsPerPixel, .007);
-  if (graphicsSettings.instrumentExpressionVisible === false && parts.face) parts.face.visible = false;
-  if (graphicsSettings.instrumentPublicCueVisible === false) for (const part of [parts.signal, parts.actionBadge, parts.rejection, parts.acceptance, ...(parts.courtshipHearts || [])]) if (part) part.visible = false;
-  if (graphicsSettings.instrumentThoughtVisible === false && parts.thought) parts.thought.visible = false;
-  if (graphicsSettings.instrumentForecastVisible === false && parts.predictionThought) parts.predictionThought.visible = false;
+  if (graphicsSettings.entityPanelExpressionVisible === false && parts.face) parts.face.visible = false;
+  if (graphicsSettings.entityPanelPublicCueVisible === false) for (const part of [parts.signal, parts.actionBadge, parts.rejection, parts.acceptance, ...(parts.courtshipHearts || [])]) if (part) part.visible = false;
+  const privateAttachmentsAllowed = Boolean(projection?.instrumentOwner);
+  if (!privateAttachmentsAllowed || graphicsSettings.entityPanelThoughtVisible === false) if (parts.thought) parts.thought.visible = false;
+  if (!privateAttachmentsAllowed || graphicsSettings.entityPanelForecastVisible === false) if (parts.predictionThought) parts.predictionThought.visible = false;
   if (parts.face) parts.face.scale.set(sideCells.expression.width * panelScale * unitsPerPixel, sideCells.expression.height * panelScale * unitsPerPixel, 1);
   if (parts.signal) parts.signal.scale.set(sideCells.outward.width * panelScale * unitsPerPixel, sideCells.outward.height * panelScale * unitsPerPixel, 1);
   if (parts.actionBadge) parts.actionBadge.scale.set(sideCells.action.width * panelScale * unitsPerPixel, sideCells.action.height * panelScale * unitsPerPixel, 1);
@@ -7466,6 +8027,8 @@ function updateEntityIndicators(rendered, a, state, now = performance.now(), cha
   let healthBar = rendered.userData.healthBar;
   const scale = rendered.userData.createdScale || animalVisualScale(a), moviePrimary = movieFeaturedAnimal(a, true), allowBars = (channels.has("healthBars") || moviePrimary && movieChannelEnabled("physiology")) && !ui.overlayOrganismOnly?.checked;
   const integratedInstrument = entityConstellationLayouts.get(a.id)?.detailLevel === "instrument";
+  const activeInstrumentSections = integratedInstrument ? currentEntityConstellationCardProfile().selected.visibleSections || {} : {};
+  const selectedInstrument = integratedInstrument && a.id === selectedId && !movieState.active;
   const iconScale = graphicsSettings.entityIconScale, diagnosticScale = graphicsSettings.diagnosticScale;
   const overlayBaseY = Math.max(1.55, 2.65 * scale) + (diagnosticScale - 1) * .35;
   // The three physiology canvases have different native aspect ratios. Give
@@ -7476,9 +8039,9 @@ function updateEntityIndicators(rendered, a, state, now = performance.now(), cha
   const enduranceHeight = diagnosticWidth * (a.lifeStage === "dependent" ? 52 : 104) / 288;
   const compositionHeight = diagnosticWidth * 84 / 288;
   const diagnosticGap = .12 * diagnosticScale;
-  const instrumentHealth = integratedInstrument && allowBars && showcaseChannel("physiology") && (moviePrimary || ui.overlayHealthBars?.checked);
-  const instrumentPerformance = integratedInstrument && (a.id === selectedId && ui.overlayEnduranceBar?.checked || moviePrimary) && allowBars && showcaseChannel("physiology");
-  const instrumentMetabolic = integratedInstrument && (a.id === selectedId && ui.overlayCompositionBar?.checked || moviePrimary) && allowBars && showcaseChannel("physiology");
+  const instrumentHealth = integratedInstrument && showcaseChannel("physiology") && Boolean(selectedInstrument && activeInstrumentSections.health || moviePrimary && allowBars && movieChannelEnabled("physiology"));
+  const instrumentPerformance = integratedInstrument && showcaseChannel("physiology") && Boolean(selectedInstrument && activeInstrumentSections.performance || moviePrimary && allowBars && movieChannelEnabled("physiology"));
+  const instrumentMetabolic = integratedInstrument && showcaseChannel("physiology") && Boolean(selectedInstrument && activeInstrumentSections.metabolic || moviePrimary && allowBars && movieChannelEnabled("physiology"));
   rendered.userData.instrumentSectionVisibility = { health: instrumentHealth, performance: instrumentPerformance, metabolic: instrumentMetabolic };
   const showHealth = !integratedInstrument && (a.id === selectedId || moviePrimary) && allowBars && showcaseChannel("physiology") && (moviePrimary || ui.overlayHealthBars?.checked) && (moviePrimary || state.health.health < 99.5 || state.health.healthCap < 99.5);
   const showEndurance = !integratedInstrument && (a.id === selectedId && ui.overlayEnduranceBar?.checked || moviePrimary) && allowBars && showcaseChannel("physiology");
@@ -7655,7 +8218,21 @@ function updateEntityIndicators(rendered, a, state, now = performance.now(), cha
   actionBadge.visible = showEntitySymbols && showcaseChannel("action") && (!movieState.active || movieFeaturedAnimal(a)) && actionBadgePresentation({ notable: unusualAction, urgentImpact, dominant }).visible;
   if (actionBadge.visible) { setEntityOwnedSpriteMaterial(actionBadge, actionBadgeMaterial(a, action.key, category)); actionBadge.position.set(1.32 + (iconScale - 1) * .52, Math.max(1.22, 1.62 * scale), 0); actionBadge.scale.set(.64 * iconScale, .52 * iconScale, 1); }
 }
-function updateEntityPosture(rendered, a, state, now, visual = a) {
+function groundedPostureProgress(rendered, a, posture, now) {
+  const target = isGroundRestPosture(posture) ? 1 : 0;
+  let transition = rendered.userData.groundedPostureTransition;
+  if (!transition) {
+    transition = { from: 0, target, startedAt: now, durationMs: postureTransitionDuration(a) * 1000, progress: 0 };
+    rendered.userData.groundedPostureTransition = transition;
+  } else if (transition.target !== target) {
+    const current = smoothPostureProgress(transition.from, transition.target, now - transition.startedAt, transition.durationMs);
+    transition = { from: current, target, startedAt: now, durationMs: postureTransitionDuration(a) * 1000, progress: current };
+    rendered.userData.groundedPostureTransition = transition;
+  }
+  transition.progress = smoothPostureProgress(transition.from, transition.target, now - transition.startedAt, transition.durationMs);
+  return transition.progress;
+}
+function updateEntityPosture(rendered, a, state, now, visual = a, groundRestProgress = 0) {
   const parts = rendered.userData.parts;
   if (!parts) return;
   for (const part of Object.values(parts)) {
@@ -7682,9 +8259,7 @@ function updateEntityPosture(rendered, a, state, now, visual = a) {
   else if (state.action.posture === "listen") { if (parts.head) parts.head.position.y += .12; }
   else if (state.action.posture === "sniff") { if (parts.head) parts.head.position.y -= .12; }
   else if (state.action.posture === "feed" || state.action.posture === "drink") { const feedingDip = Math.sin(now * .008) * .035; if (parts.head) { parts.head.position.y -= .22 + feedingDip; parts.head.position.z += Math.abs(feedingDip) * .35; parts.head.rotation.x += .28 + feedingDip * .45; } }
-  else if (state.action.posture === "suckle") { const suckle = Math.sin(now * .011) * .018; parts.body.position.y -= .12; parts.body.scale.y *= .84; if (parts.head) { parts.head.position.y -= .16 + Math.abs(suckle); parts.head.position.z += .09; parts.head.rotation.x += .18 + suckle; } }
-  else if (state.action.posture === "nursing-mother") { const breath = Math.sin(now * .004) * .018; parts.body.position.y -= .26; parts.body.scale.y *= .66; parts.body.scale.x *= 1.05; parts.body.rotation.z += .08; if (parts.head) { parts.head.position.y -= .18 + breath; parts.head.position.z += .03; parts.head.rotation.x += .08; } if (parts.tail) parts.tail.position.y -= .12; }
-  else if (state.action.posture === "rest") { parts.body.position.y -= .18; parts.body.scale.y *= .82; if (parts.head) parts.head.position.y -= .12; }
+  else if (state.action.posture === "suckle" && parts.head) { const suckle = Math.sin(now * .011) * .018; parts.head.position.z += .09; parts.head.rotation.x += .14 + suckle; }
   else if (state.action.posture === "collapse") { parts.body.position.y -= .32; parts.body.rotation.z += Math.PI * .46; parts.body.scale.y *= .68; if (parts.head) { parts.head.position.y -= .28; parts.head.position.x += .2; parts.head.rotation.z += Math.PI * .38; } if (parts.tail) { parts.tail.position.y -= .18; parts.tail.rotation.z -= .35; } }
   else if (state.action.posture === "guard") { parts.body.position.y += .05; if (parts.head) parts.head.position.y += .08; }
   else if (state.action.posture === "mate" && a.sex === "M") {
@@ -7695,6 +8270,15 @@ function updateEntityPosture(rendered, a, state, now, visual = a) {
     if (parts.head) { parts.head.position.y += pose.headLift; parts.head.position.z += pose.headForward; parts.head.rotation.x += pose.headPitch; }
   }
   else if (state.action.posture === "birth" && a.sex === "F") { const labour = Math.sin(now * .006); parts.body.position.y -= .1; parts.body.scale.z *= 1 + Math.abs(labour) * .045; if (parts.head) parts.head.position.y -= .08; }
+  if (groundRestProgress > 0) {
+    // Resting is one coherent vertical pose, not a squash of independent body
+    // parts. Moving every anatomical part by the same eased amount keeps the
+    // head, torso and tail connected and lets the underside settle just into
+    // the terrain. Nursing retains only its small head/contact movement above.
+    const lowering = .19 * groundRestProgress;
+    for (const part of [parts.body, parts.head, parts.tail]) if (part) part.position.y -= lowering;
+    if (state.action.posture === "nursing-mother" && parts.body) parts.body.position.y += Math.sin(now * .004) * .008 * groundRestProgress;
+  }
   const pregnancyBodyScale = pregnancyPhysiology(a.pregnant, species[a.speciesId].gestation).bodyLinearScale;
   const condition = visibleBodyCondition(a);
   parts.body.scale.x *= condition.widthScale;
@@ -7773,6 +8357,15 @@ function updateMotionTrail(a, state, item, now, visual, enabled = true) {
   }
 }
 function updateWorldPresentation(a, state, now, visual, channels = new Set(), visualById = new Map()) {
+  // Presentation budgets control incidental decoration, but an explicit
+  // selected-animal diagnostic request is authoritative presentation input.
+  // Do not let the ordinary density budget silently suppress a checked
+  // movement-trail or call overlay.
+  if (a.id === selectedId) {
+    channels = new Set(channels);
+    if (ui.overlayMotionTrails?.checked) channels.add("trails");
+    if (ui.overlayCalls?.checked) channelAllocationsForSelectedCalls(channels);
+  }
   const actorLayout = entityConstellationLayouts.get(a.id), targetId = state.action.target, targetLayout = targetId ? entityConstellationLayouts.get(targetId) : null;
   const relation = targetLayout && (a.id === selectedId || a.id === hoveredEntityId || actorLayout?.clusterId === targetLayout.clusterId) ? relationalArrow(actorLayout, targetLayout, { kind: state.action.key }) : null;
   const receiverIds = verifiedCallReceiverIds(a).filter((id) => animalRenderCache.get(id)?.visible).slice(0, 4);
@@ -7783,12 +8376,13 @@ function updateWorldPresentation(a, state, now, visual, channels = new Set(), vi
   const style = PRESENTATION_STYLES[state.priority.category] || PRESENTATION_STYLES.unknown;
   item.root.visible = true; item.halo.position.set(visual.x, terrainHeight(visual.x, visual.z) + .08, visual.z);
   const urgent = ["danger", "hunting", "reproduction", "family"].includes(state.priority.category) || ["search", "blocked"].includes(state.action.key) || a.id === selectedId;
-  item.halo.visible = narratedSubject || channels.has("urgentHalos") && urgent; item.halo.material.color.set(narratedSubject ? 0x79d5b5 : style.colour); item.halo.material.opacity = narratedSubject ? .72 : state.priority.category === "danger" ? .55 : .3;
+  const navigationCues = Boolean(ui.overlayNavigationCues?.checked);
+  item.halo.visible = navigationCues && (narratedSubject || channels.has("urgentHalos") && urgent); item.halo.material.color.set(narratedSubject ? 0x79d5b5 : style.colour); item.halo.material.opacity = narratedSubject ? .72 : state.priority.category === "danger" ? .55 : .3;
   const haloPulse = narratedSubject ? 1 + Math.sin(now * .009) * .12 : state.priority.category === "danger" ? 1 + Math.sin(now * .012) * .1 : 1; item.halo.scale.setScalar((narratedSubject ? 1.12 : state.action.key === "search" ? 1.22 : .92) * animalVisualScale(a) * haloPulse);
   const angle = state.movement.intendedDirection; frameScratch.origin.set(visual.x, terrainHeight(visual.x, visual.z) + .18, visual.z);
-  item.arrow.visible = channels.has("movementArrows") && angle !== null && (!state.movement.stationary || ["blocked", "search"].includes(state.action.key) || a.id === selectedId);
+  item.arrow.visible = navigationCues && channels.has("movementArrows") && angle !== null && (!state.movement.stationary || ["blocked", "search"].includes(state.action.key) || a.id === selectedId);
   if (item.arrow.visible) { frameScratch.direction.set(Math.cos(angle), 0, Math.sin(angle)); item.arrow.position.copy(frameScratch.origin); item.arrow.setDirection(frameScratch.direction); item.arrow.setLength(state.action.key === "flee" ? 2.5 : 1.75, .48, .28); item.arrow.setColor(style.colour); }
-  item.relationArrow.visible = Boolean(relation);
+  item.relationArrow.visible = navigationCues && Boolean(relation);
   if (relation) {
     const actorRendered = animalRenderCache.get(a.id), targetRendered = animalRenderCache.get(targetId), relationVisual = item.relationArrow.userData;
     constellationWorldPoint(actorLayout, actorRendered, relation.start, constellationScratch.relationStart); constellationWorldPoint(targetLayout, targetRendered, relation.end, constellationScratch.relationEnd);
@@ -7803,7 +8397,8 @@ function updateWorldPresentation(a, state, now, visual, channels = new Set(), vi
       const headScale = Math.max(.08, 9 * relationUnits / .26); relationVisual.head.position.copy(constellationScratch.relationEnd); relationVisual.head.quaternion.setFromUnitVectors(relationVisual.arrowUp, constellationScratch.relationDirection); relationVisual.head.scale.set(headScale * .55, headScale, headScale * .55); item.relationArrow.userData.relation = relation;
     }
   }
-  const showConnector = channels.has("connectors") && Boolean(state.cause) && (a.id === selectedId || ["danger", "hunting", "reproduction", "family"].includes(state.priority.category));
+  const causeEnabled = state.cause?.channel === "smell" ? ui.overlaySmell?.checked : state.cause?.channel === "hearing" ? (ui.overlaySound?.checked || ui.overlayCalls?.checked) : state.cause?.channel === "memory" ? ui.overlayMemory?.checked : navigationCues;
+  const showConnector = channels.has("connectors") && Boolean(state.cause) && Boolean(causeEnabled) && (a.id === selectedId || ["danger", "hunting", "reproduction", "family"].includes(state.priority.category));
   item.connector.visible = item.causeMarker.visible = showConnector;
   if (showConnector) {
     const colour = connectorColour(state), positions = item.connector.geometry.attributes.position.array;
@@ -7812,14 +8407,19 @@ function updateWorldPresentation(a, state, now, visual, channels = new Set(), vi
     item.causeMarker.material.color.set(colour); item.causeMarker.material.opacity = .35 + state.cause.confidence * .5; item.causeMarker.position.set(state.cause.x, terrainHeight(state.cause.x, state.cause.z) + .42, state.cause.z);
     const uncertainty = state.cause.channel === "hearing" ? 1.8 - state.cause.confidence : .45; item.causeMarker.scale.set(uncertainty, .25, uncertainty);
   }
-  item.callRing.visible = channels.has("callRings") && Boolean(state.communication);
+  item.callRing.visible = Boolean(ui.overlayCalls?.checked) && channels.has("callRings") && Boolean(state.communication);
   if (item.callRing.visible) { const phase = ((now / 900) % 1), radius = .5 + phase * 1.5; item.callRing.position.set(visual.x, terrainHeight(visual.x, visual.z) + .12, visual.z); item.callRing.scale.set(radius, radius, radius); item.callRing.material.opacity = .8 * (1 - phase); }
   for (let index = 0; index < item.callReceiverLinks.length; index += 1) {
-    const line = item.callReceiverLinks[index], receiver = animalById(receiverIds[index]); line.visible = Boolean(receiver);
+    const line = item.callReceiverLinks[index], receiver = animalById(receiverIds[index]); line.visible = Boolean(ui.overlayCalls?.checked && receiver);
     if (!receiver) continue;
     const receiverVisual = visualById.get(receiver.id) || receiver, positions = line.geometry.attributes.position.array; positions[0] = visual.x; positions[1] = terrainHeight(visual.x, visual.z) + .48; positions[2] = visual.z; positions[3] = receiverVisual.x; positions[4] = terrainHeight(receiverVisual.x, receiverVisual.z) + .48; positions[5] = receiverVisual.z; line.geometry.attributes.position.needsUpdate = true; line.computeLineDistances(); line.material.opacity = .48 + (Math.sin(now * .008 + index) + 1) * .16; line.userData = { speakerId: a.id, receiverId: receiver.id, evidence: "retained received-signal observation" };
   }
-  updateMotionTrail(a, state, item, now, visual, channels.has("trails"));
+  updateMotionTrail(a, state, item, now, visual, Boolean(ui.overlayMotionTrails?.checked) && channels.has("trails"));
+}
+
+function channelAllocationsForSelectedCalls(channels) {
+  channels.add("callRings");
+  channels.add("connectors");
 }
 function refreshFrameMovement(state, a, now) {
   const move = a.visualMove, speed = completedVisibleVelocity(move, now, !running) * 1000;
@@ -7839,15 +8439,16 @@ function syncAnimalVisuals(now) {
     const currentVisual = applyNursingVisualPosition(a, applyMatingVisualPosition(a, visualState(a, now, frameScratch.visual), now), now), visual = { x: currentVisual.x, z: currentVisual.z, orientation: currentVisual.orientation }; state.movement.facingDirection = visual.orientation; rendered.userData.presentationVisual = visual;
     const channels = rendered.userData.presentationChannels || new Set();
     updateAnimalTransientParts(rendered, a, state, now);
-    poseOnTerrain(rendered, visual, animalGroundOffset(animalVisualScale(a), state.action.posture));
+    const groundRestProgress = groundedPostureProgress(rendered, a, state.action.posture, now);
+    const scale = animalVisualScale(a), standingClearance = animalGroundOffset(scale, "idle"), restingClearance = animalGroundOffset(scale, "rest");
+    poseOnTerrain(rendered, visual, standingClearance + (restingClearance - standingClearance) * groundRestProgress);
     if (graphicsSettings.contactShadows && contactShadowCount < 1024) {
-      const scale = animalVisualScale(a);
       contactShadowDummy.position.set(visual.x, terrainRenderHeight(visual.x, visual.z) + .025, visual.z);
       contactShadowDummy.quaternion.copy(frameScratch.slope);
       contactShadowDummy.scale.set(scale * .95, scale * .72, scale * .95);
       contactShadowDummy.updateMatrix(); animalContactShadows.setMatrixAt(contactShadowCount++, contactShadowDummy.matrix);
     }
-    updateEntityPosture(rendered, a, state, now, visual);
+    updateEntityPosture(rendered, a, state, now, visual, groundRestProgress);
     visibleEntries.push({ rendered, a, state, visual, channels });
   }
   resolveVisibleEntityConstellations(visibleEntries);
@@ -8005,7 +8606,28 @@ function terrainDetailStride() {
 
 function renderAll() { return profiler.measure("animal presentation rebuild/update", () => renderAllWork()); }
 function refreshCameraAdmission() { return profiler.measure("camera admission", () => renderAllWork({ cameraOnly: true })); }
-function refreshCinemaShotPresentation() { return profiler.measure("cinema shot presentation refresh", () => renderAllWork({ cameraOnly: true, refreshOverlays: true })); }
+function requestCinemaShotPresentationRefresh() {
+  cinemaPresentationRefreshStage = 1;
+  cinemaPresentationRefreshRequestedAt = performance.now();
+  // Old world-space overlays remain anchored to the preceding shot. Hide them
+  // until their lightweight refresh rather than displaying them in the wrong
+  // population-detail tier for one frame.
+  groups.overlays.visible = false;
+}
+function refreshCinemaShotOverlays() {
+  return profiler.measure("cinema shot overlay refresh", () => {
+    invalidateEntityConstellationSolve({ viewport: true });
+    clear(groups.overlays);
+    if (ui.overlayPheromone?.checked && groups.scent.visible) drawScentTrails(null);
+    const metrics = cameraPresentationMetrics(camera.position, controls.target, terrainRenderHeight(clamp(camera.position.x, -HALF, HALF), clamp(camera.position.z, -HALF, HALF)));
+    const populationMode = cinemaPopulationPresentation(movieState.shot?.scale, metrics.orbitDistance);
+    if (graphicsSettings.effects) drawReproductiveHighlights();
+    if (populationMode !== "entity") drawMapMarkers(populationMode);
+    drawSelectedOverlays();
+    finalizeTemporaryOverlayPool();
+    groups.overlays.visible = true;
+  });
+}
 function renderAllWork({ cameraOnly = false, refreshOverlays = false } = {}) {
   const presentationNow = performance.now();
   if (!cameraOnly || refreshOverlays) invalidateEntityConstellationSolve({ viewport: true });
@@ -8021,9 +8643,9 @@ function renderAllWork({ cameraOnly = false, refreshOverlays = false } = {}) {
   if (worldEdgeLine) worldEdgeLine.visible = !knowledgeFog;
   groups.corpses.visible = !organismOnly && !document.body.classList.contains("showcase-mode");
   groups.intent.visible = !organismOnly && movieChannelEnabled("decisions", true);
-  groups.selection.visible = !organismOnly;
+  groups.selection.visible = !organismOnly && Boolean(ui.overlaySelectionRing?.checked || ui.overlayNavigationCues?.checked);
   groups.overlays.visible = !organismOnly;
-  groups.scent.visible = !organismOnly && !entityFocus && movieChannelEnabled("scent", ui.overlayPheromone.checked);
+  groups.scent.visible = !organismOnly && Boolean(ui.overlaySmell?.checked && observer || !entityFocus && movieChannelEnabled("scent", ui.overlayPheromone.checked));
   animalContactShadows.visible = !organismOnly && graphicsSettings.contactShadows;
   if (!cameraOnly) {
     profiler.measure("display.fog", () => profiler.measure("fog", () => updateKnowledgeFog(knowledgeFog ? observer : null)));
@@ -8057,7 +8679,7 @@ function renderAllWork({ cameraOnly = false, refreshOverlays = false } = {}) {
   for (const id of animalRenderCache.keys()) if (!aliveIds.has(id)) removeAnimalVisual(id);
   if (!cameraOnly || refreshOverlays) {
     clear(groups.overlays);
-    profiler.measure("overlays", () => { if (groups.scent.visible) drawScentTrails(currentEmbodiment().experience === "embodied" ? observer : null); });
+    profiler.measure("overlays", () => { if (ui.overlayPheromone?.checked && groups.scent.visible) drawScentTrails(null); });
   }
   const selectedVisibleCorpseIds = observer ? new Set((observer.sensoryBuffer || []).filter((item) => item.type === "carcass").map((item) => item.targetId)) : new Set();
   profiler.measure("corpse rendering", () => {
@@ -8222,13 +8844,54 @@ function scentMesh(kind, minimumCapacity) {
   groups.scent.add(mesh); scentRenderMeshes.set(kind, { mesh, capacity }); return mesh;
 }
 function drawScentTrails(observer = null) {
-  const known = observer ? new Set([...(observer.sensoryBuffer || []), ...(observer.memories || [])].filter((m) => m.type === "preyTrail" || m.type === "predator").map((m) => `${m.x},${m.z}`)) : null;
+  const known = observer ? new Set([...(observer.sensoryBuffer || []), ...(observer.memories || [])]
+    .filter((m) => (m.type === "preyTrail" || m.type === "predator") && Number.isFinite(m.x) && Number.isFinite(m.z))
+    .map((m) => cellAt(m.x, m.z)).filter(Boolean).map((cell) => key(cell))) : null;
   const trails = { grazer: [], hunter: [] };
   for (const k of Object.keys(sim.activeScent || {})) { if (known && !known.has(k)) continue; const [x, z] = k.split(",").map(Number), c = cellAt(x, z); if (!c) continue; const grazer = c.scent?.grazer || 0, hunter = c.scent?.hunter || 0, kind = grazer >= hunter ? "grazer" : "hunter", strength = Math.max(grazer, hunter); if (strength >= 0.22) trails[kind].push({ c, strength }); }
   for (const kind of ["grazer", "hunter"]) {
     const marks = trails[kind], mesh = scentMesh(kind, marks.length); mesh.count = marks.length;
     marks.forEach(({ c, strength }, i) => { const size = 2.2 + clamp(strength / 5, 0.08, 0.55) * 3.2; scentRenderDummy.position.set(c.x, terrainHeight(c.x, c.z) + 0.25, c.z); scentRenderDummy.scale.set(size, size * 0.42, size); scentRenderDummy.updateMatrix(); mesh.setMatrixAt(i, scentRenderDummy.matrix); });
     if (marks.length) { mesh.instanceMatrix.needsUpdate = true; mesh.instanceMatrix.updateRange.offset = 0; mesh.instanceMatrix.updateRange.count = marks.length * 16; }
+  }
+}
+
+function drawTerritoryOverlay() {
+  if (!ui.overlayTerritories?.checked) return;
+  for (const claim of Object.values(sim.territoryClaims || {})) {
+    // Establishing claims are real authoritative state too. Showing their
+    // bounded occupied core prevents a valid territory toggle from looking
+    // inert during the establishment window; the full outline remains
+    // reserved for established defended territory.
+    const radius = claim.established ? claim.radius : claim.radius * clamp(claim.stableTicks / 3, .2, .8);
+    ringAt(claim, radius, claim.established ? mats.memory : senseMats.smell);
+  }
+  for (const dispute of sim.territoryDisputes || []) {
+    const radius = 1.4 + dispute.intensity * 3.6;
+    ringAt(dispute, radius, attackRingMat);
+    addTemporaryOverlayInstance(geos.marker, attackRingMat, 31, { x: dispute.x, y: terrainRenderHeight(dispute.x, dispute.z) + .28, z: dispute.z }, { x: radius * .42, y: .22, z: radius * .42 });
+  }
+}
+
+function drawWorldEcologyFields() {
+  const showWater = movieChannelEnabled("water", Boolean(ui.overlayWater?.checked));
+  const showBiomass = movieChannelEnabled("biomass", Boolean(ui.overlayBiomass?.checked));
+  if (!showWater && !showBiomass) return;
+  // These are authoritative Laboratory fields, not animal perception. Sample
+  // the camera-visible world at a bounded density so the toggle remains clear
+  // at close, medium and strategic zoom without creating an unbounded mesh.
+  const cells = sim.cells || [];
+  const stride = Math.max(1, Math.ceil(cells.length / 900));
+  for (let index = 0; index < cells.length; index += stride) {
+    const cell = cells[index];
+    if (!cell) continue;
+    const water = showWater && cell.water;
+    const biomass = showBiomass && !cell.water && cell.biomass > .22;
+    if (!water && !biomass) continue;
+    temporaryOverlayPool.origin.set(cell.x, terrainHeight(cell.x, cell.z) + .32, cell.z);
+    if (!corpseFrustum.containsPoint(temporaryOverlayPool.origin)) continue;
+    const amount = water ? clamp(cell.waterLevel || .5, .25, 1) : clamp(cell.biomass, .22, 1);
+    addTemporaryOverlayInstance(geos.marker, water ? mats.water : mats.biomass, 28, temporaryOverlayPool.origin, { x: .65 + amount * 1.25, y: .07, z: .65 + amount * 1.25 });
   }
 }
 
@@ -8361,8 +9024,12 @@ function buildTerrainWork() {
   const add = (x, z, height) => { x = clamp(x, -HALF, HALF); z = clamp(z, -HALF, HALF); const k = `${Math.round(x * 1000)},${Math.round(z * 1000)}`; if (vertexMap.has(k)) return vertexMap.get(k); const id = positions.length / 3; positions.push(x, height, z); uvs.push(x / 5, z / 5); vertexMap.set(k, id); return id; };
   for (const c of world.cells) {
     const surfaceCorners = world.corners(c).map((p) => { const x = clamp(p.x, -HALF, HALF), z = clamp(p.z, -HALF, HALF); return { x, z, y: world.lookup(x, z)?.elevation ?? c.elevation }; });
-    terrainSurfaceCache.set(c.id, { centre: { x: c.x, y: c.elevation, z: c.z }, corners: surfaceCorners });
     const centre = add(c.x, c.z, c.elevation), corners = surfaceCorners.map((p) => add(p.x, p.z, p.y));
+    const renderedPoint = (index) => ({ x: positions[index * 3], y: positions[index * 3 + 1], z: positions[index * 3 + 2] });
+    // Fog, picking, and terrain support must use the same merged vertices as
+    // the rendered ground. Reusing each cell's pre-merge corner height causes
+    // black depth gaps wherever neighbouring slope corners disagree.
+    terrainSurfaceCache.set(c.id, { centre: renderedPoint(centre), corners: corners.map(renderedPoint) });
     // X/Z terrain uses the opposite winding from an XY polygon.  Keep these
     // faces upward so the one-sided land materials are lit and visible.
     // A geometry group is a draw submission. Sort triangles into one batch per
@@ -8618,7 +9285,11 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
     tail.position.set(0, (large ? .3 : .2) * scale, -(bodyLength * .72) * scale); group.add(tail);
     const identifying = shape.biology?.morphology?.identifyingFeature;
     if (["dorsal-shell", "horns"].includes(identifying)) { feature = new THREE.Mesh(identifying === "horns" ? geos.horn : geos.herbivore, bodyMat); if (identifying === "horns") { feature.rotation.x = Math.PI / 2; feature.position.set(0, .12 * scale, .22 * scale); feature.scale.set(.38 * scale, .5 * scale, .38 * scale); head.add(feature); } else { feature.position.set(0, .25 * scale, -.06 * scale); feature.scale.set(.88 * scale, .3 * scale, .72 * scale); body.add(feature); } }
-    for (const side of [-1, 1]) { const eye = new THREE.Mesh(geos.eye, mats.eye), eyeScale = clamp(scale * (small ? .7 : .82), .36, .82); eye.position.set(side * .18 * scale, .08 * scale, .28 * scale); eye.scale.setScalar(eyeScale); head.add(eye); eyes.push(eye); }
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(geos.eye, mats.eye), eyeScale = clamp(scale * (small ? .7 : .82), .36, .82);
+      const eyePosition = attachedAnimalEyePosition({ side, headScale: headMesh.scale, headKind: carnivore ? "tapered" : "rounded" });
+      eye.position.set(eyePosition.x, eyePosition.y, eyePosition.z); eye.scale.setScalar(eyeScale); head.add(eye); eyes.push(eye);
+    }
   }
 
   // Sex is intentionally kept in the inspector rather than drawn above the
@@ -8800,16 +9471,21 @@ function cameraPathBlockedByVegetation(focus, position) {
   raycaster.far = Infinity; return blocked;
 }
 function restoreCameraFadedVegetation() {
+  lastCinemaVegetationFadeAt = -Infinity;
   for (const [object, material] of cameraFadedVegetation) { object.material?.dispose?.(); object.material = material; } cameraFadedVegetation.clear();
   for (const { object, instanceId, matrix } of cameraHiddenVegetationInstances.values()) { object.setMatrixAt(instanceId, matrix); object.instanceMatrix.needsUpdate = true; } cameraHiddenVegetationInstances.clear();
 }
 function updateCameraVegetationFade(context, focus, position) {
   if (context === "sensory") return restoreCameraFadedVegetation();
+  const now = performance.now();
+  if (context === "cinema" && now - lastCinemaVegetationFadeAt < 100) return;
+  if (context === "cinema") lastCinemaVegetationFadeAt = now;
   for (const hidden of cameraHiddenVegetationInstances.values()) { hidden.object.setMatrixAt(hidden.instanceId, hidden.matrix); hidden.object.instanceMatrix.needsUpdate = true; }
   const scratch = gameplayCameraScratch, blockers = new Set(), blockedInstances = new Map(); scratch.focus.set(focus.x, focus.y, focus.z); scratch.desired.copy(position); scratch.direction.copy(scratch.desired).sub(scratch.focus); const length = scratch.direction.length();
+  const vegetationRoots = context === "cinema" ? movieVegetationOccluders(scratch.focus, scratch.desired) : [groups.plants];
   if (length > 2) {
     scratch.direction.normalize(); scratch.side.set(-scratch.direction.z, 0, scratch.direction.x).normalize(); scratch.offsets[0].set(0, 0, 0); scratch.offsets[1].copy(scratch.side).multiplyScalar(.32); scratch.offsets[2].copy(scratch.side).multiplyScalar(-.32); scratch.offsets[3].set(0, .25, 0); scratch.offsets[4].set(0, -.48, 0);
-    for (const offset of scratch.offsets) { scratch.origin.copy(scratch.focus).add(offset); raycaster.set(scratch.origin, scratch.direction); raycaster.far = length - .45; for (const hit of raycaster.intersectObject(groups.plants, true)) if (hit.distance > .12) { if (Number.isInteger(hit.instanceId) && hit.object.isInstancedMesh) blockedInstances.set(`${hit.object.uuid}:${hit.instanceId}`, hit); else blockers.add(hit.object); } }
+    for (const offset of scratch.offsets) { scratch.origin.copy(scratch.focus).add(offset); raycaster.set(scratch.origin, scratch.direction); raycaster.far = length - .45; for (const hit of raycaster.intersectObjects(vegetationRoots, true)) if (hit.distance > .12) { if (Number.isInteger(hit.instanceId) && hit.object.isInstancedMesh) blockedInstances.set(`${hit.object.uuid}:${hit.instanceId}`, hit); else blockers.add(hit.object); } }
   }
   raycaster.far = Infinity;
   for (const [key, hidden] of [...cameraHiddenVegetationInstances]) if (!blockedInstances.has(key)) { hidden.object.setMatrixAt(hidden.instanceId, hidden.matrix); hidden.object.instanceMatrix.needsUpdate = true; cameraHiddenVegetationInstances.delete(key); }
@@ -8853,7 +9529,22 @@ function advanceEmbodiedGameplay(deltaMs, now) {
     if (movement && !frame.headYaw && !frame.headPitch) { const recenter = value => value > 0 ? Math.max(0, value - .55 * dt) : Math.min(0, value + .55 * dt); animal.playerHeadLook.yaw = recenter(animal.playerHeadLook.yaw); animal.playerHeadLook.pitch = recenter(animal.playerHeadLook.pitch); }
     animal.headYaw = animal.playerHeadLook.yaw; animal.headPitch = animal.playerHeadLook.pitch;
   }
-  if (running && movement) {
+  let movementReady = true;
+  if (animal.playerStandTransition) {
+    movementReady = now >= animal.playerStandTransition.readyAt;
+    if (movementReady) animal.playerStandTransition = null;
+  }
+  if (running && movement && !animal.playerStandTransition && isGroundRestPosture(actionPresentation(animal).posture)) {
+    const durationMs = postureTransitionDuration(animal) * 1000;
+    animal.playerStandTransition = { startedAt: now, readyAt: now + durationMs, durationMs };
+    animal.playerActionObjective = null; animal.playerSatisfierObjective = null; animal.playerRequestedSatisfier = null;
+    const recovery = migrateRecoveryState(animal); recovery.depth = "none"; recovery.reason = null; recovery.minimumUntil = null; recovery.maximumUntil = null;
+    animal.movementRequest = null; animal.routeState = null;
+    if (animal.locomotion) animal.locomotion.vx = animal.locomotion.vz = 0;
+    setAction(animal, "wake", { label: "rising fully before moving", intendedOutcome: "regain a stable standing posture before locomotion" });
+    movementReady = false;
+  }
+  if (running && movement && movementReady) {
     animal.playerActionObjective = null; animal.playerSatisfierObjective = null; animal.playerRequestedSatisfier = null;
     const profile = LOCOMOTION_PROFILES[animal.speciesId], horizon = 4.5, enteringDirectControl = animal.movementRequest?.id !== "embodied-camera-relative";
     animal.movementRequest = createMovementRequest("embodied-camera-relative", { x: clamp(animal.x + movement.x * horizon, -HALF + 1, HALF - 1), z: clamp(animal.z + movement.z * horizon, -HALF + 1, HALF - 1) }, { destinationSource: "player-camera-relative", interactionRadius: .08, urgency: frame.sprint ? 1 : .55, mode: frame.sprint && animal.capabilities?.canSprint !== false && animal.lifeStage !== "dependent" ? "sprint" : "walk" });
@@ -8876,8 +9567,9 @@ function advanceEmbodiedGameplay(deltaMs, now) {
 }
 let cinemaPopulationCache = { simulation: null, tick: -1, animals: null, snapshot: null };
 let cinemaLandscapeDiscoveryCache = { simulation: null, cells: null, revision: "", snapshot: null };
-let cinemaCellSnapshotCache = { simulation: null, tick: -1, revision: "", snapshot: null };
+let cinemaCellSnapshotCache = { simulation: null, bucket: -1, revision: "", snapshot: null };
 let cinemaSceneCandidateCache = { simulation: null, key: "", candidates: null };
+let cinemaInteractionChainCache = { simulation: null, tick: -1, chains: null };
 const cinemaAnimalQueryBuffer = [];
 function cinemaPopulationSnapshot() {
   const animals = sim?.animals || [], tick = sim?.tick ?? -1;
@@ -8915,8 +9607,8 @@ function insertCinemaTopCell(items, cell, score, minimum) {
   items.splice(index, 0, { cell, score }); if (items.length > 4) items.pop();
 }
 function cinemaCellSnapshot() {
-  const discovery = cinemaLandscapeDiscovery(), tick = sim?.tick ?? -1, revision = cinemaLandscapeRevision();
-  if (cinemaCellSnapshotCache.simulation === sim && cinemaCellSnapshotCache.tick === tick && cinemaCellSnapshotCache.revision === revision) return cinemaCellSnapshotCache.snapshot;
+  const discovery = cinemaLandscapeDiscovery(), tick = sim?.tick ?? -1, bucket = Math.floor(tick / 12), revision = cinemaLandscapeRevision();
+  if (cinemaCellSnapshotCache.simulation === sim && cinemaCellSnapshotCache.bucket === bucket && cinemaCellSnapshotCache.revision === revision) return cinemaCellSnapshotCache.snapshot;
   const world = { wetlandCells: 0, woodlandCells: 0, biomass: 0, fallenTrees: 0, leaflessTrees: 0 }, hydrology = [], vegetation = [], terrain = [], ecologicalMinute = sim?.ecologicalMinute || 0;
   for (const cell of discovery.cells) {
     if (cell.wetland) world.wetlandCells += 1; if (cell.woodland) world.woodlandCells += 1; world.biomass += cell.biomass || 0; if (cell.fallenTreeUntil > ecologicalMinute) world.fallenTrees += 1; if (cell.leaflessTreeUntil > ecologicalMinute) world.leaflessTrees += 1;
@@ -8925,7 +9617,7 @@ function cinemaCellSnapshot() {
     insertCinemaTopCell(terrain, cell, (cell.terrainClass === "mud" ? 4 : 0) + (["dirt", "dryGrass"].includes(cell.terrainClass) ? 3 : 0) + (cell.floodFrequency || 0) * 4 + (cell.sediment || 0) * 2, 1);
   }
   const snapshot = { ...discovery, world, hydrology, vegetation, terrain };
-  cinemaCellSnapshotCache = { simulation: sim, tick, revision, snapshot };
+  cinemaCellSnapshotCache = { simulation: sim, bucket, revision, snapshot };
   return snapshot;
 }
 function cinemaNearbyAnimals(point, range, population, excludedIds = null, limit = Infinity) {
@@ -8960,8 +9652,10 @@ function movieMotion(animals) {
   const animal = animals[0], heading = Math.atan2(Math.sin(Math.PI / 2 - (animal?.orientation || 0)), Math.cos(Math.PI / 2 - (animal?.orientation || 0))); return { heading, speed: 0 };
 }
 function movieSnapshot(animal) { return { id: animal.id, alive: animal.alive, speciesId: animal.speciesId, x: animal.x, z: animal.z, lifeStage: animal.lifeStage, pregnant: Boolean(animal.pregnant), matingKey: animal.mating ? `${animal.mating.partnerId}:${animal.mating.startsAt}` : null, motherId: animal.motherId || null }; }
-function initialiseMovieEventLedger() { movieState.eventSnapshots = new Map((sim?.animals || []).map(animal => [animal.id, movieSnapshot(animal)])); movieState.pendingEvents = []; movieState.sceneCoverage = []; documentaryCharacterScores = new Map(); aiOverviewFacts = []; lastAiOverviewRequestedAt = -aiOverviewSettings.cadenceMs; setAiOverviewProgress(documentaryAiPaused ? "DISABLED" : "COLLECTING", documentaryAiPaused ? "Enable AI overviews to use Ollama and Jenny" : "0 of 3 verified developments", { startedAt: 0, deadlineMs: 0 }); }
+function initialiseMovieEventLedger() { movieState.eventSnapshots = new Map((sim?.animals || []).map(animal => [animal.id, movieSnapshot(animal)])); movieState.lastEventScanTick = -1; movieState.pendingEvents = []; movieState.sceneCoverage = []; cinemaInteractionChainCache = { simulation: null, tick: -1, chains: null }; documentaryCharacterScores = new Map(); aiOverviewFacts = []; lastAiOverviewRequestedAt = -aiOverviewSettings.cadenceMs; setAiOverviewProgress(documentaryAiPaused ? "DISABLED" : "COLLECTING", documentaryAiPaused ? "Enable AI overviews to use Ollama and Jenny" : "0 of 3 verified developments", { startedAt: 0, deadlineMs: 0 }); }
 function scanMovieEvents() {
+  if (movieState.lastEventScanTick === sim?.tick) return;
+  movieState.lastEventScanTick = sim?.tick ?? -1;
   const animals = sim?.animals || [], counts = cinemaPopulationSnapshot().speciesCounts;
   for (const animal of animals) {
     const before = movieState.eventSnapshots.get(animal.id), after = movieSnapshot(animal); movieState.eventSnapshots.set(animal.id, after);
@@ -9014,6 +9708,8 @@ function movieSceneCandidates() {
   return candidates;
 }
 function cinemaInteractionChains() {
+  const tick = sim?.tick ?? -1;
+  if (cinemaInteractionChainCache.simulation === sim && cinemaInteractionChainCache.tick === tick && cinemaInteractionChainCache.chains) return cinemaInteractionChainCache.chains;
   const alive = cinemaPopulationSnapshot().alive;
   const snapshots = alive.map(animal => {
     const actionTarget = [animal.actionState?.target, animal.actionTarget, animal.predation?.targetId, animal.predation?.lastKnown?.targetId].find(value => typeof value === "string" && value), contacts = animal.sensoryBuffer || [];
@@ -9055,19 +9751,17 @@ function cinemaInteractionChains() {
       awareOfIds
     };
   });
-  return buildCinemaInteractionChains(snapshots);
+  const chains = buildCinemaInteractionChains(snapshots);
+  cinemaInteractionChainCache = { simulation: sim, tick, chains };
+  return chains;
 }
 function nextCinemaInteractionChoice() {
-  if (movieState.presetName !== "classic" || documentaryFocusSettings.subjectMode === "world") return { scene: null, state: null };
-  return chooseCinemaInteractionBeat(cinemaInteractionChains(), movieState.interactionThread || {}, movieState.sequence);
+  if (!cinemaUsesConnectedStories() || documentaryFocusSettings.subjectMode === "world") return { scene: null, state: null };
+  const chains = cinemaInteractionChains(), eligibleChains = cinemaCarnivoreOnly() ? chains.filter(chain => chain.kind === "predation") : chains;
+  return chooseCinemaInteractionBeat(eligibleChains, movieState.interactionThread || {}, movieState.sequence, { nowMs: performance.now(), kind: cinemaCarnivoreOnly() ? "predation" : null });
 }
 function chooseMovieCandidate() {
-  if (movieState.presetName === "classic" && movieState.sequence === 0) {
-    const openingCandidates = movieSceneCandidates(), opening = openingCandidates.find(candidate => candidate.kind === "meta-group") || openingCandidates.find(candidate => candidate.kind === "population-overview") || openingCandidates.find(candidate => candidate.kind === "group") || openingCandidates.find(candidate => candidate.ids?.length);
-    if (opening) { movieState.recentSubjects.push(opening.id); return opening; }
-  }
-  scanMovieEvents(); const threshold = { quiet: 92, balanced: 52, events: 24 }[movieState.eventPriority] || 52, important = documentaryFocusSettings.subjectMode === "world" ? null : movieState.pendingEvents.find(event => event.importance >= threshold); if (important) { movieState.pendingEvents = movieState.pendingEvents.filter(event => event !== important); movieState.interactionThread = null; movieState.recentSubjects.push(important.id); movieState.recentSubjects = movieState.recentSubjects.slice(-5); for (const id of important.ids || []) documentaryCharacterScores.set(id, Math.min(100, (documentaryCharacterScores.get(id) || 0) + Math.max(8, important.importance / 8))); return important; }
-  if (movieState.presetName === "classic" && documentaryFocusSettings.subjectMode !== "world") {
+  if (cinemaUsesConnectedStories() && documentaryFocusSettings.subjectMode !== "world") {
     const choice = nextCinemaInteractionChoice();
     movieState.interactionThread = choice.state;
     if (choice.scene) {
@@ -9076,7 +9770,8 @@ function chooseMovieCandidate() {
       return choice.scene;
     }
   } else movieState.interactionThread = null;
-  const recent = new Set(movieState.recentSubjects), allCandidates = movieSceneCandidates(); let candidates = documentaryFocusSettings.subjectMode === "world" ? allCandidates.filter(isWorldSceneCandidate).map(candidate => ({ ...candidate, ids: [], semanticRoleIds: [], worldSubject: true, title: candidate.title.replace(/^Life around /, "Conditions around "), detail: candidate.detail.replace(/\d+ organisms? share this part of the ecosystem\./, "Water, terrain, vegetation and weather define this part of the ecosystem.") })) : documentaryFocusSettings.subjectMode === "characters" ? allCandidates.filter(candidate => candidate.ids?.length) : allCandidates;
+  scanMovieEvents(); const threshold = { quiet: 92, balanced: 52, events: 24 }[movieState.eventPriority] || 52, important = documentaryFocusSettings.subjectMode === "world" ? null : movieState.pendingEvents.find(event => event.importance >= threshold); if (important) { movieState.pendingEvents = movieState.pendingEvents.filter(event => event !== important); movieState.recentSubjects.push(important.id); movieState.recentSubjects = movieState.recentSubjects.slice(-5); for (const id of important.ids || []) documentaryCharacterScores.set(id, Math.min(100, (documentaryCharacterScores.get(id) || 0) + Math.max(8, important.importance / 8))); return important; }
+  const recent = new Set(movieState.recentSubjects), allCandidates = movieSceneCandidates(); let candidates = documentaryFocusSettings.subjectMode === "world" ? allCandidates.filter(isWorldSceneCandidate).map(candidate => ({ ...candidate, ids: [], semanticRoleIds: [], worldSubject: true, title: candidate.title.replace(/^Life around /, "Conditions around "), detail: candidate.detail.replace(/\d+ organisms? share this part of the ecosystem\./, "Water, terrain, vegetation and weather define this part of the ecosystem.") })) : cinemaCarnivoreOnly() ? allCandidates.filter(candidate => candidate.ids?.some(id => isCarnivore(animalById(id)))) : documentaryFocusSettings.subjectMode === "characters" ? allCandidates.filter(candidate => candidate.ids?.length) : allCandidates;
   if (!candidates.length && documentaryFocusSettings.subjectMode === "world") candidates = [{ id: "world:centre", kind: "landscape", worldSubject: true, ids: [], focus: { x: 0, z: 0 }, score: 1, title: "The living landscape", detail: "Water, terrain, vegetation and weather continue without an animal subject." }];
   else if (!candidates.length) candidates = [...allCandidates];
   const coverage = movieState.sceneCoverage || [], spatialKey = candidate => `${Math.round((candidate.focus?.x || 0) / 12)}:${Math.round((candidate.focus?.z || 0) / 12)}`, informationKey = candidate => `${candidate.kind}:${[...(candidate.ids || [])].sort().join("|")}:${candidate.eventKey || ""}:${candidate.actionKey || ""}`;
@@ -9102,7 +9797,7 @@ function movieStory(sceneCandidate) {
   const subjects = sceneCandidate.ids.map(animalById).filter(animal => animal?.alive), focus = subjects.length && sceneCandidate.kind !== "waterhole" ? movieCentroid(subjects) : sceneCandidate.focus, motion = movieMotion(subjects), radius = subjects.reduce((largest, animal) => Math.max(largest, Math.hypot(animal.x - focus.x, animal.z - focus.z)), 0); let activity = null; for (const subject of subjects) { const candidate = movieActivity(subject); if (!activity || candidate.priority > activity.priority) activity = candidate; } const actionKey = activity?.key || sceneCandidate.actionKey, eventPriority = Math.max(sceneCandidate.eventPriority || 0, activity?.priority || 0), eventKey = activity?.eventKey || sceneCandidate.eventKey || actionKey;
   return { ...sceneCandidate, actionKey, eventKey, eventPriority, subjects, subjectCount: subjects.length, focus: { x: focus.x, y: terrainRenderHeight(focus.x, focus.z) + (subjects.length ? 1 : .6), z: focus.z }, heading: motion.speed > .002 ? motion.heading : sceneCandidate.heading || 0, speed: motion.speed, radius, importance: sceneCandidate.score * 2, context: resolveDocumentaryContext({ ...sceneCandidate, actionKey, subjectCount: subjects.length, speed: motion.speed }) };
 }
-function validateMovieCamera(candidate, story, { occlusion = "full" } = {}) {
+function validateMovieCamera(candidate, story, { occlusion = "full", subjectLimit = 6 } = {}) {
   if (occlusion === "none") movieValidationStats.cheapPasses += 1; else movieValidationStats.fullPasses += 1;
   if (!finiteMovieCameraPose(candidate)) return { valid: false, reason: "non-finite-camera-pose", risk: 1, clearance: -Infinity, visibility: 0, containment: 0, composition: 0 };
   const position = candidate.position, target = candidate.target, radius = .48; let footprintGround = -Infinity;
@@ -9111,7 +9806,7 @@ function validateMovieCamera(candidate, story, { occlusion = "full" } = {}) {
   const cameraCell = sim?.hexWorld?.lookup(position.x, position.z), waterSurface = footprintGround + Math.max(0, cameraCell?.waterDepth || cameraCell?.surfaceWater || 0); if (position.y < waterSurface + .7) return { valid: false, reason: "water-clearance", risk: 1, clearance };
   let pathRisk = 0; for (let step = 1; step <= 5; step += 1) { const t = step / 6, x = target.x + (position.x - target.x) * t, y = target.y + (position.y - target.y) * t, z = target.z + (position.z - target.z) * t, ground = terrainRenderHeight(clamp(x, -HALF, HALF), clamp(z, -HALF, HALF)); if (y < ground + .45) return { valid: false, reason: "terrain-path", risk: 1, clearance }; pathRisk = Math.max(pathRisk, clamp((ground + 1.4 - y) / 1.4, 0, 1)); }
   movieValidationCamera.aspect = camera.aspect; movieValidationCamera.fov = candidate.fov; movieValidationCamera.position.set(position.x, position.y, position.z); movieValidationCamera.lookAt(target.x, target.y, target.z); movieValidationCamera.updateProjectionMatrix(); movieValidationCamera.updateMatrixWorld(true);
-  const important = story.subjects.slice(0, 6); let visible = 0, contained = 0, centreError = 0, vegetationHits = 0, screenScale = 0;
+  const important = story.subjects.slice(0, subjectLimit); let visible = 0, contained = 0, centreError = 0, vegetationHits = 0, screenScale = 0;
   for (const subject of important) {
     const subjectY = terrainRenderHeight(subject.x, subject.z) + .75, point = movieValidationPoint.set(subject.x, subjectY, subject.z), distance = point.distanceTo(movieValidationCamera.position);
     point.project(movieValidationCamera); const inFrame = point.z >= -1 && point.z <= 1 && Math.abs(point.x) < .86 && point.y > -.42 && point.y < .82; if (inFrame) contained += 1; centreError += Math.hypot(point.x * .72, point.y - .06); screenScale += 2 * Math.atan(.72 / Math.max(1, distance)) / THREE.MathUtils.degToRad(candidate.fov);
@@ -9124,7 +9819,7 @@ function validateMovieCamera(candidate, story, { occlusion = "full" } = {}) {
   const averageScale = screenScale / count, desiredScale = candidate.scale === "close" ? .13 : candidate.scale === "wide" ? .045 : .08, scaleQuality = 1 - clamp(Math.abs(averageScale - desiredScale) / Math.max(.04, desiredScale), 0, 1), composition = clamp(containment * .4 + visibility * .22 + (1 - Math.min(1, centreError / count)) * .2 + scaleQuality * .18, 0, 1), cell = sim?.hexWorld?.lookup(target.x, target.z), landscape = clamp(.35 + (cell?.waterDepth > 0 ? .25 : 0) + (cell?.woodland ? .12 : 0) + Math.min(.2, clearance / 50), 0, 1), risk = clamp(pathRisk * .4 + vegetationHits / count * .45, 0, 1);
   return { valid: true, composition, visibility, containment, subjectScale: averageScale, landscape, risk, clearance };
 }
-function fullyValidatedMovieCandidates(candidates, story, desired = 4) {
+function fullyValidatedMovieCandidates(candidates, story, desired = 2) {
   const valid = [];
   for (const candidate of candidates.slice(0, Math.max(desired * 2, desired))) {
     const metrics = validateMovieCamera(candidate, story); if (!metrics.valid) continue;
@@ -9164,8 +9859,8 @@ function recoverMovieCamera(reason = "camera-watchdog", { force = false, announc
   if (movieState.shot) {
     const shot = movieState.shot; shot.family = "establishing"; shot.type = "establishing"; shot.scale = "wide"; shot.lookAhead = 0; shot.filteredHeading = safe.heading; shot.focus = { x: safe.focus.x, z: safe.focus.z }; shot.endFocus = { ...shot.focus }; shot.basePosition.copy(position); shot.baseTarget.copy(target); shot.startCamera.copy(position); shot.startTarget.copy(target); shot.startFov = safe.fov; shot.fov = safe.fov; shot.transition = { type: "cut", duration: 0, reason: `camera-recovery-${reason}` }; shot.transitionPhase = "hold"; shot.cameraSession = null; shot.latestCameraMetrics = safe.metrics; shot.metrics = createMovieShotMetrics();
   }
-  movieState.healthAccumulator = 0; movieState.interruptAccumulator = 0; movieState.occlusionSeconds = 0; movieState.cameraInvalidSeconds = 0; movieState.renderEmptySeconds = 0; movieState.presentationPending = false; movieState.lastCameraRecoveryAt = now; movieState.lastCameraRecoveryReason = reason; movieState.cameraRecoveryCount += 1;
-  if (movieUi.transitionLayer) movieUi.transitionLayer.style.opacity = "0"; restoreCameraFadedVegetation(); refreshCinemaShotPresentation();
+  movieState.healthAccumulator = 0; movieState.interruptAccumulator = 0; movieState.occlusionSeconds = 0; movieState.cameraInvalidSeconds = 0; movieState.lastFullCameraValidationAt = -Infinity; movieState.lastFullCameraMetrics = null; movieState.renderEmptySeconds = 0; movieState.presentationPending = false; movieState.lastCameraRecoveryAt = now; movieState.lastCameraRecoveryReason = reason; movieState.cameraRecoveryCount += 1;
+  if (movieUi.transitionLayer) movieUi.transitionLayer.style.opacity = "0"; restoreCameraFadedVegetation(); requestCinemaShotPresentationRefresh();
   if (documentarySystem.active) { documentarySystem.cameraDecision("RECOVERED", { reason, source, shotType: movieState.shot?.type || "establishing", subjectIds: movieState.shot?.ids || [] }); documentarySystem.recorder.write("production_event", { type: "CAMERA_RECOVERED", reason, source, recoveryCount: movieState.cameraRecoveryCount, shotId: movieState.shot?.id || null }); }
   if (announce) { addEvent(`Cinema camera recovered without ending the recording (${reason.replaceAll("-", " ")})`); setAudienceMessage("Camera view repaired; the documentary session and OBS recording continued", "success"); }
   updateDocumentaryDashboard(); return true;
@@ -9278,8 +9973,19 @@ function beginMovieShot() {
   if (/event|priority|subjects-lost/.test(endReason)) movieState.queue = [];
   let queued = movieState.queue.shift(), acssSelection = null;
   if (!queued && acssLiveControl()) {
-    scanMovieEvents(); const urgentEvent = movieState.pendingEvents.some(event => event.importance >= 80), interactionChoice = urgentEvent ? { scene: null, state: null } : nextCinemaInteractionChoice(), scenes = [...movieState.pendingEvents, ...(interactionChoice.scene ? [interactionChoice.scene] : []), ...movieSceneCandidates()]; acssSelection = documentarySystem.selectAuthorPresentation({ scenes, tick: sim.tick, speechActive: Boolean(activeNarration || companionNarrationPlaying), policy: movieAuthorPolicy() });
+    scanMovieEvents();
+    const interactionChoice = nextCinemaInteractionChoice();
+    const activeHunt = Boolean(interactionChoice.scene?.mustFollow);
+    // A committed stalk, pursuit or strike is an unfolding critical event.
+    // Restrict this decision to that hunt so ACSS cannot defer it until a
+    // stronger kill/carcass event appears.
+    const scenes = activeHunt
+      ? [interactionChoice.scene]
+      : [...movieState.pendingEvents, ...(interactionChoice.scene ? [interactionChoice.scene] : []), ...movieSceneCandidates()];
+    acssSelection = documentarySystem.selectAuthorPresentation({ scenes, tick: sim.tick, speechActive: Boolean(activeNarration || companionNarrationPlaying), policy: movieAuthorPolicy() });
+    if (!acssSelection && activeHunt) queued = { scene: interactionChoice.scene, beat: interactionChoice.scene.preferredBeat || "action" };
     if (acssSelection) { queued = { scene: acssSelection.scene, beat: acssSelection.contract.beat, acssContract: acssSelection.contract }; if (acssSelection.scene.id === interactionChoice.scene?.id) movieState.interactionThread = interactionChoice.state; if (acssSelection.scene.kind === "ecosystem-event") movieState.pendingEvents = movieState.pendingEvents.filter(event => event.id !== acssSelection.scene.id); }
+    else if (queued && activeHunt) movieState.interactionThread = interactionChoice.state;
   }
   if (!queued) {
     const scene = chooseMovieCandidate(), sceneStory = movieStory(scene), context = sceneStory.context, authoredBeats = scene.preferredBeat ? [scene.preferredBeat] : documentaryBeatSequence(context, movieNoise(movieState.sequence + 31));
@@ -9289,12 +9995,12 @@ function beginMovieShot() {
     const coverageShotCount = cinemaCoverageShotCount(maximumShots, { variation: movieNoise(movieState.sequence + 149), urgent: Number(scene.eventPriority || scene.importance || 0) >= 80, preserveMaximum: preserveOpeningCoverage });
     const beats = authoredBeats.slice(0, coverageShotCount), perceptionChance = movieState.perceptionInserts === "frequent" ? .72 : movieState.perceptionInserts === "auto" ? .3 : 0;
     if (coverageShotCount > 1 && scene.ids.length && movieNoise(movieState.sequence + 71) < perceptionChance && !beats.includes("perception")) beats.splice(Math.min(1, beats.length), 0, "perception");
-    const plannedBeats = beats.slice(0, coverageShotCount), perspectives = movieState.presetName === "classic" ? adaptiveCinemaPerspectivePlan(sceneStory, plannedBeats, { sequence: movieState.sequence }) : [];
+    const plannedBeats = beats.slice(0, coverageShotCount), perspectives = cinemaUsesConnectedStories() ? adaptiveCinemaPerspectivePlan(sceneStory, plannedBeats, { sequence: movieState.sequence }) : [];
     movieState.queue = planCinemaCommentary(plannedBeats).map(({ beat, commentaryIntent }, index) => ({ scene, beat, commentaryIntent, perspective: perspectives[index] || null })); queued = movieState.queue.shift();
     if (documentaryAuthorMode === "V3_SHADOW" || documentaryAuthorMode === "V3_ACTIVE" && !acssLiveControl()) { scanMovieEvents(); acssSelection = documentarySystem.selectAuthorPresentation({ scenes: [...movieState.pendingEvents, ...movieSceneCandidates()], tick: sim.tick, speechActive: Boolean(activeNarration || companionNarrationPlaying), policy: movieAuthorPolicy() }); }
   }
   const sceneCandidate = queued.scene, beat = queued.beat, story = movieStory(sceneCandidate), threadTempo = sceneCandidate.chainId ? cinemaThreadTempo(sceneCandidate) : null, threadTempoPolicy = threadTempo ? CINEMA_THREAD_TEMPOS[threadTempo] : null;
-  const requestedPerspective = movieState.presetName === "classic" ? queued.perspective || adaptiveCinemaPerspective({ scene: story, beat, sequence: movieState.sequence }) : null;
+  const requestedPerspective = queued.perspective || (movieState.presetName === "follow" ? "close" : movieState.presetName === "overview" ? "wide" : null);
   const candidateStartedAt = performance.now(), generated = generateDocumentaryCandidates(story, { worldHalf: HALF, history: movieState.history, beat, noise: index => movieNoise(movieState.sequence * 37 + index), validate: (candidate, candidateStory) => validateMovieCamera(candidate, candidateStory, { occlusion: "none" }) }), candidatePlanningMs = performance.now() - candidateStartedAt;
   if (requestedPerspective === "wide") { const overview = adaptiveWideMovieCamera(story); if (overview) generated.unshift(overview); }
   let beatCandidates = generated.filter(candidate => candidate.beats?.includes(beat) || beat === "perception" && ["still", "push-in", "tracking"].includes(candidate.family));
@@ -9311,21 +10017,28 @@ function beginMovieShot() {
   let perspectiveCandidates = preferredPerspectiveCandidates(candidates.length ? candidates : eligible, requestedPerspective);
   if (requestedPerspective === "wide" && (sceneCandidate.metaGroup || sceneCandidate.populationOverview)) { const strategicOverview = perspectiveCandidates.find(candidate => candidate.templateId === "adaptive-context-overview"); if (strategicOverview) perspectiveCandidates = [strategicOverview]; }
   const fullyValidated = fullyValidatedMovieCandidates(perspectiveCandidates, story), fallback = () => { const candidate = fallbackMovieCamera(story); candidate.metrics = validateMovieCamera(candidate, story); return candidate; }, selected = selectDocumentaryCandidate(fullyValidated, movieNoise(movieState.sequence + 19)) || fallback(); selected.subjectKey = sceneCandidate.id; selected.context = story.context; selected.requestedPerspective = requestedPerspective; selected.plannedDuration = documentaryShotDuration(selected, { pacing: movieState.pacing, context: story.context, beat, noise: movieNoise(movieState.sequence + 4) }) * ({ short: .68, varied: 1, long: 1.42 }[movieState.shotLength] || 1);
-  if (threadTempoPolicy && !queued.acssContract) selected.plannedDuration = Math.min(selected.plannedDuration, threadTempoPolicy.maximumHoldSeconds);
+  // Narration tempo must not become an editing tempo. A short line can sit over
+  // one sustained observational shot while an interaction continues.
+  if (sceneCandidate.chainId && sceneCandidate.interactionKind === "predation" && ["evidence", "approach", "pursuit"].includes(sceneCandidate.interactionPhase)) selected.plannedDuration = Math.max(selected.plannedDuration, 7);
   if (queued.acssContract) selected.plannedDuration = Math.max(selected.plannedDuration, queued.acssContract.camera.minimumHoldSeconds || 0);
-  let transition = chooseDocumentaryTransition(previous, selected, WORLD); if (/event|priority/.test(endReason)) transition = { type: "cut", duration: 0, reason: "cut-on-ecological-event" };
-  if (["flash", "urgent"].includes(threadTempo)) transition = { type: "cut", duration: 0, reason: "cut-on-fast-thread-development" };
+  let transition = chooseDocumentaryTransition(previous, selected, WORLD);
+  const sameThread = Boolean(previous?.chainId && sceneCandidate.chainId && previous.chainId === sceneCandidate.chainId);
+  const decisiveThreadMoment = sceneCandidate.interactionKind === "predation" && ["contact", "resolution", "consequence"].includes(sceneCandidate.interactionPhase);
+  if (/event|priority/.test(endReason) && !sameThread) transition = { type: "cut", duration: 0, reason: "cut-on-unrelated-ecological-event" };
+  else if (sameThread && !decisiveThreadMoment) transition = { type: "blend", duration: .65, reason: "continuous-story-matched-blend" };
+  else if (sameThread && decisiveThreadMoment) transition = { type: "cut", duration: 0, reason: "decisive-story-moment" };
   const narrationContext = movieNarrationContext(story, sceneCandidate); narrationContext.variant = movieState.sequence + movieNoise(movieState.sequence + sceneCandidate.id.length); narrationContext.contextDepth = movieNarrationSettings.contextDepth; narrationContext.narrationLength = movieNarrationSettings.length; narrationContext.narrativeMemory = movieNarrativeMemory(); if (beat === "perception") narrationContext.lensPreset = "perception";
   const narrationPlan = composeAdaptiveDocumentaryNarration(narrationContext), v3AuthorResult = acssSelection ? { ...acssSelection, decision: acssSelection.contract?.decision || null, narration: acssSelection.contract?.narration || null, camera: acssSelection.contract?.camera || null } : null, authorResult = documentaryAuthorMode === "LEGACY" ? null : documentaryAuthorMode.startsWith("V3_") ? v3AuthorResult : documentarySystem.authorCycle({ scene: sceneCandidate, context: narrationContext, tick: sim.tick, simulationTimeMinutes: sim.ecologicalMinute, speechActive: Boolean(activeNarration || companionNarrationPlaying), critical: /event|priority/.test(endReason) }), v2Narration = documentaryAuthorMode === "V2_ACTIVE" && authorResult?.activate ? authorResult.realised?.text : "", activePresentationContract = queued.acssContract || (authorResult?.activate ? authorResult.contract : null), rawNarration = narrationForPresentationContract(v2Narration || narrationPlan.text, activePresentationContract, narrationContext), threadNarration = cinemaThreadNarration(sceneCandidate, rawNarration, { variant: narrationContext.variant, contractBound: Boolean(activePresentationContract) }), narration = threadNarration ? limitDocumentaryNarration(threadNarration.text, { maximumSentences: threadNarration.maximumSentences, maximumWords: threadNarration.maximumWords }) : rawNarration, fingerprint = cinemaCommentaryDevelopmentKey(sceneCandidate, story), informationNew = !movieNarrationAlreadyCovered(fingerprint), adaptiveOpening = movieState.presetName === "classic" && movieState.sequence === 0 && requestedPerspective === "wide", quietScene = adaptiveOpening || Boolean(activePresentationContract?.narration?.preferQuiet) && !/outcome|consequence|resolution/.test(beat) && !/event|priority/.test(endReason) && movieNoise(movieState.sequence + 413) < .34, authorAllowsNarration = documentaryAuthorMode !== "V2_ACTIVE" || !authorResult?.activate || authorResult.decision.action !== "REMAIN_SILENT", commentaryDecision = cinemaCommentaryDecision({ narrationAvailable: Boolean(narration), commentaryIntent: queued.commentaryIntent || "commentary-eligible", alreadyCovered: !informationNew, authorAllowsNarration, quietScene }), shouldNarrate = commentaryDecision.narrate, duplicateSuppressed = Boolean(narration) && ["development-already-narrated", "visual-only-shot"].includes(commentaryDecision.reason), semanticDuplication = 0, presentNarration = shouldNarrate && (movieNarrationSettings.enabled || movieNarrationSettings.captions), calculatedNarrationHold = presentNarration ? plannedNarrationHoldSeconds(narration, { cuePauseMs: threadNarration?.cuePauseMs }) : 0, narrationHold = threadTempoPolicy && !queued.acssContract ? Math.min(calculatedNarrationHold, threadTempoPolicy.maximumHoldSeconds) : calculatedNarrationHold;
   const duration = Math.max(selected.plannedDuration, narrationHold), focus = { x: selected.target.x, z: selected.target.z }, sweepAngle = story.heading + selected.side * Math.PI * .5, sweepSpan = Math.min(18, Math.max(7, WORLD * .07));
   const authorNarrationIds = [...(authorResult?.contract?.subjectIds || []), ...(authorResult?.camera?.primarySubjects || []), ...(authorResult?.camera?.secondarySubjects || [])], narrationSubjectIds = authorResult?.activate && authorNarrationIds.length ? authorNarrationIds : narrationPlan.subjectIds?.length ? narrationPlan.subjectIds : sceneCandidate.ids || [];
   const presentationSubjects = narrationContext.subjects.map(fact => { const animal = animalById(fact.id); return { ...fact, name: animal ? entityDisplayName(animal) : fact.id, displayName: animal ? entityDisplayName(animal) : fact.id }; });
-  const entityPresentation = shouldNarrate ? cinemaEntityPresentation({ text: narration, subjects: presentationSubjects, licensedSubjectIds: [...new Set([...narrationSubjectIds, ...(sceneCandidate.ids || []), ...(activePresentationContract?.subjectIds || [])])], groupSize: narrationContext.groupSize }) : null;
+  const plannedEntityPresentation = shouldNarrate ? cinemaEntityPresentation({ text: narration, subjects: presentationSubjects, licensedSubjectIds: [...new Set([...narrationSubjectIds, ...(sceneCandidate.ids || []), ...(activePresentationContract?.subjectIds || [])])], groupSize: narrationContext.groupSize }) : null;
+  const entityPresentation = cinemaUsesConnectedStories() && plannedEntityPresentation ? { ...plannedEntityPresentation, depth: "ring" } : plannedEntityPresentation;
   const presentedNarration = entityPresentation?.text || narration;
   movieState.rejectedCandidates = Math.max(0, candidates.length ? 0 : 1); movieState.scenePriority = Math.max(story.eventPriority || 0, DOCUMENTARY_CONTEXT_PRIORITY[story.context] || 0); movieState.shot = { ...sceneCandidate, ...selected, story, beat, eventKey: story.eventKey, eventPriority: story.eventPriority, type: selected.family, duration, focus, endFocus: { x: clamp(focus.x + Math.sin(sweepAngle) * sweepSpan, -HALF + 3, HALF - 3), z: clamp(focus.z + Math.cos(sweepAngle) * sweepSpan, -HALF + 3, HALF - 3) }, basePosition: new THREE.Vector3(selected.position.x, selected.position.y, selected.position.z), baseTarget: new THREE.Vector3(selected.target.x, selected.target.y, selected.target.z), startCamera: camera.position.clone(), startTarget: controls.target.clone(), startFov: camera.fov, transition, minimumDuration: queued.acssContract?.camera.minimumHoldSeconds || Math.max(["flash", "urgent"].includes(threadTempo) ? .55 : 1.1, duration * (selected.minimumFraction || .3)), filteredHeading: story.heading, authorDecision: authorResult?.decision || null, authorCameraIntention: authorResult?.camera || null, acssContract: activePresentationContract, authorNarrationResult: lastContractNarrationResult, narrationSpeakerFocus: lastContractNarrationResult?.speakerFocus || null, narrationSubjectIds: [...new Set(narrationSubjectIds)].filter(Boolean), entityPresentation, narrationTempo: threadNarration?.tempo || null, narrationInterruptible: threadNarration?.interruptible === true, commentaryMode: shouldNarrate ? "commentary" : "visual-only", narrationSuppressedReason: shouldNarrate ? null : commentaryDecision.reason, narrationDevelopmentKey: fingerprint, semanticDuplication, duplicateSuppressed, presentationId: `movie-presentation-${sim.tick}-${movieState.sequence + 1}`, startedAtMs: audienceRecordingTime(), metrics: createMovieShotMetrics() };
   if (acssLiveControl()) { acssCameraSession = new CameraPresentationSession({ terrainHeight: (x, z) => terrainRenderHeight(clamp(x, -HALF, HALF), clamp(z, -HALF, HALF)) }); acssCameraSession.begin({ current: { position: { x: camera.position.x, y: camera.position.y, z: camera.position.z }, target: { x: controls.target.x, y: controls.target.y, z: controls.target.z }, fov: camera.fov }, goal: { position: selected.position, target: selected.target, fov: selected.fov }, contract: movieState.shot.acssContract, nowSeconds: performance.now() / 1000 }); movieState.shot.cameraSession = acssCameraSession; } else acssCameraSession = null;
   if (acssLiveControl() && activePresentationContract) documentarySystem.author.markDecisionExecuted?.({ contract: activePresentationContract, cameraFamily: selected.family, shotSize: selected.scale, tick: sim.tick });
-  movieState.shot.transitionPhase = transition.duration ? "outgoing" : "hold"; movieState.elapsed = 0; movieState.healthAccumulator = 0; movieState.interruptAccumulator = 0; movieState.occlusionSeconds = 0; movieState.lastEndReason = null; movieState.presentationPending = true; movieState.sequence += 1; registerMovieAudiencePresentation(movieState.shot); setAudienceMessage("Feedback is optional");
+  movieState.shot.transitionPhase = transition.duration ? "outgoing" : "hold"; movieState.elapsed = 0; movieState.healthAccumulator = 0; movieState.interruptAccumulator = 0; movieState.occlusionSeconds = 0; movieState.lastFullCameraValidationAt = -Infinity; movieState.lastFullCameraMetrics = null; movieState.lastEndReason = null; movieState.presentationPending = true; movieState.sequence += 1; registerMovieAudiencePresentation(movieState.shot); setAudienceMessage("Feedback is optional");
   updateMovieLens(story.context, beat);
   const labels = { establishing: "Ecosystem establishing shot", still: "Locked-off observation", tracking: "Wildlife tracking shot", intercept: "Predicted pass-by shot", sweep: "Sweeping landscape shot", orbit: "Circling observation", "push-in": "Slow zoom in", "pull-out": "Revealing zoom out", aerial: "Aerial drift" };
   if (movieUi.kind) movieUi.kind.textContent = `${beat} · ${selected.scale} perspective · ${labels[selected.family]} · ${story.context.replaceAll("-", " ")}`; if (movieUi.title) movieUi.title.textContent = sceneCandidate.title; if (movieUi.detail) movieUi.detail.textContent = `${sceneCandidate.detail} ${duration.toFixed(1)} second authored hold after a ${transition.duration ? `${transition.duration.toFixed(1)} second ` : ""}${({ cut: "hard cut", blend: "matched blend", dip: "dip through black", travel: "camera travel" })[transition.type] || transition.type}. ${transition.reason.replaceAll("-", " ")}.`;
@@ -9355,15 +10068,19 @@ function advanceMovieCamera(delta, now) {
   const transitionEase = transitionProgress * transitionProgress * (3 - 2 * transitionProgress), blend = shot.transition.type === "cut" ? 1 : shot.transition.type === "dip" ? Number(transitionProgress >= .5) : transitionEase, transitionalPosition = shot.startCamera.clone().lerp(desiredPosition, blend), transitionalTarget = shot.startTarget.clone().lerp(desiredTarget, blend), transitionalFov = shot.startFov + (shot.fov - shot.startFov) * blend; if (shot.transition.type === "travel" && transitionProgress < 1) transitionalPosition.y += Math.sin(transitionProgress * Math.PI) * (shot.transition.arc || 4);
   if (acssLiveControl() && shot.cameraSession) { const pose = shot.cameraSession.step({ current: { position: { x: camera.position.x, y: camera.position.y, z: camera.position.z }, target: { x: controls.target.x, y: controls.target.y, z: controls.target.z }, fov: camera.fov }, goal: { position: { x: transitionalPosition.x, y: transitionalPosition.y, z: transitionalPosition.z }, target: { x: transitionalTarget.x, y: transitionalTarget.y, z: transitionalTarget.z }, fov: transitionalFov }, observedFocus: { x: liveFocus.x, y: targetY, z: liveFocus.z }, metrics: shot.latestCameraMetrics || null, dtSeconds: delta / 1000, nowSeconds: now / 1000 }); camera.position.set(pose.position.x, pose.position.y, pose.position.z); controls.target.set(pose.target.x, pose.target.y, pose.target.z); camera.fov = pose.fov; } else { camera.position.copy(transitionalPosition); controls.target.copy(transitionalTarget); camera.fov = transitionalFov; }
   if (!finiteMovieCameraPose(currentMovieCameraPose())) { recoverMovieCamera("non-finite-camera-output", { force: true, source: "executor-watchdog" }); return true; }
-  constrainCameraToTerrain(camera.position, controls.target, (x, z) => terrainRenderHeight(clamp(x, -HALF, HALF), clamp(z, -HALF, HALF))); updateCameraVegetationFade("navigation", controls.target, camera.position); camera.updateProjectionMatrix(); camera.lookAt(controls.target); if (movieUi.transitionLayer) movieUi.transitionLayer.style.opacity = shot.transition.type === "dip" && transitionProgress < 1 ? String(Math.sin(transitionProgress * Math.PI)) : "0"; if (movieState.presentationPending && transitionProgress >= 1) { movieState.presentationPending = false; shot.metrics = createMovieShotMetrics(); refreshCinemaShotPresentation(); }
+  constrainCameraToTerrain(camera.position, controls.target, (x, z) => terrainRenderHeight(clamp(x, -HALF, HALF), clamp(z, -HALF, HALF))); updateCameraVegetationFade("cinema", controls.target, camera.position); camera.updateProjectionMatrix(); camera.lookAt(controls.target); if (movieUi.transitionLayer) movieUi.transitionLayer.style.opacity = shot.transition.type === "dip" && transitionProgress < 1 ? String(Math.sin(transitionProgress * Math.PI)) : "0"; if (movieState.presentationPending && transitionProgress >= 1) { movieState.presentationPending = false; shot.metrics = createMovieShotMetrics(); requestCinemaShotPresentationRefresh(); }
   if (transitionProgress < 1) { movieState.healthAccumulator = 0; movieState.interruptAccumulator = 0; }
   if (movieState.overviewPlayback) { movieState.healthAccumulator = 0; movieState.interruptAccumulator = 0; if (movieUi.progress) movieUi.progress.style.width = "100%"; updateDocumentaryDashboard(); return true; }
   movieState.healthAccumulator += delta / 1000; movieState.interruptAccumulator += delta / 1000;
   if (!movieState.paused && transitionProgress >= 1 && movieState.healthAccumulator >= .35) {
     const interval = movieState.healthAccumulator; movieState.healthAccumulator = 0;
-    const liveStory = movieStory(shot), metrics = validateMovieCamera({ position: camera.position, target: controls.target, fov: camera.fov, distance: camera.position.distanceTo(controls.target) }, liveStory); shot.latestCameraMetrics = metrics;
+    const liveStory = movieStory(shot), cameraCandidate = { position: camera.position, target: controls.target, fov: camera.fov, distance: camera.position.distanceTo(controls.target) };
+    const cheapMetrics = validateMovieCamera(cameraCandidate, liveStory, { occlusion: "none", subjectLimit: 3 }), fullValidationDue = !cheapMetrics.valid || movieState.occlusionSeconds > 0 || now - movieState.lastFullCameraValidationAt >= 1250;
+    const metrics = fullValidationDue ? validateMovieCamera(cameraCandidate, liveStory, { subjectLimit: 3 }) : { ...cheapMetrics, visibility: movieState.lastFullCameraMetrics?.visibility ?? cheapMetrics.visibility, risk: Math.max(cheapMetrics.risk || 0, movieState.lastFullCameraMetrics?.risk || 0) };
+    if (fullValidationDue) { movieState.lastFullCameraValidationAt = now; movieState.lastFullCameraMetrics = metrics; }
+    shot.latestCameraMetrics = metrics;
     accumulateMovieShotMetrics(shot, metrics, interval, subjects.length ? movieCentroid(subjects) : liveFocus);
-    if (!metrics.valid || (metrics.visibility ?? 1) < .45) movieState.occlusionSeconds += interval; else movieState.occlusionSeconds = Math.max(0, movieState.occlusionSeconds - interval * .5);
+    if (fullValidationDue) { if (!metrics.valid || (metrics.visibility ?? 1) < .45) movieState.occlusionSeconds += interval; else movieState.occlusionSeconds = Math.max(0, movieState.occlusionSeconds - interval * .5); }
     movieState.cameraInvalidSeconds = !metrics.valid ? movieState.cameraInvalidSeconds + interval : Math.max(0, movieState.cameraInvalidSeconds - interval);
     const watchdog = movieCameraWatchdogDecision({ pose: currentMovieCameraPose(), metrics, invalidSeconds: movieState.cameraInvalidSeconds, renderEmptySeconds: movieState.renderEmptySeconds, contextLost: movieState.webglContextLost });
     if (watchdog.action === "RECOVER") { recoverMovieCamera(watchdog.reason, { source: "camera-watchdog" }); return true; }
@@ -9371,15 +10088,18 @@ function advanceMovieCamera(delta, now) {
       const repair = documentarySystem.author.camera.update({ visibility: metrics.visibility ?? 0, composition: metrics.composition ?? 0, relevantSubjects: metrics.containment ?? 0, behaviourLegibility: metrics.visibility ?? 0, preparedness: 1 - (metrics.risk ?? 0), narrativeUsefulness: .75, occlusion: 1 - (metrics.visibility ?? 0), predictedOcclusion: clamp(movieState.occlusionSeconds / .85, 0, 1), movement: currentMotion.speed, disorientation: 0, invalidPose: !metrics.valid, subjectSeparation: Math.min(1, liveStory.radius / 12), phaseChanged: liveStory.eventKey !== shot.eventKey });
       if (repair.action !== "HOLD") { movieState.lastV2CameraRepairAt = now; if (repair.action === "WIDEN") shot.fov = Math.min(62, shot.fov + 4); else if (repair.action === "LATERAL_REPOSITION") { const lateral = new THREE.Vector3().subVectors(camera.position, controls.target).cross(new THREE.Vector3(0, 1, 0)).normalize().multiplyScalar(1.8); shot.basePosition.add(lateral); } else if (repair.action === "REPAIR_COMPOSITION") shot.baseTarget.lerp(new THREE.Vector3(liveStory.focus.x, liveStory.focus.y, liveStory.focus.z), .45); else if (repair.action === "SAFE_CAMERA") { recoverMovieCamera("v2-camera-safety", { force: true, source: "v2-camera-controller" }); return true; } if (documentarySystem.active) documentarySystem.cameraDecision("ADAPTED", { reason: repair.reason, shotType: shot.type, subjectIds: shot.ids, authorIntentId: repair.intentionId, quality: repair.quality }); }
     }
+    const narrationFinished = movieNarrationComplete(), minimumSatisfied = holdElapsed >= shot.minimumDuration;
     const liveChain = shot.chainId ? cinemaInteractionChains().find(chain => chain.chainId === shot.chainId) || null : null, threadDevelopment = cinemaThreadChanged(shot, liveChain);
-    if (threadDevelopment.urgent && movieState.interruptAccumulator >= .2) {
-      if (!movieNarrationComplete()) stopMovieNarration({ preserveOverview: false });
+    // Decisive developments may reframe the story, but not before the current
+    // composition has become readable. Routine animal task churn stays inside
+    // the live-tracked shot instead of becoming a camera cut.
+    if (threadDevelopment.urgent && movieNarrationComplete() && minimumSatisfied && movieState.interruptAccumulator >= 2) {
       shot.narrationComplete = true; movieState.queue = []; movieState.lastEndReason = threadDevelopment.reason || "fast-thread-development"; beginMovieShot(); return advanceMovieCamera(0, now);
     }
-    const narrationFinished = movieNarrationComplete(), minimumSatisfied = holdElapsed >= shot.minimumDuration, highestPriority = highestMovieEventPriority(), criticalEventWaiting = movieState.pendingEvents.some(event => event.importance >= 80);
-    if (criticalEventWaiting && !narrationFinished && movieState.interruptAccumulator >= .25) { stopMovieNarration({ preserveOverview: false }); shot.narrationComplete = true; }
-    const priorityInterrupt = movieState.interruptAccumulator >= (criticalEventWaiting ? .25 : .65) && (criticalEventWaiting || narrationFinished && (acssLiveControl() ? highestPriority >= 80 : highestPriority > movieState.scenePriority + 1));
-    const actionCut = !acssLiveControl() && narrationFinished && minimumSatisfied && liveStory.eventKey !== shot.eventKey && liveStory.eventPriority > (shot.eventPriority || 0);
+    const highestPriority = highestMovieEventPriority(), criticalEventWaiting = movieState.pendingEvents.some(event => event.importance >= 80);
+    const conclusionThreadActive = cinemaUsesConnectedStories() && Boolean(movieState.interactionThread?.chainId);
+    const priorityInterrupt = !conclusionThreadActive && narrationFinished && movieState.interruptAccumulator >= (criticalEventWaiting ? .25 : .65) && (criticalEventWaiting || (acssLiveControl() ? highestPriority >= 80 : highestPriority > movieState.scenePriority + 1));
+    const actionCut = !conclusionThreadActive && !acssLiveControl() && narrationFinished && minimumSatisfied && liveStory.eventKey !== shot.eventKey && liveStory.eventPriority > (shot.eventPriority || 0);
     movieState.interruptAccumulator %= .65;
     if (priorityInterrupt || actionCut) { movieState.lastEndReason = priorityInterrupt ? "priority-event-interrupt" : "event-action-cut"; beginMovieShot(); return advanceMovieCamera(0, now); }
     const health = evaluateDocumentaryShotHealth({ elapsed: holdElapsed, minimumDuration: shot.minimumDuration, duration: shot.duration, subjectsRequired: shot.story.subjectCount > 0, subjectsAlive: subjects.length, visibility: metrics.visibility, composition: metrics.composition ?? 0, cameraClearance: metrics.clearance, contextStillValid: acssLiveControl() || liveStory.context === shot.context, occlusionSeconds: movieState.occlusionSeconds, maximumOcclusion: .85 });
@@ -9393,7 +10113,7 @@ async function startMovieMode() {
   if (movieState.active || documentaryFinalizing) return; if (sim?.embodiment?.experience === "embodied") { addEvent("Exit Embodied Simulation before starting Movie mode"); updateUI(); return; }
   cinemaNarrationLifecycle.begin();
   setDocumentaryAiEnabled(false, false); documentaryObsEnabled = false; updateMovieOutputStatus();
-  movieState.saved = { position: camera.position.clone(), target: controls.target.clone(), fov: camera.fov, selectedId, selectedGroupId, selectedTerrain, entityLocked, controlsEnabled: controls.enabled }; movieState.active = true; movieState.paused = false; movieState.shot = null; movieState.elapsed = 0; movieState.sequence = 0; movieState.recentSubjects = []; movieState.history = []; movieState.queue = []; movieState.interactionThread = null; movieState.lastNarratedScene = null; movieState.narrative = { recentTopics: [], subjectMentions: {}, lastSubjectIds: [], lastHabitat: null, lastActionKey: null, lastEventKind: null, lastFingerprint: null, chapter: 1, passages: 0 }; movieState.lastEndReason = null; movieState.occlusionSeconds = 0; movieState.cameraInvalidSeconds = 0; movieState.renderEmptySeconds = 0; movieState.cameraRecoveryCount = 0; movieState.lastCameraRecoveryAt = -Infinity; movieState.lastCameraRecoveryReason = null; movieState.lastRenderInfo = null; initialiseMovieEventLedger(); selectedId = null; selectedGroupId = null; selectedTerrain = null; entityLocked = false; controls.enabled = false; hideAudiencePrompt(); document.body.classList.add("movie-mode"); if (movieUi.panel) movieUi.panel.hidden = false; wakeMovieHud(); restoreCameraFadedVegetation(); refreshCinemaShotPresentation(); updateDocumentaryDashboard(); updateAudienceLearningStatus(); if (documentarySystem.author?.audience?.health?.().promptPhase === "PRIMING" && movieUi.audienceLearning) movieUi.audienceLearning.open = true; if (TEST_MODE) { documentarySystem.author?.audience?.beginSession?.(); updateAudienceLearningStatus(); addEvent("Movie mode test session started without external services"); return; } const connected = await initialiseDocumentaryCompanion(); if (!movieState.active) return; await startDocumentarySession(); updateAudienceLearningStatus(); if (documentarySystem.author?.audience?.health?.().promptPhase === "PRIMING" && movieUi.audienceLearning) movieUi.audienceLearning.open = true; addEvent(connected ? "Movie mode is filming with the documentary companion" : "Movie mode is filming with local metadata; companion unavailable"); updateDocumentaryDashboard();
+  movieState.saved = { position: camera.position.clone(), target: controls.target.clone(), fov: camera.fov, selectedId, selectedGroupId, selectedTerrain, entityLocked, controlsEnabled: controls.enabled }; movieState.active = true; movieState.paused = false; movieState.shot = null; movieState.elapsed = 0; movieState.sequence = 0; movieState.recentSubjects = []; movieState.history = []; movieState.queue = []; movieState.interactionThread = null; movieState.lastNarratedScene = null; movieState.narrative = { recentTopics: [], subjectMentions: {}, lastSubjectIds: [], lastHabitat: null, lastActionKey: null, lastEventKind: null, lastFingerprint: null, chapter: 1, passages: 0 }; movieState.lastEndReason = null; movieState.occlusionSeconds = 0; movieState.cameraInvalidSeconds = 0; movieState.renderEmptySeconds = 0; movieState.cameraRecoveryCount = 0; movieState.lastCameraRecoveryAt = -Infinity; movieState.lastCameraRecoveryReason = null; movieState.lastRenderInfo = null; initialiseMovieEventLedger(); selectedId = null; selectedGroupId = null; selectedTerrain = null; entityLocked = false; controls.enabled = false; hideAudiencePrompt(); document.body.classList.add("movie-mode"); if (movieUi.panel) movieUi.panel.hidden = false; wakeMovieHud(); restoreCameraFadedVegetation(); requestCinemaShotPresentationRefresh(); updateDocumentaryDashboard(); updateAudienceLearningStatus(); if (documentarySystem.author?.audience?.health?.().promptPhase === "PRIMING" && movieUi.audienceLearning) movieUi.audienceLearning.open = true; if (TEST_MODE) { documentarySystem.author?.audience?.beginSession?.(); updateAudienceLearningStatus(); addEvent("Movie mode test session started without external services"); return; } const connected = await initialiseDocumentaryCompanion(); if (!movieState.active) return; await startDocumentarySession(); updateAudienceLearningStatus(); if (documentarySystem.author?.audience?.health?.().promptPhase === "PRIMING" && movieUi.audienceLearning) movieUi.audienceLearning.open = true; addEvent(connected ? "Movie mode is filming with the documentary companion" : "Movie mode is filming with local metadata; companion unavailable"); updateDocumentaryDashboard();
 }
 async function stopMovieMode(restore = true) {
   if (movieUi.transitionLayer) movieUi.transitionLayer.style.opacity = "0"; if (movieState.shot) registerMovieAudiencePresentation(movieState.shot, { completed: true }); hideAudiencePrompt();
@@ -9441,7 +10161,7 @@ function snapshotAnimalForPersistence(animal) {
   if (decisionTrace) { canonicalTrace = { ...decisionTrace }; delete canonicalTrace.predictive; }
   return { ...canonical, decisionTrace: canonicalTrace };
 }
-function snapshotWorld() { const snapshot = { ...sim, animals: sim.animals.map(snapshotAnimalForPersistence), predictivePersistenceSchema: 1, worldSchema: WORLD_SCHEMA, savedAt: new Date().toISOString() }; delete snapshot.occupied; delete snapshot.entityIndex; delete snapshot.hexWorld; delete snapshot.cells; return snapshot; }
+function snapshotWorld() { const snapshot = { ...sim, animals: sim.animals.map(snapshotAnimalForPersistence), predictivePersistenceSchema: 1, worldSchema: WORLD_SCHEMA, savedAt: new Date().toISOString(), saveSlotName: activeSaveSlotName || null }; delete snapshot.occupied; delete snapshot.entityIndex; delete snapshot.hexWorld; delete snapshot.cells; return snapshot; }
 function openProgressDb() { return openCachedIndexedDB(AUTOSAVE_DB, { version: 1, indexedDBFactory: window.indexedDB, upgrade: db => { if (!db.objectStoreNames.contains(AUTOSAVE_STORE)) db.createObjectStore(AUTOSAVE_STORE); } }); }
 async function writeSnapshot(slot, snapshot = snapshotWorld()) { const db = await openProgressDb(); return new Promise((resolve, reject) => { const tx = db.transaction(AUTOSAVE_STORE, "readwrite"); tx.objectStore(AUTOSAVE_STORE).put(snapshot, slot); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Snapshot write aborted")); }); }
 async function deleteSnapshot(slot) { const db = await openProgressDb(); return new Promise((resolve, reject) => { const tx = db.transaction(AUTOSAVE_STORE, "readwrite"); tx.objectStore(AUTOSAVE_STORE).delete(slot); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Snapshot deletion aborted")); }); }
@@ -9457,7 +10177,7 @@ function backgroundJsonStringify(value) {
 function activateSnapshot(snapshot, label) {
   if (!snapshot?.animals || !Number.isFinite(snapshot.seed)) throw new Error("not a valid world save");
   if (snapshot.worldSchema !== WORLD_SCHEMA) throw new Error(`This save uses world schema ${snapshot.worldSchema ?? "unknown"}; continuous locomotion requires schema ${WORLD_SCHEMA}. Start a new world.`);
-  sim = migrateEcologicalClock(migrateMinuteClock({ ...createWorld(snapshot.seed, snapshot.worldSetup || worldSetup), ...snapshot })); ecologicalAccounting.reset(); ecologicalStockSnapshot = null; sim.worldSchema = WORLD_SCHEMA; sim.worldSetup = { ...worldSetup }; sim.embodiment = normalizeEmbodiment(snapshot.embodiment); sim.activeScent ||= {}; sim.weatherSystems ||= []; sim.lineageRecords ||= {}; navigationMesh = buildNavMesh(sim.hexWorld);
+  sim = migrateEcologicalClock(migrateMinuteClock({ ...createWorld(snapshot.seed, snapshot.worldSetup || worldSetup), ...snapshot })); activeSaveSlotName = String(snapshot.saveSlotName || "").trim() || null; ecologicalAccounting.reset(); ecologicalStockSnapshot = null; sim.worldSchema = WORLD_SCHEMA; sim.worldSetup = { ...worldSetup }; sim.embodiment = normalizeEmbodiment(snapshot.embodiment); sim.activeScent ||= {}; sim.weatherSystems ||= []; sim.lineageRecords ||= {}; navigationMesh = buildNavMesh(sim.hexWorld);
   for (const animal of sim.animals) {
     migrateActionState(animal); migrateGoalPlan(animal, sim.tick); migrateCommitment(animal, sim.tick); migrateNeedPlanAudit(animal); migrateTemperatureState(animal); migrateReproductionEvents(animal, sim.tick); migratePregnancyState(animal, species[animal.speciesId]); migrateSocialState(animal, species[animal.speciesId]); migrateGroupDisposition(animal, sim.tick); migrateEntityMemory(animal); migrateStrategicMemory(animal); migrateBodyComposition(animal); initializeFuelProjection(animal); migrateExertionState(animal); migrateLifeHistory(animal); migratePredationState(animal, sim.tick); migrateKinship(animal); migratePersonalSpace(animal); migratePredictiveCognition(animal, { mode: snapshot.animalCognitionMode || "PREDICTIVE_SHADOW", profile: snapshot.animalCognitionProfile || "FIXED" }); animal.predictiveCycle = animal.predictiveCognition?.current || null; if (animal.decisionTrace && animal.predictiveCycle) animal.decisionTrace.predictive = predictiveTraceProjection(animal.predictiveCycle); storeLineage(sim.lineageRecords, animal); clearFrameMotion(animal);
     const profile = LOCOMOTION_PROFILES[animal.speciesId];
@@ -9465,6 +10185,10 @@ function activateSnapshot(snapshot, label) {
     animal.locomotion.collisionRadius = collisionRadiusFor(animal, profile.bodyRadius);
     animal.locomotion.activeMode ||= "idle"; animal.locomotion.completedMode ||= null; animal.locomotion.completedRequestId ||= null; animal.locomotion.completedContactIntent ||= null;
     animal.decisionTrace ||= null;
+    // This uses the current browser's monotonic clock and is deliberately not
+    // resumed from a save. A restored animal starts from its authoritative
+    // action posture and can begin a fresh rise transition on movement input.
+    animal.playerStandTransition = null;
     animal.mapReveals ||= [];
     animal.mapRevealRevision = Number(animal.mapRevealRevision || 0);
     animal.exploredRevision = Number(animal.exploredRevision || Object.keys(animal.explored || {}).length);
@@ -9481,12 +10205,12 @@ function activateSnapshot(snapshot, label) {
   clearEntityPresentation(); clearCorpsePresentation(); disposeFogBuffer(); resetLandscapeChunks(); clear(groups.terrain); clear(groups.plants); clear(groups.water); clear(groups.animals); clear(groups.overlays); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false;
   buildTerrain(); applyEmbodimentPresentation(); resetCamera(); addEvent(label); renderAll(); updateUI();
 }
-async function saveProgress(silent = false) { try { await writeSnapshot("resume"); if (!silent) { addEvent("Quick save created"); updateUI(); } } catch { if (!silent) { addEvent("Quick save failed: browser storage is full or unavailable"); updateUI(); } } }
+async function saveProgress(silent = false, { slotName = activeSaveSlotName } = {}) { try { const snapshot = { ...snapshotWorld(), saveSlotName: slotName || null }; await writeSnapshot("resume", snapshot); activeSaveSlotName = slotName || null; if (!silent) { addEvent("Quick save created"); updateUI(); } return true; } catch { if (!silent) { addEvent("Quick save failed: browser storage is full or unavailable"); updateUI(); } return false; } }
 async function restoreAutosavedProgress(manual = false) { const slot = requestedSaveSlot(window.location.search); if (!manual && slot) return loadSlotByName(slot); try { let snapshot = await readSnapshot("resume"); if (!snapshot) { const legacy = localStorage.getItem(SAVE_KEY); if (legacy) snapshot = JSON.parse(legacy); } if (!snapshot) { if (manual) addEvent("No quick save exists yet"); return false; } activateSnapshot(snapshot, manual ? "Quick save loaded" : "Resumed previous simulation"); return true; } catch { if (manual) { addEvent("Quick load failed: saved world is invalid or incomplete"); updateUI(); } return false; } }
 function savedSlotMetadata() { return readLocalList(SAVE_SLOTS_KEY).map((slot) => typeof slot === "string" ? { name: slot, seed: "unknown", day: "?", savedAt: "" } : slot); }
-async function saveNamedSlot() { const slots = savedSlotMetadata(); const name = window.prompt("Name this save", `World day ${sim.day}`)?.trim(); if (!name) return; try { await writeSnapshot(`slot:${name}`); const entry = { name, seed: sim.seed, day: sim.day, savedAt: new Date().toLocaleString() }; writeLocalList(SAVE_SLOTS_KEY, [entry, ...slots.filter((x) => x.name !== name)].slice(0, 12)); addEvent(`Saved slot: ${name} (seed ${sim.seed})`); updateUI(); } catch { addEvent("Save slot failed: browser storage is full or unavailable"); updateUI(); } }
+async function saveNamedSlot({ name: requestedName = "", alsoResume = false, silent = false } = {}) { const slots = savedSlotMetadata(), name = (requestedName || window.prompt("Name this save", `World day ${sim.day}`) || "").trim(); if (!name) return false; try { const snapshot = { ...snapshotWorld(), saveSlotName: name }; await Promise.all([writeSnapshot(`slot:${name}`, snapshot), ...(alsoResume ? [writeSnapshot("resume", snapshot)] : [])]); activeSaveSlotName = name; const entry = { name, seed: sim.seed, day: sim.day, savedAt: new Date().toLocaleString() }; writeLocalList(SAVE_SLOTS_KEY, [entry, ...slots.filter((x) => x.name !== name)].slice(0, 12)); if (!silent) { addEvent(`Saved slot: ${name} (seed ${sim.seed})`); updateUI(); } return true; } catch { if (!silent) { addEvent("Save slot failed: browser storage is full or unavailable"); updateUI(); } return false; } }
 async function loadNamedSlot() { const slots = savedSlotMetadata(); if (!slots.length) { addEvent("No named save slots yet"); updateUI(); return false; } const name = window.prompt(`Choose a save name\n${slots.map((x) => `${x.name} — seed ${x.seed}, day ${x.day}`).join("\n")}`)?.trim(); return name ? loadSlotByName(name) : false; }
-async function loadSlotByName(name) { try { const snapshot = await readSnapshot(`slot:${name}`); if (!snapshot) { addEvent(`No save slot named “${name}”`); updateUI(); return false; } activateSnapshot(snapshot, `Loaded slot: ${name} (seed ${snapshot.seed})`); return true; } catch { addEvent("Load slot failed"); updateUI(); return false; } }
+async function loadSlotByName(name) { try { const snapshot = await readSnapshot(`slot:${name}`); if (!snapshot) { addEvent(`No save slot named “${name}”`); updateUI(); return false; } activateSnapshot({ ...snapshot, saveSlotName: name }, `Loaded slot: ${name} (seed ${snapshot.seed})`); return true; } catch { addEvent("Load slot failed"); updateUI(); return false; } }
 function saveLaunchStatus(message, state = "loading") {
   if (!ui.gameMenuSaveControls) return;
   let output = ui.gameMenuSaveControls.querySelector("[data-save-launch-status]");
@@ -9520,7 +10244,7 @@ async function launchRequestedSaveShortcut() {
   if (!loaded) showGameMenu("saves");
   return loaded;
 }
-async function deleteNamedSlot(name) { if (!window.confirm(`Delete the save “${name}”? This cannot be undone.`)) return; try { await deleteSnapshot(`slot:${name}`); writeLocalList(SAVE_SLOTS_KEY, savedSlotMetadata().filter((slot) => slot.name !== name)); addEvent(`Deleted save slot: ${name}`); updateUI(); } catch { addEvent("Could not delete that save slot"); updateUI(); } }
+async function deleteNamedSlot(name) { if (!window.confirm(`Delete the save “${name}”? This also removes its saved-entity bookmarks and cannot be undone.`)) return; try { const saveKey = `slot:${name}`; await deleteSnapshot(saveKey); writeLocalList(SAVE_SLOTS_KEY, savedSlotMetadata().filter((slot) => slot.name !== name)); writeLocalList(FAVOURITES_KEY, readLocalList(FAVOURITES_KEY).filter(item => item.saveKey !== saveKey)); addEvent(`Deleted save slot and its entity bookmarks: ${name}`); updateUI(); } catch { addEvent("Could not delete that save slot"); updateUI(); } }
 async function exportProgress() { try { const json = await backgroundJsonStringify(snapshotWorld()), blob = new Blob([json], { type: "application/json" }); const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `rss-living-laboratory-day-${sim.day}-seed-${sim.seed}.json`; link.click(); URL.revokeObjectURL(url); addEvent("Save file exported"); updateUI(); } catch { addEvent("Export failed"); updateUI(); } }
 function exportSlotShortcut() { const slots = savedSlotMetadata(); if (!slots.length) { addEvent("Create a named save slot before exporting its game shortcut"); updateUI(); return; } const name = window.prompt(`Shortcut for which save?\n${slots.map((slot) => `${slot.name} — seed ${slot.seed}, day ${slot.day}`).join("\n")}`, slots[0].name)?.trim(); if (!name || !slots.some((slot) => slot.name === name)) return; const base = `${window.location.protocol}//${window.location.host}${window.location.pathname}`; const blob = new Blob([`[InternetShortcut]\nURL=${base}?slot=${encodeURIComponent(name)}\n`], { type: "text/url" }); const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `${name.replace(/[^a-z0-9_-]+/gi, "-")}-rss-save.url`; link.click(); URL.revokeObjectURL(url); addEvent(`Game shortcut exported for ${name}`); updateUI(); }
 function importProgress(event) { const file = event.target.files?.[0], enterAfterImport = !ui.gameMenu?.hidden; event.target.value = ""; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { activateSnapshot(JSON.parse(reader.result), `Imported save: ${file.name}`); if (enterAfterImport) enterGame(); } catch { addEvent("Import failed: that file is not a compatible simulation save"); updateUI(); } }; reader.readAsText(file); }
@@ -9559,13 +10283,31 @@ function applyEmbodimentPresentation() {
   else { ui.mapView.disabled = ui.hudMap.disabled = ui.labToggle.disabled = false; }
   if (embodied) { if (ui.overlayKnowledgeFog) ui.overlayKnowledgeFog.checked = capabilities.mapKnowledge !== "full"; if (!policy.overlays) for (const control of [ui.overlayVision, ui.overlayPersonalSpace, ui.overlayPredatorIntent, ui.overlaySmell, ui.overlaySound, ui.overlayCalls, ui.overlayMemory, ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone]) if (control) control.checked = false; if (!policy.entityIndicators) for (const control of [ui.overlayEntitySymbols, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar, ui.overlayAnalysisStage]) if (control) control.checked = false; }
 }
-function loadSeedWorld(seed, setup = worldSetup, embodimentRequest = null) { clearEntityPresentation(); clearCorpsePresentation(); disposeFogBuffer(); resetLandscapeChunks(); clear(groups.animals); clear(groups.intent); clear(groups.overlays); clear(groups.terrain); clear(groups.plants); clear(groups.water); sim = migrateEcologicalClock(migrateMinuteClock(createWorld(seed, setup, embodimentRequest))); ecologicalAccounting.reset(); ecologicalStockSnapshot = null; buildTerrain(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false; running = true; ui.playPause.textContent = "Pause"; ui.runState.textContent = "Running"; applyEmbodimentPresentation(); resetCamera(); addEvent(`Generated world seed ${seed}`); renderAll(); updateUI(); }
+function loadSeedWorld(seed, setup = worldSetup, embodimentRequest = null) { clearEntityPresentation(); clearCorpsePresentation(); disposeFogBuffer(); resetLandscapeChunks(); clear(groups.animals); clear(groups.intent); clear(groups.overlays); clear(groups.terrain); clear(groups.plants); clear(groups.water); activeSaveSlotName = null; sim = migrateEcologicalClock(migrateMinuteClock(createWorld(seed, setup, embodimentRequest))); ecologicalAccounting.reset(); ecologicalStockSnapshot = null; buildTerrain(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false; running = true; ui.playPause.textContent = "Pause"; ui.runState.textContent = "Running"; applyEmbodimentPresentation(); resetCamera(); addEvent(`Generated world seed ${seed}`); renderAll(); updateUI(); }
 
 function loadScreenshotShowcaseWorld(scenario = "overview", presentationPreset = "ultra") {
+  const requested = readShowcaseDirectorControls(); requested.scenario = scenario; applyShowcaseScenarioCast(requested);
+  showcaseDirector = { ...showcaseDirector, ...requested, playing: requested.mode !== "static", elapsed: 0, eventCompleted: false, birthMotherId: null, lastTimeSecond: -1, actors: [] };
   const seed = 742031;
-  loadSeedWorld(seed, { ...worldSetup, herbivores: 14, carnivores: 7, lakes: 1.5, rivers: 1.5, woodland: 1.15, trees: 1.25, bushes: 1.2, longGrass: 1.25 });
-  const alive = sim.animals.filter((animal) => animal.alive), subjects = [...alive.filter(animal => animal.speciesId === "grazer").slice(0, 9), ...alive.filter(animal => animal.speciesId === "hunter").slice(0, 5)];
-  const landCells = sim.cells.filter((cell) => !cell.water && !cell.rocky && cell.plantType !== "tree"), centre = landCells.reduce((best, cell) => Math.hypot(cell.x, cell.z) < Math.hypot(best.x, best.z) ? cell : best, landCells[0]);
+  const mapPresets = {
+    balanced: { lakes: 1.5, rivers: 1.5, woodland: 1.15, trees: 1.25, bushes: 1.2, longGrass: 1.25, relief: 1 },
+    grassland: { lakes: .55, rivers: .55, woodland: .25, trees: .25, bushes: .45, longGrass: 1.7, relief: .45 },
+    woodland: { lakes: .7, rivers: .8, woodland: 1.9, trees: 2.15, bushes: 1.7, longGrass: .9, relief: .8 },
+    waterside: { lakes: 2.3, rivers: 2.45, woodland: .85, trees: .9, bushes: 1.1, longGrass: 1.35, relief: .65 },
+    highland: { lakes: .45, rivers: .7, woodland: .65, trees: .75, bushes: .7, longGrass: .8, relief: 1.9, mountains: 1.55, hills: 1.8 },
+  };
+  const showcaseTerrainProfile = { mountains: .2, valleys: .2 };
+  const population = { grazer: Math.max(14, requested.herbivores), hunter: requested.carnivores ? Math.max(8, requested.carnivores) : 0 };
+  loadSeedWorld(seed, { ...worldSetup, ...mapPresets[requested.map], ...showcaseTerrainProfile, speciesCounts: { ...worldSetup.speciesCounts, ...population }, herbivores: population.grazer, carnivores: population.hunter });
+  const alive = sim.animals.filter((animal) => animal.alive), subjects = [...alive.filter(animal => animal.speciesId === "grazer").slice(0, requested.herbivores), ...alive.filter(animal => animal.speciesId === "hunter").slice(0, requested.carnivores)];
+  const landCells = sim.cells.filter((cell) => !cell.water && !cell.rocky && cell.plantType !== "tree"), allWaterCells = sim.cells.filter(cell => cell.water), waterStride = Math.max(1, Math.ceil(allWaterCells.length / 160)), waterCells = allWaterCells.filter((_, index) => index % waterStride === 0);
+  const centreScore = (cell) => {
+    if (requested.map === "highland") return -terrainHeight(cell.x, cell.z);
+    if (requested.map === "waterside" && waterCells.length) return Math.min(...waterCells.map(water => Math.hypot(cell.x - water.x, cell.z - water.z))) + Math.hypot(cell.x, cell.z) * .03;
+    if (requested.map === "woodland") return (cell.plantType === "grass" ? 1 : 0) + Math.hypot(cell.x, cell.z) * .02;
+    return Math.hypot(cell.x, cell.z);
+  };
+  const centre = landCells.reduce((best, cell) => centreScore(cell) < centreScore(best) ? cell : best, landCells[0]);
   const usedStageCells = new Set(), stageCells = subjects.map((_, index) => {
     const desired = { x: centre.x + (index % 4 - 1.5) * 4.2, z: centre.z + (Math.floor(index / 4) - 1.5) * 4.2 };
     const cell = landCells.filter(candidate => !usedStageCells.has(candidate)).sort((a, b) => Math.hypot(a.x - desired.x, a.z - desired.z) - Math.hypot(b.x - desired.x, b.z - desired.z))[0];
@@ -9588,22 +10330,22 @@ function loadScreenshotShowcaseWorld(scenario = "overview", presentationPreset =
   });
   const placeTogether = (animals, start = 0, spacing = .78) => animals.forEach((animal, index) => { const cell = stageCells[start + index] || stageCells[start] || centre; animal.x = animal.fx = cell.x + (index % 2) * spacing; animal.z = animal.fz = cell.z + Math.floor(index / 2) * spacing; clearFrameMotion(animal); });
   const grazers = subjects.filter(animal => animal.speciesId === "grazer"), hunters = subjects.filter(animal => animal.speciesId === "hunter");
-  let featured = subjects[0], participants = [...grazers.slice(0, 3), ...hunters.slice(0, 2)];
+  let featured = subjects[0], participants = [...grazers, ...hunters];
   if (scenario === "mating") {
     participants = [grazers.find(animal => animal.sex === "F"), grazers.find(animal => animal.sex === "M")].filter(Boolean);
     const female = grazers.find(animal => animal.sex === "F"), male = grazers.find(animal => animal.sex === "M" && animal.id !== female?.id);
-    if (female && male) { female.lifeStage = male.lifeStage = "adult"; placeTogether([female, male], 5, .52); female.mating = { partnerId: male.id, startsAt: 0, completesAt: 12, contactEstablished: true }; male.mating = { partnerId: female.id, startsAt: 0, completesAt: 12, contactEstablished: true }; setAction(female, "mating", { label: `mating in physical contact with ${male.id}`, target: male.id, intendedOutcome: "complete mating" }); setAction(male, "mating", { label: `mating in physical contact with ${female.id}`, target: female.id, intendedOutcome: "complete mating" }); featured = female; }
+    if (female && male) { female.lifeStage = male.lifeStage = "adult"; authorShowcaseCourtshipMatch(female, male, 12); placeTogether([female, male], 5, .52); female.mating = { partnerId: male.id, startsAt: 0, completesAt: 12, contactEstablished: true, compatibility: 1 }; male.mating = { partnerId: female.id, startsAt: 0, completesAt: 12, contactEstablished: true, compatibility: 1 }; setAction(female, "mating", { label: `mating in physical contact with ${male.id}`, target: male.id, intendedOutcome: "complete mating" }); setAction(male, "mating", { label: `mating in physical contact with ${female.id}`, target: female.id, intendedOutcome: "complete mating" }); featured = female; }
   } else if (scenario === "chase") {
-    const prey = grazers[0], hunter = hunters[0]; participants = [prey, hunter]; placeTogether(participants, 5, 3.2); prey.fear = 96; prey.showcaseExpression = "fear"; hunter.showcaseExpression = "angry"; setAction(prey, "flee", { label: `fleeing pursuing hunter ${hunter.id}`, target: hunter.id, moving: true, intendedOutcome: "escape predation" }); setAction(hunter, "chase", { label: `chasing visible prey ${prey.id}`, target: prey.id, moving: true, intendedOutcome: "close distance to prey" }); hunter.predation = { ...hunter.predation, stage: "chase", targetKind: "prey", targetId: prey.id }; featured = hunter;
+    const prey = grazers[0], hunter = hunters[0]; participants = [...grazers, ...hunters]; placeTogether(grazers, 4, .9); placeTogether(hunters, Math.min(10, Math.max(5, grazers.length + 5)), .75); if (prey && hunter) { prey.x = prey.fx = centre.x - 1.8; prey.z = prey.fz = centre.z; hunter.x = hunter.fx = centre.x - 5.8; hunter.z = hunter.fz = centre.z; prey.fear = 96; prey.showcaseExpression = "fear"; hunter.showcaseExpression = "angry"; setAction(prey, "flee", { label: `fleeing pursuing hunter ${hunter.id}`, target: hunter.id, moving: true, intendedOutcome: "escape predation" }); setAction(hunter, "chase", { label: `chasing visible prey ${prey.id}`, target: prey.id, moving: true, intendedOutcome: "close distance to prey" }); hunter.predation = { ...hunter.predation, stage: "chase", targetKind: "prey", targetId: prey.id }; for (const extra of grazers.slice(1)) setAction(extra, "flee", { label: `fleeing with ${prey.id}`, target: hunter.id, moving: true, intendedOutcome: "escape the pursuing carnivores" }); for (const extra of hunters.slice(1)) setAction(extra, "stalk", { label: `joining ${hunter.id}'s pursuit`, target: grazers[Math.min(grazers.length - 1, hunters.indexOf(extra))]?.id || prey.id, moving: true, intendedOutcome: "join the hunt" }); featured = hunter; }
   } else if (scenario === "pack-hunt") {
-    participants = [...grazers.slice(0, 4), ...hunters.slice(0, 3)];
-    const herd = grazers.slice(0, 6), pack = hunters.slice(0, 3); placeTogether(herd, 4, 1.05); placeTogether(pack, 10, .9); herd.forEach((animal, index) => { animal.groupId = "showcase-herd"; animal.groupLeaderId = herd[0].id; animal.fear = index ? 72 : 45; animal.showcaseExpression = index ? "fear" : "angry"; setAction(animal, index ? "shelter-herd" : "defend", { label: index ? "sheltering inside the defended herd" : `defending the herd against ${pack[0].id}`, target: pack[0].id, intendedOutcome: "survive the pack encounter" }); }); pack.forEach((animal, index) => { animal.groupId = "showcase-pack"; animal.groupLeaderId = pack[0].id; animal.showcaseExpression = "angry"; setAction(animal, index ? "stalk" : "evaluate-prey", { label: index ? "coordinating a pack approach" : "evaluating the defended herd", target: herd[index]?.id || herd[0].id, intendedOutcome: "isolate vulnerable prey" }); }); featured = pack[0];
+    participants = [...grazers, ...hunters];
+    const herd = grazers, pack = hunters; placeTogether(herd, 4, 1.05); placeTogether(pack, Math.min(10, Math.max(5, herd.length + 5)), .9); if (herd.length && pack.length) { herd.forEach((animal, index) => { animal.groupId = "showcase-herd"; animal.groupLeaderId = herd[0].id; animal.fear = index ? 72 : 45; animal.showcaseExpression = index ? "fear" : "angry"; setAction(animal, index ? "flee" : "defend", { label: index ? "moving inside the defended herd" : `defending the herd against ${pack[0].id}`, target: pack[0].id, moving: Boolean(index), intendedOutcome: "survive the pack encounter" }); }); pack.forEach((animal, index) => { animal.groupId = "showcase-pack"; animal.groupLeaderId = pack[0].id; animal.showcaseExpression = "angry"; setAction(animal, index ? "stalk" : "evaluate-prey", { label: index ? "coordinating a pack approach" : "evaluating the defended herd", target: herd[index % herd.length].id, moving: true, intendedOutcome: "isolate vulnerable prey" }); }); featured = pack[0]; }
   } else if (scenario === "separated-young") {
     participants = grazers.slice(0, 4);
     const young = grazers[0], family = grazers.slice(1, 6); young.lifeStage = "dependent"; young.age = 8; young.motherId = family[0].id; young.caregiverIds = [family[0].id]; const loneCell = stageCells[2], familyCell = stageCells[11]; young.x = young.fx = loneCell.x; young.z = young.fz = loneCell.z; placeTogether(family, 11, .85); young.fear = 88; young.showcaseExpression = "fear"; young.socialSignal = { kind: "wait-up", urgency: 96, sourceId: young.id, x: young.x, z: young.z, since: 0, until: 1000000, leaderId: family[0].id }; young.vocalUntil = 1000000; setAction(young, "communicate", { label: "calling for the moving family to wait", target: family[0].id, intendedOutcome: "rejoin caregivers" }); family.forEach(animal => { animal.groupId = "showcase-family"; animal.groupLeaderId = family[0].id; setAction(animal, "coordinate-group", { label: `turning back toward separated ${young.id}`, target: young.id, intendedOutcome: "recover the dependent" }); }); featured = young;
   } else if (scenario === "birth") {
     participants = (() => { const mother = grazers.find(animal => animal.sex === "F"); return [mother, ...grazers.filter(animal => animal.id !== mother?.id).slice(0, 3)].filter(Boolean); })();
-    const mother = grazers.find(animal => animal.sex === "F"), attendants = grazers.filter(animal => animal.id !== mother?.id).slice(0, 3); if (mother) { mother.lifeStage = "adult"; placeTogether([mother, ...attendants], 5, .9); mother.pregnant = { conceivedTick: -4000, dueTick: 15, fatherId: grazers.find(animal => animal.sex === "M")?.id || null }; mother.birthEvent = { startedAt: 0, completesAt: 15 }; mother.showcaseExpression = "dizzy"; setAction(mother, "birth", { label: "in labour (paused showcase)", intendedOutcome: "give birth safely" }); attendants.forEach(animal => { setAction(animal, "attend-birth", { label: `remaining beside ${mother.id} during birth`, target: mother.id, intendedOutcome: "support and guard the mother" }); animal.socialSignal = null; }); featured = mother; }
+    const mother = grazers.find(animal => animal.sex === "F"), attendants = grazers.filter(animal => animal.id !== mother?.id).slice(0, 3); if (mother) { showcaseDirector.birthMotherId = mother.id; mother.lifeStage = "adult"; placeTogether([mother, ...attendants], 5, .9); mother.pregnant = { age: species[mother.speciesId].gestation - .02, conceivedTick: -4000, dueTick: sim.tick + REPRODUCTION_DURATIONS.birth, fatherId: grazers.find(animal => animal.sex === "M")?.id || null, offspringCount: 1, viability: 1 }; mother.birthEvent = { startedAt: sim.tick, completesAt: sim.tick + REPRODUCTION_DURATIONS.birth }; mother.showcaseExpression = "dizzy"; setAction(mother, "birth", { label: "in labour · birth expected in about 8 real seconds", intendedOutcome: "give birth safely" }); attendants.forEach(animal => { setAction(animal, "attend-birth", { label: `remaining beside ${mother.id} during birth`, target: mother.id, intendedOutcome: "support and guard the mother" }); animal.socialSignal = null; }); featured = mother; }
   } else if (scenario === "demographics") {
     participants = [...grazers.slice(0, 5), ...hunters.slice(0, 5)];
     const stages = ["dependent", "juvenile", "subadult", "adult", "old"], ages = [8, 24, 70, 150, 330]; for (const [speciesIndex, collection] of [grazers, hunters].entries()) collection.slice(0, 5).forEach((animal, index) => { animal.lifeStage = stages[index]; animal.age = ages[index] + speciesIndex * 8; animal.sex = index % 2 ? "M" : "F"; animal.showcaseExpression = "calm"; animal.socialSignal = null; setAction(animal, "orient", { label: `${stages[index]} demographic showcase`, intendedOutcome: "present species and maturity" }); }); placeTogether([...grazers.slice(0, 5), ...hunters.slice(0, 5)], 2, 1.05); const adultFemale = grazers.slice(0, 5).find(animal => animal.lifeStage === "adult" && animal.sex === "F") || grazers[3]; if (adultFemale) adultFemale.pregnant = { conceivedTick: -1000, dueTick: 4000, fatherId: null }; featured = grazers[0];
@@ -9619,14 +10361,16 @@ function loadScreenshotShowcaseWorld(scenario = "overview", presentationPreset =
   if (ui.overlayAnalysisStage) ui.overlayAnalysisStage.checked = false;
   applyGraphicsSettings({ ...graphicsPreset(presentationPreset), ...currentTypographySettings() });
   showcaseVisibleIds = new Set(participants.filter(Boolean).map(animal => animal.id));
+  showcaseDirector.actors = participants.filter(Boolean).map((animal, index) => ({ id: animal.id, role: animal.actionState?.key || "orient", targetId: animal.actionState?.target || animal.actionTarget || null, originX: animal.x, originZ: animal.z, originOrientation: animal.orientation || 0, phase: index / Math.max(1, participants.length) * Math.PI * 2 }));
   showcaseFeaturedId = featured?.id || subjects[0]?.id || null; selectedId = showcaseFeaturedId; entityLocked = false; running = false; showcasePresentationMode = "complete";
   const framed = participants.filter(Boolean), focus = framed.length ? { x: (Math.min(...framed.map(animal => animal.x)) + Math.max(...framed.map(animal => animal.x))) / 2, z: (Math.min(...framed.map(animal => animal.z)) + Math.max(...framed.map(animal => animal.z))) / 2 } : centre || subjects[0] || { x: 0, z: 0 };
   const span = framed.length ? Math.max(4, Math.max(...framed.map(animal => animal.x)) - Math.min(...framed.map(animal => animal.x)), Math.max(...framed.map(animal => animal.z)) - Math.min(...framed.map(animal => animal.z))) : 8, frameDistance = clamp(10 + span * 1.15, 12, 30);
   controls.target.set(focus.x, terrainHeight(focus.x, focus.z), focus.z); camera.position.set(focus.x + frameDistance * .72, terrainHeight(focus.x, focus.z) + frameDistance * .9, focus.z + frameDistance * .72); controls.update();
-  ui.playPause.textContent = ui.hudPlay.textContent = "Play"; ui.runState.textContent = "Paused showcase";
+  ui.playPause.textContent = ui.hudPlay.textContent = "Play"; ui.runState.textContent = "Showcase director";
   ui.gameMenu.hidden = true; document.body.classList.remove("menu-open", "cinematic-hud", "screenshot-hide-selection", "showcase-toolbar-hidden"); document.body.classList.add("showcase-mode");
   if (ui.showcaseHud) ui.showcaseHud.hidden = false; if (ui.showcaseRestoreControls) ui.showcaseRestoreControls.hidden = true; if (ui.showcaseScenario) ui.showcaseScenario.value = scenario; if (ui.showcasePresentation) ui.showcasePresentation.value = "complete";
-  addEvent(`Screenshot showcase loaded paused: ${scenario.replaceAll("-", " ")}`);
+  setShowcasePlayback(showcaseDirector.mode !== "static");
+  addEvent(`Screenshot showcase loaded: ${scenario.replaceAll("-", " ")} · ${showcaseDirector.mode} · ${showcaseDirector.map}`);
   renderAll(); updateUI();
 }
 function dominantDrive(a) { const vals = [["hunger", 100 - a.energy], ["thirst", 100 - a.hydration], ["fear", a.fear], ["fatigue", a.fatigue], ["reproduction", reproductionDrive(a)]]; vals.sort((x, y) => y[1] - x[1]); return vals[0][0]; }
@@ -9782,7 +10526,7 @@ function remember(a, m) {
 }
 function nearestMemory(a, type) { let nearest = null, distance = Infinity; for (const memory of a.memories) if (memory.type === type) { const candidateDistance = manhattan(a, memory); if (candidateDistance < distance) { distance = candidateDistance; nearest = memory; } } return nearest; }
 function collectNearbyCells(a, range, include = () => true) { nearbyCellBuffer.length = 0; visitNearbyCells(a, range, HALF, cellAt, (cell) => { if (include(cell)) nearbyCellBuffer.push(cell); }); return nearbyCellBuffer; }
-function grazeableCell(cell) { return Boolean(cell && !cell.water && !cell.rocky && !cell.sandy && !cell.wetland && (!cell.woodland || cell.plantType === "shrub") && cell.biomass > .02); }
+function grazeableCell(cell) { return Boolean(cell && !cell.water && !cell.rocky && !cell.sandy && !cell.wetland && cell.biomass > .02 && !(cell.plantType === "tree" && cell.leafDepletedUntil > sim.ecologicalMinute)); }
 function grazeableCellFor(animal, cell) { return grazeableCell(cell) && eatsPlants(animal) && isSustainableForage(animal, cell.plantType || (cell.woodland ? "shrub" : "grass")); }
 function nearestLocalResourceCell(a, range, include) { let nearest = null, distance = Infinity; for (const cell of collectNearbyCells(a, range, include)) { const candidateDistance = dist(a, cell); if (candidateDistance < distance) { distance = candidateDistance; nearest = cell; } } return nearest; }
 function reinforceExactResource(a, type, source) {
@@ -9803,6 +10547,34 @@ function failResourceTarget(a, memory) {
 // Candidate sampling may still use neighbouring terrain for high-level goals,
 // but animal occupancy is never a locomotion or route-selection authority.
 function validMoves(a) { return traversableNeighbourCells(sim.hexWorld, a, null, key); }
+function recoverStuckEntity() {
+  const embodied = inhabitedAnimal(), animal = embodied?.alive ? embodied : selectedAnimal();
+  const report = (message, failed = false) => {
+    if (ui.entityUnstuckStatus) { ui.entityUnstuckStatus.textContent = message; ui.entityUnstuckStatus.classList.toggle("has-warning", failed); }
+    if (ui.escapeStatus && !ui.escapeMenu?.hidden) ui.escapeStatus.textContent = message;
+  };
+  if (!animal?.alive) { report("Select a living animal before using recovery.", true); return false; }
+  if (!navigationMesh?.polygons?.size) { report("No verified navigation surface is currently available.", true); return false; }
+  const radius = collisionRadiusFor(animal, LOCOMOTION_PROFILES[animal.speciesId]?.bodyRadius || bodyRadius(animal));
+  const candidates = [...navigationMesh.polygons.values()].map((polygon) => ({ id: polygon.id, x: polygon.center.x, z: polygon.center.z }));
+  const occupied = sim.animals.filter((other) => other.alive && other.id !== animal.id).map((other) => ({ id: other.id, alive: true, x: other.x, z: other.z, bodyRadius: collisionRadiusFor(other, LOCOMOTION_PROFILES[other.speciesId]?.bodyRadius || bodyRadius(other)) }));
+  const destination = nearestSafeUnstuckDestination(animal, candidates, {
+    bodyRadius: radius,
+    occupied,
+    minimumMove: Math.max(.75, radius * 2.5),
+    supportsBody: (x, z, bodyClearance) => inside(x, z) && bodySupportedByNavmesh(navigationMesh, x, z, bodyClearance)
+  });
+  if (!destination) { report(`No safe recovery space could be found for ${animal.id}.`, true); return false; }
+  const distance = Math.hypot(destination.x - animal.x, destination.z - animal.z);
+  animal.x = animal.fx = destination.x; animal.z = animal.fz = destination.z;
+  clearFrameMotion(animal);
+  animal.locomotion = createLocomotionState(animal, LOCOMOTION_PROFILES[animal.speciesId]);
+  animal.boundaryRecovery = null; animal.boundaryEdgeDwellTicks = 0;
+  setAction(animal, "idle", { label: "regaining footing after safe recovery", intendedOutcome: "resume ordinary movement from traversable ground" });
+  if (animal.id === embodied?.id) embodiedInput.clear();
+  const message = `${animal.id} moved ${distance.toFixed(1)} m to the nearest safe traversable space.`;
+  addEvent(`${animal.id}: manual unstuck recovery`); report(message); renderAll(); updateUI(); saveProgress(true); return true;
+}
 function enforceWorldBoundary() {
   if (!sim?.animals) return;
   for (const a of sim.animals) {
@@ -9874,7 +10646,7 @@ function animalVisibilityQuality(viewer, target, range) {
   const canopyCover = clamp((cell?.canopyCover || 0) * .46 * (1 - closeRecovery), 0, .46);
   return clamp(1 - longGrassCover * (1 - closeRecovery) - shrubCover - canopyCover + (target.movementNoise || 0) * 0.12, 0.18, 1);
 }
-function leaflessTree(cell) { return Boolean(cell?.plantType === "tree" && !(cell?.fallenTreeUntil > sim.ecologicalMinute) && ((cell?.leaflessTreeUntil || 0) > sim.ecologicalMinute || sim.season === "Winter")); }
+function leaflessTree(cell) { return Boolean(cell?.plantType === "tree" && !(cell?.fallenTreeUntil > sim.ecologicalMinute) && ((cell?.leaflessTreeUntil || 0) > sim.ecologicalMinute || (cell?.leafDepletedUntil || 0) > sim.ecologicalMinute || sim.season === "Winter")); }
 function partialTreeCover(cell) { return Boolean(cell?.fallenTreeUntil > sim.ecologicalMinute || leaflessTree(cell)); }
 function safeCoverFor(a) {
   const cell = cellAt(a.x, a.z);
@@ -10429,12 +11201,14 @@ function seekWater(a) {
 
 
 function knownCarcass(a) {
-  const owned = sim.corpses.filter((corpse) => corpse.biomass > 0 && corpse.ownerId === a.id).sort((left, right) => dist(a, left) - dist(a, right) || String(left.id).localeCompare(String(right.id)))[0];
+  const rank = (corpse) => dist(a, corpse) / Math.max(.08, carcassPreference(a, corpse));
+  const edible = (corpse) => corpse.biomass > 0 && (carcassPreference(a, corpse) >= .2 || driveLevels(a).hunger >= 92);
+  const owned = sim.corpses.filter((corpse) => edible(corpse) && corpse.ownerId === a.id).sort((left, right) => rank(left) - rank(right) || String(left.id).localeCompare(String(right.id)))[0];
   if (owned) return owned;
   const contact = (a.sensoryBuffer || []).filter((m) => m.type === "carcass" && m.targetId && (m.channel === "sight" || manhattan(a, m) <= 1)).sort((p, q) => manhattan(a, p) - manhattan(a, q))[0];
-  if (contact) return sim.corpses.find((c) => c.id === contact.targetId && c.biomass > 0);
+  if (contact) return sim.corpses.find((c) => c.id === contact.targetId && edible(c));
   const memory = nearestMemory(a, "carcass");
-  return memory && manhattan(a, memory) <= 1 ? sim.corpses.find((c) => c.id === memory.targetId && c.biomass > 0 && dist(a, c) <= 1.5) : null;
+  return memory && manhattan(a, memory) <= 1 ? sim.corpses.find((c) => c.id === memory.targetId && edible(c) && dist(a, c) <= 1.5) : null;
 }
 
 function scavenge(a) {
@@ -10457,12 +11231,13 @@ function scavenge(a) {
   }
   if (corpse.ownerId && corpse.ownerId !== a.id) corpse.displacements = (corpse.displacements || 0) + 1;
   corpse.ownerId = a.id;
-  const meal = Math.min(corpse.biomass, carcassMeal(a.bodyMass) * ecologicalMinutesThisTick());
+  const foodPreference = carcassPreference(a, corpse);
+  const meal = Math.min(corpse.biomass, carcassMeal(a.bodyMass) * ecologicalMinutesThisTick() * clamp(foodPreference, .35, 1.2));
   corpse.biomass -= meal;
   corpse.feedingMinutes = (corpse.feedingMinutes || 0) + 1;
   corpse.biomassConsumed = (corpse.biomassConsumed || 0) + meal;
   ecologicalAccounting.record("corpseConsumed", meal);
-  const digestion = digestiveEfficiency(a, "carrion", corpse.age);
+  const digestion = digestiveEfficiency(a, "carrion", corpse.age) * clamp(.72 + foodPreference * .28, .55, 1.05);
   const hydrationBefore = a.hydration;
   a.hydration = clamp(a.hydration + carcassHydrationGain(meal, corpse, a), 0, 100);
   ecologicalAccounting.record("carcassWaterGained", Math.max(0, a.hydration - hydrationBefore));
@@ -10471,7 +11246,7 @@ function scavenge(a) {
   ecologicalAccounting.record("feedingEnergyGained", calories);
   a.lastDigestionEfficiency = digestion;
   a.lastMealTick = sim.tick;
-  setAction(a, rivals.length ? "guard" : "feed-carcass", { label: rivals.length ? "feeding slowly while guarding carcass" : "feeding steadily from carcass", target: corpse.id, intendedOutcome: "consume carcass over time" });
+  setAction(a, rivals.length ? "guard" : "feed-carcass", { label: rivals.length ? "feeding slowly while guarding carcass" : foodPreference >= 1 ? `feeding readily from preferred ${species[corpse.speciesId]?.label || corpse.speciesId} carrion` : "feeding steadily from tolerated carrion", target: corpse.id, intendedOutcome: "consume carcass over time" });
 }
 
 function moveToCarcassAtPurposefulPace(a, target, label) {
@@ -10569,8 +11344,11 @@ function drawVisionSector(a, range) {
   projection.mesh.visible = true;
 }
 function drawSelectedOverlays() {
-  if (movieState.active && activeNarrationSubjectIds.size) {
-    for (const id of activeNarrationSubjectIds) {
+  drawTerritoryOverlay();
+  drawWorldEcologyFields();
+  const cinemaHighlightIds = movieState.active && cinemaUsesConnectedStories() ? new Set(movieState.shot?.ids || []) : activeNarrationSubjectIds;
+  if (movieState.active && cinemaHighlightIds.size) {
+    for (const id of cinemaHighlightIds) {
       const narrated = animalById(id);
       if (narrated?.alive) ringAt(narrated, bodyRadius(narrated) * 1.85, mats.selected);
     }
@@ -10679,22 +11457,6 @@ function drawSelectedOverlays() {
       drawMemory(memory, a.x + Math.cos(bearing) * d, a.z + Math.sin(bearing) * d, true);
     }
   }
-  // Laboratory field overlays are deliberately explicit highlights.  The map
-  // itself remains readable when they are off; enabling one now has a clear,
-  // observable effect around the selected organism.
-  // Entity view must never use a laboratory-sized inspection radius.  These
-  // optional overlays can only highlight cells the selected animal can see.
-  const fieldRange = Math.ceil(visionRangeFor(a));
-  const showWaterField = enabled("water", ui.overlayWater), showBiomassField = enabled("biomass", ui.overlayBiomass);
-  if (showWaterField || showBiomassField) {
-    for (let z = Math.floor(a.z - fieldRange); z <= Math.ceil(a.z + fieldRange); z += 2) for (let x = Math.floor(a.x - fieldRange); x <= Math.ceil(a.x + fieldRange); x += 2) {
-      if (!inside(x, z) || !movieState.active && !visionResult(a, { x, z }, fieldRange, 0.08).visible) continue;
-      const cell = cellAt(x, z), showWater = showWaterField && cell.water, showBiomass = showBiomassField && !cell.water && cell.biomass > 0.34;
-      if (!showWater && !showBiomass) continue;
-      const amount = showWater ? 1.1 : clamp(cell.biomass, 0.3, 1);
-      addTemporaryOverlayInstance(geos.marker, showWater ? mats.water : mats.biomass, 28, { x, y: terrainHeight(x, z) + .32, z }, { x: .65 + amount, y: .06, z: .65 + amount });
-    }
-  }
 }
 
 function ensureFogBuffer() {
@@ -10725,7 +11487,8 @@ function updateKnowledgeFog(a) {
   if (!a) { if (fogMesh) fogMesh.visible = false; if (fogExploredMesh) fogExploredMesh.visible = false; fogCacheKey = ""; return; }
   const mapKnowledge = embodimentCapabilities()?.mapKnowledge; fogMats.unknown.opacity = mapKnowledge === "unknown-shaded" ? .46 : 1; fogMats.explored.opacity = mapKnowledge === "unknown-shaded" ? .28 : .72;
   ensureFogBuffer(); fogMesh.visible = true; fogExploredMesh.visible = true;
-  const cacheKey = `${a.id}|${Number(a.x).toFixed(3)},${Number(a.z).toFixed(3)}|${Number(a.exploredRevision || 0)}|${Number(a.mapRevealRevision || 0)}`;
+  const observerElevation = terrainRenderHeight(a.x, a.z), fogObserver = { x: a.x, z: a.z, elevation: observerElevation };
+  const cacheKey = `${a.id}|${Number(a.x).toFixed(3)},${Number(a.z).toFixed(3)},${observerElevation.toFixed(3)}|${Number(a.exploredRevision || 0)}|${Number(a.mapRevealRevision || 0)}`;
   if (fogCacheKey === cacheKey) return;
   const reveals = a.mapReveals || [];
   const revealSpan = Math.max(1, (sim.hexWorld?.radius || 1) * 3), revealBuckets = new Map(), revealBucketKey = (x, z) => `${Math.floor(x / revealSpan)},${Math.floor(z / revealSpan)}`;
@@ -10737,7 +11500,7 @@ function updateKnowledgeFog(a) {
     // The fog's clear aperture is a stable local circle. Authoritative sight
     // remains directional and is shown by the separate Vision overlay; it must
     // not distort this viewer-facing map mask into a flickering cone.
-    const state = fogKnowledgeState({ currentlyVisible: withinLocalFogReveal(cell, a), communicatedReveal: communicated, explored: Boolean(a.explored?.[exploreKey(cell)]) });
+    const state = fogKnowledgeState({ currentlyVisible: withinLocalFogReveal(cell, fogObserver), communicatedReveal: communicated, explored: Boolean(a.explored?.[exploreKey(cell)]) });
     if (state === FOG_STATE.UNKNOWN) appendFogCell(fogPositionBuffer, cell);
     else if (state === FOG_STATE.EXPLORED) appendFogCell(fogExploredPositionBuffer, cell);
   }
@@ -10773,11 +11536,11 @@ function updateSelectionIndicator(now = performance.now()) {
   if (animal) {
     const visual = visualState(animal, now, frameScratch.selectionVisual || (frameScratch.selectionVisual = {}));
     const ground = terrainRenderHeight(visual.x, visual.z);
-    item.ring.visible = true; item.ring.scale.setScalar(.9); item.ring.position.set(visual.x, ground + .13, visual.z);
-    item.arrow.visible = true; item.arrow.position.set(visual.x, ground + .45, visual.z); frameScratch.direction.set(Math.cos(visual.orientation), 0, Math.sin(visual.orientation)); item.arrow.setDirection(frameScratch.direction);
+    item.ring.visible = Boolean(ui.overlaySelectionRing?.checked); item.ring.scale.setScalar(.9); item.ring.position.set(visual.x, ground + .13, visual.z);
+    item.arrow.visible = Boolean(ui.overlayNavigationCues?.checked); item.arrow.position.set(visual.x, ground + .45, visual.z); frameScratch.direction.set(Math.cos(visual.orientation), 0, Math.sin(visual.orientation)); item.arrow.setDirection(frameScratch.direction);
   } else {
     const ground = terrainRenderHeight(corpse.x, corpse.z);
-    item.ring.visible = true; item.ring.scale.setScalar(.82); item.ring.position.set(corpse.x, ground + .13, corpse.z); item.arrow.visible = false;
+    item.ring.visible = Boolean(ui.overlaySelectionRing?.checked); item.ring.scale.setScalar(.82); item.ring.position.set(corpse.x, ground + .13, corpse.z); item.arrow.visible = false;
   }
 }
 
@@ -11151,8 +11914,8 @@ function updateUIWork(force = false, now = performance.now()) {
     ui.deaths.textContent = String(sim.deaths);
   }
   if (recordsSurfaceVisible) {
-    const favourites = readLocalList(FAVOURITES_KEY);
-    const favouriteMarkup = favourites.length ? favourites.map((item) => `<div class="save-slot"><button type="button" data-favourite="${escapeHtml(item.id)}" data-seed="${item.seed}">${escapeHtml(item.label)} <span>Open</span></button><button type="button" data-delete-favourite="${escapeHtml(item.id)}" data-seed="${item.seed}" aria-label="Delete ${escapeHtml(item.label)}">Delete</button></div>`).join("") : `<span class="hint">Select an organism, then favourite it.</span>`;
+    const favourites = readEntityBookmarks();
+    const favouriteMarkup = favourites.length ? favourites.map((item) => { const bookmarkKey = entityBookmarkKey(item), saveLabel = item.saveLabel || (item.saveKey?.startsWith("slot:") ? item.saveKey.slice(5) : item.saveKey === "resume" ? "Quick save" : "Legacy bookmark — save again to bind"); return `<div class="save-slot"><button type="button" data-favourite data-bookmark-key="${escapeHtml(bookmarkKey)}">${escapeHtml(item.label)} <span>${escapeHtml(saveLabel)} · Open current state</span></button><button type="button" data-delete-favourite data-bookmark-key="${escapeHtml(bookmarkKey)}" aria-label="Delete ${escapeHtml(item.label)} from ${escapeHtml(saveLabel)}">Delete</button></div>`; }).join("") : `<span class="hint">Select an organism, then favourite it. The bookmark belongs only to that saved world.</span>`;
     updateLaboratoryMarkup(ui.favouriteList, favouriteMarkup);
     const seeds = readLocalList(SEEDS_KEY);
     const seedMarkup = seeds.length ? seeds.map((seed) => `<div class="save-slot"><button type="button" data-seed="${seed}">World seed ${seed} <span>Open</span></button><button type="button" data-delete-seed="${seed}" aria-label="Delete world seed ${seed}">Delete</button></div>`).join("") : `<span class="hint">Save the current map seed to revisit it.</span>`;
@@ -11225,7 +11988,8 @@ function updateUIWork(force = false, now = performance.now()) {
     const lived = Number.isFinite(corpse.lived) ? `${corpse.lived.toFixed(1)} days lived` : "age unknown before observation";
     const remainingPercent = Math.round(clamp(corpse.biomass / Math.max(.001, corpse.initialBiomass) * 100, 0, 100));
     ui.selectedName.textContent = `${corpse.sourceId || corpse.id} remains`;
-    ui.selectedKind.textContent = `Dead ${guildOf(corpse)}`;
+    const corpseSpecies = speciesProfile(corpse);
+    ui.selectedKind.textContent = `Carcass · ${corpseSpecies?.label || corpse.speciesId || "unknown species"} · ${guildOf(corpse)}`;
     ui.selectedSex.textContent = corpse.sex;
     ui.selectedAge.textContent = lived;
     ui.selectedStage.textContent = `${corpse.lifeStage || "unknown stage"}; ${stage}; carcass age ${Number(corpse.age || 0).toFixed(0)}h`;
@@ -11237,7 +12001,9 @@ function updateUIWork(force = false, now = performance.now()) {
     ui.selectedHealth.textContent = "0% — deceased";
     ui.selectedHydration.textContent = corpse.finalHydration.toFixed(0);
     ui.selectedInjuries.textContent = `terminal cause: ${corpse.cause}`;
-    ui.selectedFeeding.textContent = corpse.eaten ? "skeleton / consumed" : `${corpse.biomass.toFixed(1)} food remains (${remainingPercent}%)`;
+    const preferredScavengers = SPECIES_IDS.filter(id => carcassPreference(id, corpse) >= 1).map(id => species[id].label);
+    const avoidedScavengers = SPECIES_IDS.filter(id => eatsMeat(id) && carcassPreference(id, corpse) < .2).map(id => species[id].label);
+    ui.selectedFeeding.textContent = corpse.eaten ? `skeleton / consumed; source species ${corpseSpecies?.label || corpse.speciesId || "unknown"}` : `${corpse.biomass.toFixed(1)} food remains (${remainingPercent}%); source species ${corpseSpecies?.label || corpse.speciesId || "unknown"}; preferred by ${preferredScavengers.join(", ") || "no specialist"}; avoided by ${avoidedScavengers.join(", ") || "none recorded"}`;
     ui.selectedDrive.textContent = "none";
     ui.selectedExpression.textContent = "historical — organism is deceased";
     ui.selectedRelation.textContent = `${corpse.offspring || 0} offspring; claimed by ${corpse.ownerId || "none"}`;
@@ -11274,7 +12040,10 @@ function updateUIWork(force = false, now = performance.now()) {
     ui.selectedInjuries.textContent = (selected.injuries || []).length ? (selected.injuries || []).map((injury) => `${injury.type} ${(injury.severity * 100).toFixed(0)}%${injury.sourceId ? ` from ${injury.sourceId}` : ""}`).join("; ") : "none";
     const development = developmentalFeedingProfile(selected, s);
     const developmentalStatus = selected.lifeStage === "dependent" ? `; ${development.phase.replaceAll("-", " ")}; milk reliance ${Math.round(development.milkReliance * 100)}%; solid-food readiness ${Math.round(development.solidReadiness * 100)}%; solid meals ${selected.weaningSolidMeals || 0}` : "";
-    ui.selectedFeeding.textContent = `${feedingState(selected)}; gut nutrients ${Math.round(selected.stomachCalories)} kcal (${selected.stomach.toFixed(0)}%); predictive hunger ${predictiveHunger(selected).toFixed(0)}%; metabolic demand ${(selected.metabolicCaloriesPerTick || 0).toFixed(1)} kcal/tick; ${String(fuel.phase).replaceAll("-", " ")} phase; protein lost ${fuel.proteinLostKg.toFixed(3)} kg; stress debt ${fuel.stressLoad.toFixed(0)}%${developmentalStatus}${selected.fertilityImpaired ? "; lasting low-fat fertility impairment" : ""}`;
+    const foodProfile = foodPreferenceSummary(selected);
+    const foodLikes = [...foodProfile.preferredPlants, ...foodProfile.preferredCarrion].join(", ") || "no strong preference";
+    const foodDislikes = [...foodProfile.avoidedPlants, ...foodProfile.avoidedCarrion].join(", ") || "none recorded";
+    ui.selectedFeeding.textContent = `${feedingState(selected)}; prefers ${foodLikes}; avoids ${foodDislikes}; gut nutrients ${Math.round(selected.stomachCalories)} kcal (${selected.stomach.toFixed(0)}%); predictive hunger ${predictiveHunger(selected).toFixed(0)}%; metabolic demand ${(selected.metabolicCaloriesPerTick || 0).toFixed(1)} kcal/tick; ${String(fuel.phase).replaceAll("-", " ")} phase; protein lost ${fuel.proteinLostKg.toFixed(3)} kg; stress debt ${fuel.stressLoad.toFixed(0)}%${developmentalStatus}${selected.fertilityImpaired ? "; lasting low-fat fertility impairment" : ""}`;
     if (ui.selectedBiology) { const sensed = (selected.sensoryBuffer || []).slice(-1)[0], consequence = selected.thermalPerformance < .85 ? `Current temperature permits ${Math.round(selected.thermalPerformance * 100)}% locomotor performance.` : selected.lastDigestionEfficiency != null && selected.lastDigestionEfficiency < .8 ? `The latest food was processed at ${Math.round(selected.lastDigestionEfficiency * 100)}% efficiency.` : sensed ? `Latest evidence came through ${sensed.channel}.` : "No immediate biological impairment."; ui.selectedBiology.textContent = `${phenotypeSummary(selected).join("; ")}. ${consequence}`; }
     ui.selectedDrive.textContent = selected.drive || dominantDrive(selected);
     ui.selectedExpression.textContent = emotionExplanation(selected);
@@ -11285,7 +12054,10 @@ function updateUIWork(force = false, now = performance.now()) {
     const traitProfile = selected.traitArchitecture ? `; inherited profile ${selected.traitArchitecture.overallBand}, ${selected.traitArchitecture.profile} (overall ${selected.traitArchitecture.overallScore.toFixed(2)}, divergence ${selected.traitArchitecture.divergenceScore.toFixed(2)}, prenatal ${Math.round(selected.traitArchitecture.prenatalQuality * 100)}%)` : "";
     const loss = activeBereavement(selected);
     const bereavementProfile = loss ? `; active bereavement: ${loss.relationship} ${loss.deceasedId}, grief ${Math.round(loss.griefIntensity * 100)}%, danger ${Math.round(loss.dangerIntensity * 100)}%, phase ${loss.phase}, killer evidence ${loss.attackerId ? `${loss.attackerId} at ${Math.round(loss.attackerConfidence * 100)}% confidence` : "none"}, current response ${selected.drive || "not active"}` : "";
-    ui.selectedRelation.textContent = `${relationText(selected)}; ${socialRelationshipText(selected)}${bereavementProfile}; traits: ${ecologicalTraits}, care ${(selected.careAffinity || 0.5).toFixed(2)}, aggression ${selected.aggression.toFixed(2)}, memory persistence ${(selected.memoryPersistence || 1).toFixed(2)}, personal-space preference ${selected.personalSpaceTrait.toFixed(2)}, intrusion tolerance ${selected.intrusionTolerance.toFixed(2)}, typical boundary ${personalRadius.toFixed(2)}m${traitProfile}${matureMating}${preference ? `; visible-trait preference: injury tolerance ${preference.injuryTolerance}, mass ${preference.preferredMass.toFixed(0)} kg, age ${preference.preferredAge.toFixed(0)} d, aggression ${preference.preferredAggression.toFixed(2)}, observed libido ${preference.preferredLibido.toFixed(2)}, duration ${preference.preferredMatingDuration.toFixed(0)}±${preference.matingDurationTolerance.toFixed(0)}m, foraging ${preference.valuesForaging.toFixed(2)}, care ${preference.valuesCare.toFixed(2)}, calm movement ${preference.valuesCalmMovement.toFixed(2)}, attentive head movement ${preference.valuesAttentiveness.toFixed(2)}` : ""}`;
+    const spatialProfile = spatialEcology(selected);
+    const territoryClaim = Object.values(sim.territoryClaims || {}).find(claim => claim.ownerId === selected.id || (selected.groupId && claim.ownerId === selected.groupId));
+    const territoryText = spatialProfile.territoriality < .35 ? `${spatialProfile.mode}; non-exclusive home range` : territoryClaim ? `${territoryClaim.mode || spatialProfile.mode}; ${territoryClaim.established ? "established" : "establishing"} defended area, radius ${territoryClaim.radius.toFixed(1)}m` : `${spatialProfile.mode}; no defended claim established`;
+    ui.selectedRelation.textContent = `${relationText(selected)}; ${socialRelationshipText(selected)}${bereavementProfile}; spatial ecology: ${territoryText}; traits: ${ecologicalTraits}, care ${(selected.careAffinity || 0.5).toFixed(2)}, aggression ${selected.aggression.toFixed(2)}, memory persistence ${(selected.memoryPersistence || 1).toFixed(2)}, personal-space preference ${selected.personalSpaceTrait.toFixed(2)}, intrusion tolerance ${selected.intrusionTolerance.toFixed(2)}, typical boundary ${personalRadius.toFixed(2)}m${traitProfile}${matureMating}${preference ? `; visible-trait preference: injury tolerance ${preference.injuryTolerance}, mass ${preference.preferredMass.toFixed(0)} kg, age ${preference.preferredAge.toFixed(0)} d, aggression ${preference.preferredAggression.toFixed(2)}, observed libido ${preference.preferredLibido.toFixed(2)}, duration ${preference.preferredMatingDuration.toFixed(0)}±${preference.matingDurationTolerance.toFixed(0)}m, foraging ${preference.valuesForaging.toFixed(2)}, care ${preference.valuesCare.toFixed(2)}, calm movement ${preference.valuesCalmMovement.toFixed(2)}, attentive head movement ${preference.valuesAttentiveness.toFixed(2)}` : ""}`;
     ui.selectedMemory.innerHTML = detailedMemoryHtml(selected);
     ui.selectedTarget.textContent = selected.actionTarget || selected.predation?.targetId || "none";
     const listening = (selected.stationaryTicks || 0) >= 2 ? "focused listening ×5" : "moving/ordinary listening";
@@ -11308,6 +12080,7 @@ function updateUIWork(force = false, now = performance.now()) {
   renderLiveNeedPlanning(selected);
   renderPredictiveLaboratory(selected);
   renderVisualLanguageLaboratory();
+  renderEcologyLaboratory(selected, corpse);
   if (laboratorySurfaceVisible(document.querySelector("#society-workspace"))) renderOntologyWorkspaces(selected);
   ui.viewMode.textContent = selected ? "Entity awareness" : corpse ? "Carcass record" : selectedOrganization() ? "Herd overview" : selectedGroupMembers().length ? "Group overview" : terrain ? "Laboratory terrain" : "Laboratory map";
   updateObserverHud(selected, herb, carn, corpse);
@@ -11334,6 +12107,75 @@ function observerMemberSummary(a) {
   const movement = a.actionState?.moving ? "moving" : "stationary";
   const injury = visibleInjuryCue(a), visibleCondition = injury === "none" ? "no obvious injury" : injury.replaceAll("-", " ");
   return `<li><button type="button" class="observer-member" data-member-focus="${escapeHtml(a.id)}"><strong>${escapeHtml(a.id)}</strong> · ${sex} · ${escapeHtml(a.lifeStage)}${a.id === a.groupLeaderId ? " · leader" : ""}<span>${movement} · ${escapeHtml(visibleCondition)}</span></button></li>`;
+}
+
+function reconcileObserverDetailNode(current, next) {
+  if (!current || !next || current.nodeType !== next.nodeType || (current.nodeType === Node.ELEMENT_NODE && current.tagName !== next.tagName)) {
+    current?.replaceWith(next.cloneNode(true));
+    return true;
+  }
+  if (current.nodeType === Node.TEXT_NODE) {
+    if (current.data !== next.data) current.data = next.data;
+    return false;
+  }
+  if (current.nodeType !== Node.ELEMENT_NODE) return false;
+  // Typography metadata and its inline font size are runtime presentation
+  // state, so they are intentionally absent from freshly generated markup.
+  // Removing them on every live update briefly collapses the panel to its
+  // unscaled layout before the typography observer restores it next frame.
+  const typographyRole = current.dataset.typographyRole;
+  const typographyManaged = current.dataset.typographyManaged;
+  const managedFontSize = typographyManaged === "true" ? current.style.fontSize : "";
+  for (const attribute of [...current.attributes]) {
+    if (["data-typography-role", "data-typography-managed"].includes(attribute.name)) continue;
+    if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+  }
+  for (const attribute of [...next.attributes]) if (current.getAttribute(attribute.name) !== attribute.value) current.setAttribute(attribute.name, attribute.value);
+  if (typographyRole) current.dataset.typographyRole = typographyRole;
+  if (typographyManaged) current.dataset.typographyManaged = typographyManaged;
+  if (managedFontSize) current.style.fontSize = managedFontSize;
+  if (current instanceof HTMLInputElement && next instanceof HTMLInputElement) {
+    current.checked = next.checked;
+    current.disabled = next.disabled;
+  }
+  if (current instanceof HTMLDetailsElement && next instanceof HTMLDetailsElement) current.open = next.open;
+  const currentChildren = [...current.childNodes], nextChildren = [...next.childNodes], shared = Math.min(currentChildren.length, nextChildren.length);
+  let structureChanged = false;
+  for (let index = 0; index < shared; index += 1) structureChanged = reconcileObserverDetailNode(currentChildren[index], nextChildren[index]) || structureChanged;
+  if (currentChildren.length !== nextChildren.length) structureChanged = true;
+  for (let index = currentChildren.length - 1; index >= nextChildren.length; index -= 1) currentChildren[index].remove();
+  for (let index = shared; index < nextChildren.length; index += 1) current.append(nextChildren[index].cloneNode(true));
+  return structureChanged;
+}
+
+function reconcileObserverDetailMarkup(root, markup) {
+  const template = document.createElement("template");
+  template.innerHTML = markup;
+  const currentChildren = [...root.childNodes], nextChildren = [...template.content.childNodes], shared = Math.min(currentChildren.length, nextChildren.length);
+  let structureChanged = currentChildren.length !== nextChildren.length;
+  for (let index = 0; index < shared; index += 1) structureChanged = reconcileObserverDetailNode(currentChildren[index], nextChildren[index]) || structureChanged;
+  for (let index = currentChildren.length - 1; index >= nextChildren.length; index -= 1) currentChildren[index].remove();
+  for (let index = shared; index < nextChildren.length; index += 1) root.append(nextChildren[index].cloneNode(true));
+  return structureChanged;
+}
+
+function updateObserverDetailMarkup(markup, key, { immediate = false } = {}) {
+  if (!ui.hudDetail) return false;
+  const now = performance.now(), state = observerDetailRenderState;
+  if (state.key === key && state.markup === markup) return false;
+  if (!immediate && state.key === key && now - state.updatedAt < OBSERVER_DETAIL_UPDATE_INTERVAL_MS) return false;
+  const scrollTop = ui.hudDetail.scrollTop;
+  // Keep a single composited panel layer alive. Replacing the complete subtree
+  // made Chromium briefly composite the retired backdrop-filtered content below
+  // its replacement, producing a visible flash at this one-second cadence.
+  const structureChanged = reconcileObserverDetailMarkup(ui.hudDetail, markup);
+  // Type new/replaced nodes synchronously, before the browser can paint an
+  // intermediate layout. Text-only live updates retain their existing typed
+  // nodes and avoid a needless whole-panel measurement pass.
+  if (structureChanged) applyInterfacePresentation([ui.hudSelection]);
+  ui.hudDetail.scrollTop = scrollTop;
+  observerDetailRenderState = { key, markup, updatedAt: now };
+  return true;
 }
 
 function inheritedTraitProfileHtml(a) {
@@ -11367,6 +12209,69 @@ function predictionSymbolLegendHtml() {
   return `<section class="prediction-symbol-legend" data-prediction-symbol-legend aria-label="Complete current animal prediction symbol key"><header><strong>Prediction symbol key</strong><span>All ${ANIMAL_PREDICTION_SYMBOLS.length} current animal forecast types</span></header><div class="prediction-symbol-legend-grid">${items}</div><p>The dashed medallion always means a fallible animal forecast—not confirmed world truth. Shape identifies the process; confidence and estimated chance remain written explicitly. A neutral three-dot symbol is reserved for future or imported models that are not yet registered here.</p></section>`;
 }
 
+const OBSERVER_VISUAL_ICONS = Object.freeze({
+  health: "♥", hydration: "💧", fuel: "◒", burst: "➶", endurance: "◯", recovery: "↻",
+  water: "💧", drink: "💧", food: "🌿", graze: "🌿", hunt: "◆", prey: "◆", fear: "⚠",
+  threat: "⚠", safety: "⬟", flee: "➜", travel: "➜", walk: "➜", rest: "☾", recover: "↻",
+  group: "◎", social: "◎", mate: "♡", court: "♡", nurse: "◉", memory: "◇", scan: "◉",
+  evidence: "◌", action: "➤", sprint: "➶", debt: "◒", signal: "📣", call: "📣", warn: "⚠",
+  neutral: "○", calm: "◡", relaxed: "◡", sleepy: "☾", alert: "!", focused: "◉",
+  affiliative: "♡", worried: "⌁", startled: "!", panic: "‼", pain: "×", dizzy: "↺",
+  angry: "✦", strained: "≋", exhausted: "…", hot: "☀", cold: "❄", weary: "…", unknown: "?"
+});
+
+function observerVisualIcon(value, fallback = "unknown") {
+  const words = String(value || "").toLowerCase();
+  const key = Object.keys(OBSERVER_VISUAL_ICONS).find((candidate) => words.includes(candidate));
+  return OBSERVER_VISUAL_ICONS[key || fallback] || OBSERVER_VISUAL_ICONS.unknown;
+}
+
+function observerLifeStageMark(stage) {
+  return ({ egg: "⬭", dependent: "◉", baby: "◉", juvenile: "◔", subadult: "◕", adult: "●", old: "◌" })[stage] || "○";
+}
+
+function observerLaboratoryLink(section, label) {
+  return `<button type="button" class="observer-open-laboratory" data-open-laboratory-section="${escapeHtml(section)}">${escapeHtml(label)}</button>`;
+}
+
+function observerVisualMeter(label, value, icon, tone = "") {
+  const bounded = clamp(Number(value) || 0, 0, 100);
+  return `<div class="observer-visual-meter ${escapeHtml(tone)}" role="meter" aria-label="${escapeHtml(label)} ${Math.round(bounded)} percent" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(bounded)}" title="${escapeHtml(label)}"><span aria-hidden="true">${icon}</span><strong>${Math.round(bounded)}<small>%</small></strong><i><b style="--observer-value:${bounded.toFixed(1)}%"></b></i></div>`;
+}
+
+function observerPrimaryForecastHtml(animal) {
+  const cycle = animal?.predictiveCognition?.current || animal?.predictiveCycle || null;
+  const prediction = salientAnimalPrediction(cycle);
+  if (!prediction) return `<div class="observer-primary-forecast is-empty" role="img" aria-label="No admitted forecast"><span>?</span><strong>0</strong><small>—</small></div>`;
+  const description = describeAnimalPrediction(prediction), confidence = Math.round(clamp(Number(description?.confidence ?? prediction.confidence) || 0, 0, 1) * 100);
+  const horizon = String(description?.horizonLabel || "—").replace(/next\s*/i, "");
+  return `<div class="observer-primary-forecast" title="${escapeHtml(description?.headline || description?.moduleName || "Current forecast")}">${predictionConfidenceRingHtml(prediction, description)}<strong>${confidence}<small>%</small></strong><span aria-label="Forecast horizon">◷ ${escapeHtml(horizon)}</span></div>`;
+}
+
+function observerDecisionChainHtml(animal, { expanded = false } = {}) {
+  const state = migrateCommitment(animal, sim.tick), rankings = animal.goalPlan?.rankings || {};
+  const immediate = (rankings.immediateConcern || rankings.shortTerm || [])[0];
+  const alternatives = [...(rankings.immediateConcern || rankings.shortTerm || []), ...(rankings.supportingGoal || rankings.mediumTerm || [])].slice(0, expanded ? 4 : 2);
+  const priority = state.priority || animal.drive || immediate?.key || currentPriority(animal) || "unknown";
+  const method = animal.needDependencyPlan?.phase || animal.actionState?.method || animal.actionState?.key || "action";
+  const action = animal.actionState?.key || animal.actionState?.label || "action";
+  const node = (kind, value, score, status) => `<div class="observer-decision-node is-${status}" title="${escapeHtml(String(value).replaceAll("-", " "))}" aria-label="${escapeHtml(kind)} ${escapeHtml(String(value).replaceAll("-", " "))}${Number.isFinite(score) ? ` score ${Math.round(score)}` : ""}"><span>${observerVisualIcon(value, kind === "action" ? "action" : "unknown")}</span>${Number.isFinite(score) ? `<strong>${Math.round(score)}</strong>` : `<strong>${status === "selected" ? "✓" : "○"}</strong>`}</div>`;
+  const candidateNodes = alternatives.map((candidate, index) => node("candidate", candidate.key, candidate.score, index === 0 ? "selected" : "considered")).join("");
+  return `<div class="observer-decision-map" data-observer-decision-map><div class="observer-decision-main">${node("priority", priority, immediate?.score, "supported")}<i>→</i>${node("method", method, null, "selected")}<i>→</i>${node("action", action, null, "committed")}</div>${expanded ? `<div class="observer-decision-candidates" aria-label="Ranked candidate goals">${candidateNodes || node("candidate", priority, immediate?.score, "selected")}</div>` : ""}</div>`;
+}
+
+function observerHeaderHtml(animal) {
+  const stage = observerLifeStageMark(animal.lifeStage), sex = animal.sex === "F" ? "♀" : "♂", label = species[animal.speciesId]?.label || animal.speciesId;
+  const gestation = species[animal.speciesId]?.gestation, pregnancyProgress = animal.pregnant ? pregnancyPhysiology(animal.pregnant, gestation)?.progress : 0;
+  const pregnancy = animal.pregnant ? `<span class="observer-header-pregnancy" title="Pregnant">P ${Math.round(clamp(Number(pregnancyProgress) || 0, 0, 1) * 100)}%</span>` : "";
+  return `<span class="observer-header-species" role="img" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${isCarnivore(animal) ? "◆" : isOmnivore(animal) ? "◈" : "●"}</span><strong>${escapeHtml(animal.id)}</strong><span title="${animal.sex === "F" ? "Female" : "Male"}">${sex}</span><span title="${escapeHtml(animal.lifeStage)}">${stage}</span><span>${animal.age.toFixed(1)}<small>d</small></span>${pregnancy}`;
+}
+
+function observerHeaderStateHtml(animal) {
+  const expression = visibleExpression(animal, sim.tick), priority = currentPriority(animal) || animal.drive || "unknown", signal = activeEmittedSignal(animal, sim.tick);
+  return `<span class="observer-header-state" title="${escapeHtml(expression.label)}" aria-label="Visible expression ${escapeHtml(expression.label)}">${observerVisualIcon(expression.key, expression.key?.includes("fear") || expression.key?.includes("panic") ? "threat" : "unknown")}</span><i aria-hidden="true">→</i><span class="observer-header-state is-private" title="${escapeHtml(String(priority).replaceAll("-", " "))}" aria-label="Private priority ${escapeHtml(String(priority).replaceAll("-", " "))}">${observerVisualIcon(priority)}</span><i aria-hidden="true">→</i><span class="observer-header-state is-public" title="${escapeHtml(signal?.kind?.replaceAll("-", " ") || "No public signal")}" aria-label="${signal ? `Public signal ${escapeHtml(signal.kind.replaceAll("-", " "))}` : "No public signal"}">${signal ? observerVisualIcon(signal.kind) : "—"}</span>`;
+}
+
 function entityPredictiveSummaryHtml(animal, { expanded = false, compact = false, surface = "observer", showOpenButton = true } = {}) {
   const cycle = animal?.predictiveCognition?.current || animal?.predictiveCycle || null, state = animal?.predictiveCognition, prediction = salientAnimalPrediction(cycle), readable = prediction ? describeAnimalPrediction(prediction) : null, impact = describePredictiveDecisionImpact(cycle);
   if (!cycle) return `<section class="entity-predictive-summary is-empty${compact ? " is-compact" : ""}" data-entity-predictive data-predictive-surface="${escapeHtml(surface)}"${compact ? " data-predictive-compact=\"true\"" : ""}><div class="entity-predictive-heading"><span>Current forecast</span><strong>Awaiting a decision cycle</strong></div><p>No prediction has been generated for this animal yet. Existing behaviour remains available.</p></section>`;
@@ -11382,45 +12287,23 @@ function entityPredictiveSummaryHtml(animal, { expanded = false, compact = false
   const scoreEffects = impact.adjustments.length ? `<div class="entity-predictive-adjustments"><strong>Candidate effects</strong>${impact.adjustments.map(item => { const magnitude = clamp(Math.abs(item.scoreDelta || 0) / 28 * 100, 2, 100); return `<div class="entity-predictive-adjustment ${item.vetoApplied ? "is-veto" : item.scoreDelta < 0 ? "is-negative" : "is-positive"}"><span>${escapeHtml(item.label)}</span><div><i style="--prediction-effect:${magnitude.toFixed(1)}%"></i></div><b>${escapeHtml(item.effectLabel)}</b></div>`; }).join("")}</div>` : `<p class="entity-predictive-no-effect">No candidate score or feasibility change was applied on this decision path.</p>`;
   const vetoes = cycle.vetoes || [], blockedCandidates = (cycle.decisionImpact?.candidateAdjustments || []).filter(item => item.vetoApplied), vetoText = !vetoes.length ? "No predictive feasibility veto was recorded." : !cycle.decisionImpact ? "This older cycle recorded a feasibility constraint, but whether it was applied is unavailable." : cycle.decisionImpact.bypassed ? "A feasibility forecast existed, but the protected branch bypassed predictive coordination; it did not block this commitment." : !cycle.decisionImpact.coordinationQualified ? "A feasibility forecast was retained for inspection only; it did not block an action." : cycle.decisionImpact.vetoApplied && blockedCandidates.length ? blockedCandidates.map(candidate => { const registered = vetoes.find(item => (item.actionFamilies || []).includes(candidate.family)); return `${predictiveWords(candidate.drive || candidate.family || "matching action")} candidate blocked: ${registered?.reason || "predicted physical reserve is insufficient"}`; }).join(" · ") : cycle.decisionImpact.vetoApplied ? "A feasibility veto was applied, but this older record does not retain the affected candidate." : "A feasibility constraint qualified, but no matching candidate was blocked in this decision.", vetoSummary = `<div class="entity-predictive-veto ${cycle.decisionImpact?.vetoApplied ? "" : "is-clear"}"><strong>Physical protection</strong><span>${escapeHtml(vetoText)}</span></div>`;
   const latestOutcome = state?.outcomes?.at?.(-1), learningSummary = latestOutcome ? `${latestOutcome.success ? "Consistent with" : "Not consistent with"} an outcome this animal observed${latestOutcome.corrected ? "; bounded model confidence was updated" : "; no adaptive update was made"}. ${latestOutcome.evaluation?.label || ""}`.trim() : "No owner-observed forecast has resolved yet.";
-  const expandedDetail = !expanded ? "" : `<div class="entity-predictive-expanded">${predictionSymbolLegendHtml()}<div class="entity-predictive-module-list entity-predictive-forecast-grid" data-forecast-confidence-grid><strong>All admitted forecasts this cycle</strong>${admittedModules.map(({ item, readable: description }) => `<article class="entity-predictive-forecast-card" data-forecast-confidence-card><div class="entity-predictive-forecast-visual">${predictionConfidenceRingHtml(item, description)}</div><div class="entity-predictive-forecast-copy"><span class="entity-predictive-forecast-module">${escapeHtml(description.moduleName)}</span><strong>${escapeHtml(description.headline)}</strong><p>${escapeHtml(description.detail)}</p><small>${escapeHtml(description.horizonLabel)} · Decision role: ${escapeHtml(predictiveWords(item.authority))}</small></div></article>`).join("") || `<p>No forecast met admission requirements.</p>`}</div><div class="entity-predictive-evidence"><strong>Evidence behind the headline forecast</strong><ul>${evidence.map(item => `<li>${escapeHtml(item)}</li>`).join("") || "<li>No external evidence was required.</li>"}</ul></div>${scoreEffects}${vetoSummary}<div class="entity-predictive-learning"><strong>Latest correction</strong><span>${escapeHtml(learningSummary)}</span></div></div>`;
-  return `<section class="entity-predictive-summary is-${escapeHtml(impact.tone)}" data-entity-predictive data-predictive-surface="${escapeHtml(surface)}">${summaryContent}${flow}<div class="entity-predictive-effect"><span>${escapeHtml(impact.headline)}</span><p>${escapeHtml(impact.detail)}</p></div>${impactRows}${expandedDetail}${!expanded && showOpenButton ? `<button type="button" class="entity-predictive-open" data-open-observer-predictions>Inspect every forecast and effect</button>` : ""}</section>`;
+  const admittedForecasts = !expanded ? "" : `<div class="entity-predictive-module-list entity-predictive-forecast-grid" data-forecast-confidence-grid><strong>All admitted forecasts this cycle</strong>${admittedModules.map(({ item, readable: description }) => `<article class="entity-predictive-forecast-card" data-forecast-confidence-card><div class="entity-predictive-forecast-visual">${predictionConfidenceRingHtml(item, description)}</div><div class="entity-predictive-forecast-copy"><span class="entity-predictive-forecast-module">${escapeHtml(description.moduleName)}</span><strong>${escapeHtml(description.headline)}</strong><p>${escapeHtml(description.detail)}</p><small>${escapeHtml(description.horizonLabel)} · Decision role: ${escapeHtml(predictiveWords(item.authority))}</small></div></article>`).join("") || `<p>No forecast met admission requirements.</p>`}</div>`;
+  const expandedDetail = !expanded ? "" : `<div class="entity-predictive-expanded">${predictionSymbolLegendHtml()}<div class="entity-predictive-evidence"><strong>Evidence behind the headline forecast</strong><ul>${evidence.map(item => `<li>${escapeHtml(item)}</li>`).join("") || "<li>No external evidence was required.</li>"}</ul></div>${scoreEffects}${vetoSummary}<div class="entity-predictive-learning"><strong>Latest correction</strong><span>${escapeHtml(learningSummary)}</span></div></div>`;
+  return `<section class="entity-predictive-summary is-${escapeHtml(impact.tone)}" data-entity-predictive data-predictive-surface="${escapeHtml(surface)}">${admittedForecasts}${summaryContent}${flow}<div class="entity-predictive-effect"><span>${escapeHtml(impact.headline)}</span><p>${escapeHtml(impact.detail)}</p></div>${impactRows}${expandedDetail}${!expanded && showOpenButton ? `<button type="button" class="entity-predictive-open" data-open-observer-predictions>Inspect every forecast and effect</button>` : ""}</section>`;
 }
 
 function observerWholeAnimalOverviewHtml(animal) {
-  const physical = performanceState(animal), state = migrateCommitment(animal, sim.tick), plan = animal.needDependencyPlan, rankings = animal.goalPlan?.rankings || {};
-  const cap = Math.max(1, Number(animal.healthCap ?? 100)), health = clamp(Number(animal.health) || 0, 0, 100), injuries = animal.injuries || [];
-  const meter = (label, value, tone = "", display = `${Math.round(clamp(value, 0, 100))}%`) => {
-    const bounded = clamp(Number(value) || 0, 0, 100);
-    return `<div class="observer-overview-meter ${escapeHtml(tone)}" role="img" aria-label="${escapeHtml(label)} ${escapeHtml(display)}"><div><span>${escapeHtml(label)}</span><strong>${escapeHtml(display)}</strong></div><div class="observer-overview-meter-track"><i style="--overview-fill:${bounded.toFixed(1)}%"></i></div></div>`;
-  };
-  const immediate = (rankings.immediateConcern || rankings.shortTerm || [])[0], supporting = (rankings.supportingGoal || rankings.mediumTerm || [])[0];
-  const priority = state.priority || animal.drive || immediate?.key || currentPriority(animal) || "uncommitted", thought = thoughtSymbol(animal, priority);
-  const prerequisite = plan?.phase || "none active", nextStep = plan?.reason || animal.actionState?.intendedOutcome || "continue the current action";
-  const action = actionSymbol(animal, animal.actionState?.key), actionLabel = action?.label || animal.actionState?.label || animal.actionState?.key || "ordinary activity";
-  const destination = animal.actionState?.destination || animal.motionTarget, target = animal.actionTarget || animal.predation?.targetId;
-  const where = target ? `toward ${target}` : Number.isFinite(destination?.x) && Number.isFinite(destination?.z) ? `toward (${destination.x.toFixed(1)}, ${destination.z.toFixed(1)})` : animal.actionState?.moving ? "continuing its current movement" : "remaining here";
-  const expression = visibleExpression(animal, sim.tick), activeSignal = activeEmittedSignal(animal, sim.tick), signalText = activeSignal ? socialSignalLabel(activeSignal.kind, animal, activeSignal) : "none currently emitted";
-  const groupName = animal.groupId ? groupDisplayName(sim.groupIdentities, animal.groupId) : "No current group", groupRole = animal.groupId ? animal.id === animal.groupLeaderId ? "leader" : "member" : "independent";
-  const relatives = (animal.relationships || []).filter(relation => ["parent", "offspring", "sibling", "kinship", "dependency"].includes(relation.kind)).length;
-  const ordinaryMemories = animal.memories || [], mediumMemories = animal.mediumTermMemory || [], longMemories = animal.longMemory || [], socialMemories = Object.values(animal.socialMemory || {}), recentMemory = ordinaryMemories.at(-1) || longMemories.at(-1) || null;
-  const recentMemoryText = recentMemory ? `${String(recentMemory.type || recentMemory.kind || "event").replaceAll("-", " ")}${recentMemory.targetId ? ` · ${recentMemory.targetId}` : ""} · ${Math.round((Number(recentMemory.confidence) || 0) * 100)}% confidence` : "none retained yet";
-  const threatConfidence = Number(animal.threatAssessment?.overallConfidence) || 0, threatText = threatConfidence > 0 ? `${Math.round(threatConfidence * 100)}% supported · ${animal.threatAssessment?.explanation || "possible danger evidence"}` : "no supported predator evidence";
-  const reproduction = reproductionStage(animal, sim.tick), reproductiveText = animal.pregnant ? `pregnant · ${Number(animal.pregnant.age || 0).toFixed(1)} days` : reproduction !== "none" ? reproduction.replaceAll("-", " ") : "no active reproductive event";
-  const injuryText = injuries.length ? `${injuries.length} recorded · ${visibleInjuryCue(animal).replaceAll("-", " ")}` : "no recorded injury";
-  const traitText = animal.traitArchitecture ? `${animal.traitArchitecture.overallBand} capability · ${animal.traitArchitecture.profile}` : "Founding animal · inherited distribution unavailable";
-  const forecast = entityPredictiveSummaryHtml(animal, { expanded: false, compact: true, surface: "observer-overview", showOpenButton: false });
-  const fact = (label, value) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
-  return `<section class="observer-whole-overview" data-observer-overview>
-    <div class="observer-overview-heading"><strong>Whole animal now</strong><span>${escapeHtml(physical.zone.replaceAll("-", " "))} · ${escapeHtml(physical.affordablePace.replaceAll("-", " "))}</span></div>
-    <section class="observer-overview-vitals" data-overview-section="physiology" aria-label="Current body and performance summary"><div class="observer-overview-section-heading"><strong>Body and performance</strong><span>live values</span></div><div class="observer-overview-meter-grid">${meter("Health", health, health < 45 ? "is-danger" : "", cap < 100 ? `${Math.round(health)} / ${Math.round(cap)} cap` : `${Math.round(health)}%`)}${meter("Hydration", animal.hydration, "is-water")}${meter("Accessible fuel", physical.accessibleFuel)}${meter("Burst capacity", physical.burst)}${meter("Aerobic headroom", physical.endurance)}${meter("Recovery burden", physical.recovery, "is-recovery")}</div></section>
-    <div class="observer-overview-forecast" data-overview-section="forecast">${forecast}</div>
-    <div class="observer-overview-grid">
-      <article class="observer-overview-card" data-overview-section="needs-goals"><header><strong>Needs and goals</strong><span>private state</span></header><dl>${fact("Current priority", thought?.label || priority)}${fact("Immediate concern", immediate ? `${immediate.key}${Number.isFinite(immediate.score) ? ` · ${Math.round(immediate.score)}` : ""}` : priority)}${fact("Supporting goal", supporting?.key || "none ranked")}${fact("Next prerequisite", `${prerequisite} · ${nextStep}`)}</dl></article>
-      <article class="observer-overview-card" data-overview-section="action"><header><strong>Action and context</strong><span>now</span></header><dl>${fact("Method", actionLabel)}${fact("Why", causalExplanation(animal))}${fact("Where", where)}${fact("Target", String(target || "none"))}</dl></article>
-      <article class="observer-overview-card" data-overview-section="social"><header><strong>Social and outward state</strong><span>visible / public</span></header><dl>${fact("Group", `${groupName} · ${groupRole}${animal.groupGoal ? ` · ${animal.groupGoal}` : ""}`)}${fact("Public signal", signalText)}${fact("Visible expression", expression.label)}${fact("Known relatives", String(relatives))}</dl></article>
-      <article class="observer-overview-card" data-overview-section="memory"><header><strong>Awareness and memory</strong><span>animal-owned</span></header><dl>${fact("Current evidence", `${(animal.sensoryBuffer || []).length} sensory contacts · ${threatText}`)}${fact("Memory stores", `${ordinaryMemories.length} short · ${mediumMemories.length} medium · ${longMemories.length} long · ${socialMemories.length} social`)}${fact("Recent memory", recentMemoryText)}</dl></article>
-      <article class="observer-overview-card is-wide" data-overview-section="life-traits"><header><strong>Condition, life and traits</strong><span>condensed profile</span></header><dl>${fact("Condition", `${injuryText} · ${animal.thermalStatus || "comfortable"} at ${Number(animal.bodyTemperature || 0).toFixed(1)}°C · ${feedingState(animal)}`)}${fact("Reproduction", reproductiveText)}${fact("Inherited profile", traitText)}</dl></article>
-    </div>
+  const physical = performanceState(animal), expression = visibleExpression(animal, sim.tick), face = facialExpressionSymbol(expression);
+  const activeSignal = activeEmittedSignal(animal, sim.tick), signalSymbol = activeSignal ? emittedSymbol(animal, activeSignal.kind) : null;
+  const facePreview = exactSymbolPreview(emotionFaceMaterial(expression.key, animal.speciesId), face.label, `overview-expression|${animal.speciesId}|${expression.key}`, { decorative: true });
+  const signalResolved = signalSymbol ? resolveSymbolPresentation({ animal, channel: "public-signal", symbol: simplifyAttachedSignal(signalSymbol, Boolean((animal.vocalUntil || 0) > sim.tick)), vocal: Boolean((animal.vocalUntil || 0) > sim.tick) }) : null;
+  const signalPreview = signalResolved ? exactSymbolPreview(semanticBadgeMaterial(signalResolved), signalResolved.explanation, signalResolved.signature, { decorative: true }) : `<span class="observer-symbol-empty" aria-hidden="true">—</span>`;
+  return `<section class="observer-visual-overview" data-observer-overview>
+    <div class="observer-visual-presentation"><article title="${escapeHtml(face.label)}">${facePreview}</article><article title="${escapeHtml(signalSymbol?.label || "No public cue")}">${signalPreview}</article></div>
+    <div class="observer-visual-meter-grid">${observerVisualMeter("Health", animal.health, "♥", animal.health < 45 ? "is-danger" : "")}${observerVisualMeter("Hydration", animal.hydration, "💧", "is-water")}${observerVisualMeter("Accessible fuel", physical.accessibleFuel, "◒")}${observerVisualMeter("Burst capacity", physical.burst, "➶")}${observerVisualMeter("Aerobic headroom", physical.endurance, "◯")}${observerVisualMeter("Recovery burden", physical.recovery, "↻", "is-recovery")}</div>
+    ${observerDecisionChainHtml(animal)}
+    ${observerPrimaryForecastHtml(animal)}
+    <div class="observer-visual-actions">${observerLaboratoryLink("entity", "Open identity in Laboratory")}${observerLaboratoryLink("reference", "? Symbols")}</div>
   </section>`;
 }
 
@@ -11433,9 +12316,7 @@ function observerSocialVisualGuideHtml(animal) {
   const alignmentText = !alignment.compared ? "neutral pale cloud · no outward signal to compare" : alignment.aligned ? "pale green-grey cloud · private priority and public signal align" : "grey cloud · private priority and public signal differ";
   const vocalActive = Boolean((animal.vocalUntil || 0) > sim.tick), signalRule = publicSignalPresentation({ signal: signalSymbol, expressionKey: expression.key, vocalActive });
   const signalResolved = signalSymbol ? resolveSymbolPresentation({ animal, channel: "public-signal", symbol: simplifyAttachedSignal(signalSymbol, vocalActive), vocal: vocalActive }) : null;
-  const action = actionSymbol(animal, animal.actionState?.key), actionResolved = action ? resolveSymbolPresentation({ animal, channel: "activity", symbol: action }) : null;
-  const urgentImpact = hasVisualEvent("attack", animal) || hasVisualEvent("injury-alert", animal);
-  const actionRule = actionBadgePresentation({ notable: BADGED_BEHAVIOURS.has(animal.actionState?.key), dominant: dominantWorldCue({ signal: signalSymbol, action, injured: (animal.injuries || []).length > 0, attacked: hasVisualEvent("attack", animal) }), urgentImpact });
+  const forecastCue = predictiveInsightCue(animal.predictiveCycle) || emptyPredictionInsightCue(animal.predictiveCycle, "no-new-insight");
   const safeAnimalId = String(animal?.id || "selected").replace(/[^a-z0-9_-]/gi, "-");
   const channelPresentation = (preview, channel, epistemic, title, meaning, detail, state = "") => {
     const id = `social-${safeAnimalId}-${channel}`, classes = [state, preview ? "" : "no-symbol"].filter(Boolean).join(" ");
@@ -11445,21 +12326,58 @@ function observerSocialVisualGuideHtml(animal) {
     };
   };
   const thoughtPreview = exactSymbolPreview(thoughtBubbleMaterialFromPresentation(thoughtResolved, alignment.tone), thoughtResolved.explanation, thoughtResolved.signature, { decorative: true });
-  const actionPreview = actionResolved ? exactSymbolPreview(actionBadgeMaterial(animal, animal.actionState?.key, priorityCategory(priority)), actionResolved.explanation, actionResolved.signature, { decorative: true }) : "";
+  const forecastPreview = exactSymbolPreview(predictionInsightMaterial(animal, forecastCue), forecastCue.label, forecastCue.fingerprint, { decorative: true });
   const facePreview = exactSymbolPreview(emotionFaceMaterial(expression.key, animal.speciesId), face.label, `expression|${animal.speciesId}|${expression.key}`, { decorative: true });
   const signalPreview = signalResolved ? exactSymbolPreview(semanticBadgeMaterial(signalResolved), signalResolved.explanation, signalResolved.signature, { decorative: true }) : "";
   const thoughtChannel = channelPresentation(thoughtPreview, "private-thought", "private", "Private thought", "The animal's current private priority. Cloud colour compares it with any public signal.", `${thought.label} · ${alignmentText}`);
-  const actionLabel = action?.label || "ordinary movement";
-  const actionChannel = channelPresentation(actionPreview, "notable-action", "observable", "Notable action", "A behaviour worth labelling because posture and movement arrows do not already explain it.", actionResolved ? actionRule.visible ? actionLabel : `${actionLabel} · ${actionRule.suppression}` : actionRule.suppression || "No separate badge; ordinary movement uses posture and arrows.", actionResolved && !actionRule.visible ? "is-suppressed" : "");
+  const forecastChannel = channelPresentation(forecastPreview, "private-forecast", "private", "Private forecast", "A fallible estimate made from the animal's own evidence. An unchanged bubble means no new forecast qualified; it does not claim that the world is unchanged.", `${forecastCue.label} · ${forecastCue.detail}`);
   const faceChannel = channelPresentation(facePreview, "visible-expression", "observable", "Visible expression", "An observable face other animals may see, not the animal's exact private priority.", face.label.split(" — ")[0]);
   const signalChannel = channelPresentation(signalPreview, "public-signal", "public", "Public signal", "A call or outward display. It can be mistaken and does not expose the exact private thought.", signalRule.exists ? signalRule.suppressedDuplicate ? `${signalSymbol.label} · not repeated because the visible face already communicates this passive condition` : `${signalSymbol.label} · ${signalRule.mode}` : "No call or outward display is active.", signalRule.exists && !signalRule.visible ? "is-suppressed" : "");
   const keyItem = (tone, label, detail) => `<div class="observer-thought-alignment-item is-${tone}${alignment.tone === tone ? " is-current" : ""}" data-thought-alignment-key="${tone}" role="listitem"><i aria-hidden="true"></i><span><strong>${label}</strong><small>${detail}</small></span></div>`;
-  return `<section class="observer-social-visual-guide" data-observer-social-visual-guide data-current-thought-alignment="${escapeHtml(alignment.tone)}">
-    <div class="observer-social-visual-heading"><strong>Private thought and outward display</strong><span>symbols first · explanations below</span></div>
-    <div class="observer-symbol-bays" data-observer-symbol-bays role="list" aria-label="Current private and outward symbols; explanations follow">${thoughtChannel.bay}${actionChannel.bay}${faceChannel.bay}${signalChannel.bay}</div>
-    <div class="observer-symbol-explanations" data-observer-symbol-explanations>${thoughtChannel.explanation}${actionChannel.explanation}${faceChannel.explanation}${signalChannel.explanation}</div>
-    <div class="observer-thought-alignment-key" role="list" aria-label="Ordinary thought-cloud colour key">${keyItem("private", "Neutral pale", "No public signal to compare")}${keyItem("aligned", "Pale green-grey", "Private priority and signal align")}${keyItem("divergent", "Grey", "Private priority and signal differ")}</div>
-  </section>`;
+  return {
+    visual: `<section class="observer-social-visual-only" aria-label="Private and outward presentation"><div class="observer-symbol-bays is-four" role="list">${thoughtChannel.bay}${forecastChannel.bay}${faceChannel.bay}${signalChannel.bay}</div></section>`,
+    observable: `<section class="observer-social-visual-guide observer-observable-display" data-observer-social-visual-guide="observable"><div class="observer-social-visual-heading"><strong>Expression and public callout</strong><span>externally observable</span></div><div class="observer-symbol-bays" data-observer-symbol-bays="observable" role="list" aria-label="Visible expression and public callout; explanations follow">${faceChannel.bay}${signalChannel.bay}</div><div class="observer-symbol-explanations" data-observer-symbol-explanations="observable">${faceChannel.explanation}${signalChannel.explanation}</div></section>`,
+    private: `<section class="observer-social-visual-guide observer-private-display" data-observer-social-visual-guide="private" data-current-thought-alignment="${escapeHtml(alignment.tone)}"><div class="observer-social-visual-heading"><strong>Private thought and forecast</strong><span>animal-owned · uncertain</span></div><div class="observer-symbol-bays" data-observer-symbol-bays="private" role="list" aria-label="Private priority and private forecast; explanations follow">${thoughtChannel.bay}${forecastChannel.bay}</div><div class="observer-symbol-explanations" data-observer-symbol-explanations="private">${thoughtChannel.explanation}${forecastChannel.explanation}</div><div class="observer-thought-alignment-key" role="list" aria-label="Ordinary thought-cloud colour key">${keyItem("private", "Neutral pale", "No public signal to compare")}${keyItem("aligned", "Pale green-grey", "Private priority and signal align")}${keyItem("divergent", "Grey", "Private priority and signal differ")}</div></section>`
+  };
+}
+
+function observerSocialVisualHtml(animal) {
+  const guide = observerSocialVisualGuideHtml(animal), phenotype = biologicalPhenotype(animal);
+  const socialMemoryEntries = Object.entries(animal.socialMemory || {});
+  const relationships = (Array.isArray(animal.relationships) && animal.relationships.length ? animal.relationships : socialMemoryEntries.map(([targetId, record]) => ({ targetId, ...(record || {}) }))).slice(0, 6), socialMemories = socialMemoryEntries.map(([, record]) => record);
+  const central = `<span class="observer-network-center" title="Selected animal">${escapeHtml(animal.id)}</span>`;
+  const nodes = relationships.map((relation, index) => {
+    const id = relation.targetId || relation.partnerId || relation.id || "?", kind = relation.kind || "remembered";
+    const kindClass = String(kind).toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+    const symbol = kind.includes("offspring") ? "○" : kind.includes("mate") ? "△" : kind.includes("leader") ? "□" : "◇";
+    const angle = index * (360 / Math.max(1, relationships.length)), strength = clamp(Number(relation.strength ?? relation.affinity ?? .45), .15, 1);
+    return `<i class="observer-network-link is-${kindClass}" style="--network-angle:${angle}deg;--network-strength:${strength}" aria-hidden="true"></i><button type="button" data-social-node="${escapeHtml(id)}" class="observer-network-node is-${kindClass}" style="--network-angle:${angle}deg;--network-strength:${strength}" title="${escapeHtml(kind)} · ${escapeHtml(id)}"><span>${symbol}</span></button>`;
+  }).join("");
+  const relatives = relationships.filter(item => ["parent", "offspring", "sibling", "kinship", "dependency"].includes(item.kind)).length;
+  const recipients = animal.receivedSignals?.length || 0;
+  return `<section class="observer-social-visual" data-observer-social-visual>${guide.visual}<div class="observer-social-network" aria-label="Local remembered social network">${central}${nodes || `<span class="observer-network-empty">◇</span>`}</div><div class="observer-social-counters"><span title="Recognised animals">◎ <strong>${socialMemories.length}</strong></span><span title="Known relatives">♧ <strong>${relatives}</strong></span><span title="Social recognition">◉ <strong>${Math.round((phenotype.cognition.socialRecognition || 0) * 100)}%</strong></span><span title="Current signal recipients">📣 <strong>${recipients}</strong></span></div>${observerLaboratoryLink("society", "Open social history in Laboratory")}</section>`;
+}
+
+function observerCommitmentVisualHtml(animal) {
+  const physical = performanceState(animal), fuel = metabolicPresentation(animal);
+  const badges = [["WALK", physical.affordablePace !== "none"], ["SPRINT", physical.burst], ["DEBT", fuel.anaerobicDebt], ["RECOVERY", physical.recovery]];
+  return `<section class="observer-commitment-visual" data-observer-commitment-visual>${observerDecisionChainHtml(animal, { expanded: true })}<div class="observer-physiology-badges">${badges.map(([label, value]) => `<span title="${label}"><i>${observerVisualIcon(label)}</i><strong>${typeof value === "boolean" ? value ? "✓" : "×" : `${Math.round(Number(value) || 0)}%`}</strong></span>`).join("")}</div>${observerLaboratoryLink("planning", "Open decision trace in Laboratory")}</section>`;
+}
+
+function observerForecastVisualHtml(animal) {
+  const cycle = animal?.predictiveCognition?.current || animal?.predictiveCycle || null, predictions = cycle?.predictions || [];
+  const cards = predictions.map((prediction) => {
+    const description = describeAnimalPrediction(prediction), confidence = Math.round(clamp(Number(description?.confidence ?? prediction.confidence) || 0, 0, 1) * 100);
+    const authority = String(prediction.authority || "advisory").toLowerCase(), admission = String(prediction.admission || prediction.status || "admitted").toLowerCase();
+    return `<article class="observer-forecast-medallion authority-${escapeHtml(authority)} admission-${escapeHtml(admission)}" title="${escapeHtml(description.headline || description.moduleName)}" aria-label="${escapeHtml(description.moduleName)} ${confidence} percent confidence ${escapeHtml(description.horizonLabel)} ${escapeHtml(authority)}">${predictionConfidenceRingHtml(prediction, description)}<div><strong>${confidence}<small>%</small></strong><span>◷ ${escapeHtml(String(description.horizonLabel || "—").replace(/next\s*/i, ""))}</span><i>${authority === "constraining" ? "⬟" : authority === "scoring" ? "◎" : "○"}</i></div></article>`;
+  }).join("");
+  const impact = cycle ? describePredictiveDecisionImpact(cycle) : { adjustments: [] }, adjustments = impact.adjustments || [];
+  const effects = adjustments.map((item) => {
+    const score = Number(item.scoreDelta || 0), width = clamp(Math.abs(score) / 28 * 100, 2, 100);
+    return `<div class="observer-forecast-effect ${score < 0 ? "is-negative" : "is-positive"}" title="${escapeHtml(item.label)} ${score.toFixed(1)}"><span>${observerVisualIcon(item.label)}</span><i><b style="--effect-width:${width.toFixed(1)}%"></b></i><strong>${score > 0 ? "+" : ""}${score.toFixed(1)}</strong></div>`;
+  }).join("");
+  const evidenceCount = predictions.reduce((sum, item) => sum + (item.evidenceRefs?.length || 0), 0), latest = animal.predictiveCognition?.outcomes?.at?.(-1);
+  return `<section class="observer-forecast-visual" data-observer-forecast-visual><div class="observer-forecast-budget"><span>${predictions.length}</span><strong>${predictiveNumber(cycle?.scheduler?.usedCost)}/${predictiveNumber(cycle?.scheduler?.budget)}</strong></div><div class="observer-forecast-medallions">${cards || `<div class="observer-forecast-empty" aria-label="No forecast admitted">?</div>`}</div><div class="observer-forecast-effects">${effects}</div><div class="observer-forecast-status"><span title="Evidence references">◌ <strong>${evidenceCount}</strong></span><span title="Latest owner-observed correction">↻ <strong>${latest ? latest.corrected ? "✓" : "○" : "—"}</strong></span></div>${observerLaboratoryLink("predictive", "Open forecast ledger in Laboratory")}</section>`;
 }
 
 function organizationStructureHtml(organization) {
@@ -11470,47 +12388,45 @@ function organizationStructureHtml(organization) {
     const kind = members.every((animal) => animal.speciesId === "hunter") ? "hunters" : members.every((animal) => isHerbivore(animal.speciesId)) ? "grazers" : "animals";
     return { groupId, members: members.slice().sort((left, right) => Number(right.id === leader.id) - Number(left.id === leader.id) || String(left.id).localeCompare(String(right.id))), leader, kind };
   }).filter(Boolean);
-  const rows = groups.map(({ groupId, members, leader, kind }) => {
-    const expanded = expandedHerdGroupIds.has(groupId), label = groupDisplayName(sim.groupIdentities, groupId);
-    return `<li class="observer-herd-group${expanded ? " is-expanded" : ""}" data-herd-group="${escapeHtml(groupId)}"><div class="observer-herd-group-summary"><button type="button" class="observer-member observer-group-expand" data-group-expand="${escapeHtml(groupId)}" aria-expanded="${expanded}"><i aria-hidden="true">${expanded ? "▾" : "▸"}</i><span class="observer-group-copy"><strong>${escapeHtml(label)}</strong> · ${members.length} ${kind}<small>Goal: ${escapeHtml(leader.groupGoal || "unresolved")} · leader: ${escapeHtml(leader.groupLeaderId || leader.id)}</small></span><span class="observer-expand-label">${expanded ? "Hide animals" : "Show animals"}</span></button><button type="button" class="observer-group-focus" data-group-focus="${escapeHtml(groupId)}" aria-label="Focus ${escapeHtml(label)} on the map">Focus group</button></div>${expanded ? `<ul class="observer-list observer-members observer-herd-group-members" aria-label="Animals in ${escapeHtml(label)}">${members.map(observerMemberSummary).join("")}</ul>` : ""}</li>`;
+  const rows = groups.map(({ groupId, members, leader, kind }, index) => {
+    const expanded = expandedHerdGroupIds.has(groupId), identityName = groupDisplayName(sim.groupIdentities, groupId), groupNumber = index + 1;
+    return `<li class="observer-herd-group${expanded ? " is-expanded" : ""}" data-herd-group="${escapeHtml(groupId)}" data-herd-group-index="${groupNumber}"><div class="observer-herd-group-summary"><button type="button" class="observer-member observer-group-expand" data-group-expand="${escapeHtml(groupId)}" aria-expanded="${expanded}" aria-label="${expanded ? "Hide" : "Show"} individuals in constituent group ${groupNumber}"><i aria-hidden="true">${expanded ? "▾" : "▸"}</i><span class="observer-group-copy"><strong>Group ${groupNumber}</strong><b>${members.length} ${kind}</b><small>Goal: ${escapeHtml(leader.groupGoal || "unresolved")} · leader: ${escapeHtml(leader.groupLeaderId || leader.id)}</small></span><span class="observer-expand-label">${expanded ? "Hide individuals" : "Show individuals"}</span></button><button type="button" class="observer-group-focus" data-group-focus="${escapeHtml(groupId)}" aria-label="Focus group ${groupNumber}, ${escapeHtml(identityName)}, on the map">Focus group</button></div>${expanded ? `<div class="observer-herd-members-title">Individuals in group ${groupNumber} · ${members.length}</div><ul class="observer-list observer-members observer-herd-group-members" aria-label="Individuals in constituent group ${groupNumber}">${members.map(observerMemberSummary).join("")}</ul>` : ""}</li>`;
   });
   const individuals = (organization.individualIds || []).map((id) => animalById(id)).filter((animal) => animal?.alive);
-  const individualRows = individuals.map((animal) => `<li><button type="button" class="observer-member" data-member-focus="${escapeHtml(animal.id)}"><strong>${escapeHtml(animal.id)}</strong> · attached individual<span>${escapeHtml(species[animal.speciesId]?.label || animal.speciesId)} · select this animal</span></button></li>`);
+  const individualRows = individuals.map((animal, index) => `<li><button type="button" class="observer-member" data-member-focus="${escapeHtml(animal.id)}"><strong>Individual ${index + 1} · ${escapeHtml(animal.id)}</strong><span>${escapeHtml(species[animal.speciesId]?.label || animal.speciesId)} · select this animal</span></button></li>`);
   const allExpanded = groups.length > 0 && groups.every(({ groupId }) => expandedHerdGroupIds.has(groupId));
-  return `<div class="observer-detail-title observer-herd-title"><span>Herd structure · ${rows.length} constituent ${rows.length === 1 ? "group" : "groups"}</span>${groups.length ? `<button type="button" data-herd-groups-toggle="all">${allExpanded ? "Collapse all" : "Expand all"}</button>` : ""}</div><p class="observer-overlay-hint">This herd is a temporary higher-level organisation. Expand a constituent group to inspect its animals here, or focus the group to replace the herd selection.</p><ul class="observer-list observer-organization-groups">${rows.join("") || "<li>No constituent group remains coherent.</li>"}${individualRows.join("")}</ul>`;
+  const directIndividuals = individuals.length ? `<div class="observer-herd-individuals"><div class="observer-detail-title">Individuals attached directly to this herd · ${individuals.length}</div><ul class="observer-list observer-members" aria-label="Individuals attached directly to this herd">${individualRows.join("")}</ul></div>` : "";
+  return `<div class="observer-detail-title observer-herd-title"><span>One herd · ${rows.length} constituent ${rows.length === 1 ? "group" : "groups"}</span>${groups.length ? `<button type="button" data-herd-groups-toggle="all">${allExpanded ? "Collapse all" : "Expand all"}</button>` : ""}</div><p class="observer-overlay-hint">This is one temporary higher-level herd. Its groups are listed below; expand a group to inspect its individuals, or focus it to select that group on its own.</p><ol class="observer-list observer-organization-groups" aria-label="Constituent groups in this herd">${rows.join("") || "<li>No constituent group remains coherent.</li>"}</ol>${directIndividuals}`;
 }
 
 function renderObserverDetail(selected, group, organization = selectedOrganization()) {
   if (!ui.hudDetail) return;
   if (organization && !selected) {
-    ui.hudDetail.innerHTML = organizationStructureHtml(organization);
+    const expansionKey = (organization.groupIds || []).map(id => `${id}:${expandedHerdGroupIds.has(id) ? 1 : 0}`).join(",");
+    updateObserverDetailMarkup(organizationStructureHtml(organization), `organization:${organization.id || organization.name || "selected"}:${expansionKey}`);
     return;
   }
   if (group.length && !selected) {
     const leader = group.find((a) => a.id === group[0].groupLeaderId) || group[0];
     const visibleMembers = group.slice().sort((a, b) => Number(b.id === leader.id) - Number(a.id === leader.id)).slice(0, 6);
-    ui.hudDetail.innerHTML = `<div class="observer-detail-title">Strategic view · externally observable members</div><ul class="observer-list observer-members">${visibleMembers.map(observerMemberSummary).join("")}${group.length > visibleMembers.length ? `<li>+ ${group.length - visibleMembers.length} more members · open Laboratory for the complete group</li>` : ""}</ul>`;
+    updateObserverDetailMarkup(`<div class="observer-detail-title">Strategic view · externally observable members</div><ul class="observer-list observer-members">${visibleMembers.map(observerMemberSummary).join("")}${group.length > visibleMembers.length ? `<li>+ ${group.length - visibleMembers.length} more members · open Laboratory for the complete group</li>` : ""}</ul>`, `group:${group[0]?.groupId || group.map(animal => animal.id).join(",")}`);
     return;
   }
-  if (!selected) { ui.hudDetail.innerHTML = ""; return; }
+  if (!selected) { updateObserverDetailMarkup("", "none", { immediate: true }); return; }
+  const detailKey = `animal:${selected.id}:${observerDetailTab}`;
   if (observerDetailTab === "view") {
-    ui.hudDetail.innerHTML = observerOverlayControls();
+    updateObserverDetailMarkup(observerOverlayControls(), detailKey);
   } else if (observerDetailTab === "memory") {
-    const memories = Object.values(selected.socialMemory || {}).sort((left, right) => (right.lastTick || right.tick || 0) - (left.lastTick || left.tick || 0)).slice(0, 5), phenotype = biologicalPhenotype(selected), activeSignal = activeEmittedSignal(selected, sim.tick), relatives = (selected.relationships || []).filter(relation => ["parent", "offspring", "sibling", "kinship", "dependency"].includes(relation.kind)).length;
-    const groupName = selected.groupId ? groupDisplayName(sim.groupIdentities, selected.groupId) : "No current group";
-    ui.hudDetail.innerHTML = `<div class="observer-detail-title">Social life</div><dl class="observer-social-summary"><div><dt>Organisation</dt><dd>${escapeHtml(phenotype.social.organisation.replaceAll("-", " "))}</dd></div><div><dt>Current group</dt><dd>${escapeHtml(groupName)}</dd></div><div><dt>Role</dt><dd>${selected.groupId ? selected.id === selected.groupLeaderId ? "leader" : "member" : "independent"}</dd></div><div><dt>Current signal</dt><dd>${escapeHtml(activeSignal?.kind?.replaceAll("-", " ") || "none")}</dd></div><div><dt>Known relatives</dt><dd>${relatives}</dd></div><div><dt>Social recognition</dt><dd>${Math.round((phenotype.cognition.socialRecognition || 0) * 100)}%</dd></div></dl>${observerSocialVisualGuideHtml(selected)}<div class="observer-detail-title">Recent social memory</div><ul class="observer-glance-list">${memories.length ? memories.map((memory) => `<li><strong>${escapeHtml(memory.partnerId || memory.targetId || "known animal")}</strong> · ${escapeHtml(memory.kind || memory.lastEvent || "familiar")} · affinity ${Number(memory.affinity || 0).toFixed(2)}${Number(memory.grievance || 0) > 0 ? ` · grievance ${Number(memory.grievance).toFixed(2)}` : ""}</li>`).join("") : "<li>No individual social relationship has become memorable yet.</li>"}</ul><p class="observer-overlay-hint">The organism can act on recognised individuals, kinship, group signals and remembered social outcomes. Laboratory contains the full network and history.</p>`;
+    updateObserverDetailMarkup(observerSocialVisualHtml(selected), detailKey);
   } else if (observerDetailTab === "priorities") {
-    const rankings = selected.goalPlan?.rankings || {}, row = (label, goals, limit) => (goals || []).slice(0, limit).map((goal, index) => `<li><strong>${label}${limit > 1 ? ` ${index + 1}` : ""}</strong> · ${escapeHtml(goal.key)}${Number.isFinite(goal.score) ? ` · ${Math.round(goal.score)}` : ""}</li>`).join("");
-    const state = migrateCommitment(selected, sim.tick), plan = selected.needDependencyPlan, protocol = state.protocolKey ? selected.learnedProtocols?.[state.protocolKey] : null;
-    const fuel = metabolicPresentation(selected), journey = plan?.forecast?.metabolicJourney;
-    ui.hudDetail.innerHTML = `<div class="observer-detail-title">Motivation and commitment</div>${observerFuelOverviewHtml(selected)}<ul class="observer-glance-list">${row("Immediate concern", rankings.immediateConcern || rankings.shortTerm, 2)}${row("Supporting goal", rankings.supportingGoal || rankings.mediumTerm, 1)}${row("Life strategy", rankings.lifeStrategy || rankings.longTerm, 1)}<li><strong>Current priority</strong> · ${escapeHtml(state.priority || selected.drive || "uncommitted")}</li><li><strong>Current prerequisite</strong> · ${escapeHtml(plan?.phase || "none active")}</li><li><strong>Next planned step</strong> · ${escapeHtml(plan?.reason || selected.actionState?.intendedOutcome || "continue current action")}</li><li><strong>Journey physiology</strong> · ${journey ? `${journey.viable ? "fuel viable" : "fuel insufficient"}; predicted arrival reserve ${journey.arrivalReserve.toFixed(1)}` : `no active journey forecast; anaerobic debt ${fuel.anaerobicDebt.toFixed(0)}%`}</li><li><strong>Protocol</strong> · ${escapeHtml(protocol?.method || state.protocolKey || "not learned")} · ${protocol ? `${Math.round(protocol.confidence * 100)}% confidence` : "no outcome record"}</li></ul><p class="observer-overlay-hint">Open Main Laboratory → Mind for the complete alternatives, evidence, procedure and outcome history.</p>`;
+    updateObserverDetailMarkup(observerCommitmentVisualHtml(selected), detailKey);
   } else if (observerDetailTab === "predictive") {
-    ui.hudDetail.innerHTML = `<div class="observer-detail-title">Forecasts, contributing modules and actual decision effect</div>${entityPredictiveSummaryHtml(selected, { expanded: true, surface: "observer-tab" })}<p class="observer-overlay-hint">These are the animal's fallible estimates from local evidence. “Possible” never means the authoritative world has confirmed the predicted state. Open Laboratory → Predictive systems for the bounded ledger and population view.</p>`;
+    updateObserverDetailMarkup(observerForecastVisualHtml(selected), detailKey);
   } else if (observerDetailTab === "trace") {
     const trace = formatTrace(selected.rss?.current).slice(0, 4);
-    ui.hudDetail.innerHTML = `<div class="observer-detail-title">Current decision trace</div><ol class="observer-list">${trace.length ? trace.map((item) => `<li>${escapeHtml(item)}</li>`).join("") : "<li>No completed decision trace yet.</li>"}</ol><p class="observer-overlay-hint">Full evidence and historical instrumentation is in Laboratory.</p>`;
+    updateObserverDetailMarkup(`<div class="observer-detail-title">Current decision trace</div><ol class="observer-list">${trace.length ? trace.map((item) => `<li>${escapeHtml(item)}</li>`).join("") : "<li>No completed decision trace yet.</li>"}</ol><p class="observer-overlay-hint">Full evidence and historical instrumentation is in Laboratory.</p>`, detailKey);
   } else {
-    ui.hudDetail.innerHTML = observerWholeAnimalOverviewHtml(selected);
+    updateObserverDetailMarkup(observerWholeAnimalOverviewHtml(selected), detailKey);
   }
 }
 
@@ -11526,13 +12442,25 @@ function observerPerceptionEvidenceHtml() {
   return `<div class="observer-detail-title">Current evidence feed</div><ul class="observer-glance-list"><li><strong>Sight</strong> · ${seen.length} current contacts</li><li><strong>Scent</strong> · ${escapeHtml(smellText)}</li><li><strong>Sound</strong> · ${heard.length} heard · ${signals.length} understood messages · ${vibration.length} vibrations</li><li><strong>Other senses</strong> · ${infrared.length} infrared contacts</li><li><strong>Group relay</strong> · ${escapeHtml(groupAlert)}</li><li><strong>Social learning</strong> · ${socialProtocols.length} learned protocols · ${sharedMateReports} mate reports</li></ul><p class="observer-overlay-hint">A checked overlay can be empty when this organism has no current evidence. Scent contacts now show sensory range, direction, uncertainty and only trails this organism has detected.</p>`;
 }
 function observerOverlayControls() {
+  const animal = selectedAnimal();
   const checked = (input) => input.checked ? " checked" : "";
   const option = (key, input, label) => `<label><input type="checkbox" data-observer-overlay="${key}"${checked(input)}> ${label}</label>`;
-  return `<div class="observer-detail-title">Perception and presentation</div><p class="observer-overlay-hint">These controls change only what you can inspect. They do not grant the organism information or alter simulation decisions.</p><div class="observer-overlay-groups"><fieldset class="observer-overlay-group"><legend>Organism senses</legend><div class="observer-overlays">${option("vision", ui.overlayVision, "Vision field")}${option("smell", ui.overlaySmell, "Smell contacts + known trail")}${option("sound", ui.overlaySound, "Sound and vibration")}${option("calls", ui.overlayCalls, "Calls and messages")}${option("memory", ui.overlayMemory, "Remembered evidence")}${option("fog", ui.overlayKnowledgeFog, "Knowledge fog")}</div></fieldset><fieldset class="observer-overlay-group"><legend>Body and social cues</legend><div class="observer-overlays">${option("symbols", ui.overlayEntitySymbols, "Entity symbols")}${option("names", ui.overlayEntityNames, "Entity names")}${option("personal", ui.overlayPersonalSpace, "Personal space")}${option("health", ui.overlayHealthBars, "Health condition")}${option("endurance", ui.overlayEnduranceBar, "Performance fuels")}${option("composition", ui.overlayCompositionBar, "Metabolic reserves")}${option("focus", ui.overlayEntityFocus, "Known world only")}</div></fieldset><fieldset class="observer-overlay-group"><legend>Environment and analysis</legend><div class="observer-overlays">${option("biomass", ui.overlayBiomass, "Plant biomass")}${option("water", ui.overlayWater, "Surface water")}${option("scent", ui.overlayPheromone, "Laboratory scent field")}${option("stage", ui.overlayAnalysisStage, "Terrainless analysis")}${option("clean", ui.overlayOrganismOnly, "Organism body only")}</div></fieldset></div>${observerPerceptionEvidenceHtml()}<p class="observer-overlay-hint">Entity names are optional Laboratory labels and reveal no information to animals. Vision follows head direction. Terrainless analysis preserves detected entities and selected evidence; body-only mode isolates the current organism.</p>`;
+  const presentationHidden = graphicsSettings.entityPanelsVisible === false;
+  const presentationOption = `<label><input type="checkbox" data-observer-overlay="presentation"${presentationHidden ? " checked" : ""}> No panel and bubbles</label>`;
+  const contacts = animal?.sensoryBuffer || [];
+  const calls = contacts.filter(item => item.channel === "hearing" && (item.signalKind || item.communicatedBy)).length + (animal?.receivedSignals?.length || 0);
+  const intents = animal?.predatorIntentEstimates?.length || 0;
+  const claims = Object.keys(sim.territoryClaims || {}).length, disputes = sim.territoryDisputes?.length || 0, scentCells = Object.keys(sim.activeScent || {}).length;
+  const seen = contacts.filter(item => item.channel === "sight").length, smelled = contacts.filter(item => item.channel === "smell").length, heard = contacts.filter(item => item.channel === "hearing").length, memories = (animal?.memories?.length || 0) + (animal?.longMemory?.length || 0);
+  const authority = `<div class="observer-overlay-authority" aria-label="Epistemic authority"><span title="Animal-owned evidence">👁 <strong>${seen + smelled + heard}</strong></span><i>≠</i><span title="Authoritative Laboratory truth">◉ <strong>${scentCells + claims}</strong></span></div>`;
+  const counters = `<div class="observer-evidence-counters"><span title="Sight contacts">👁 <strong>${seen}</strong></span><span title="Smell contacts">👃 <strong>${smelled}</strong></span><span title="Sound contacts">👂 <strong>${heard}</strong></span><span title="Calls and messages">📣 <strong>${calls}</strong></span><span title="Memories">🧠 <strong>${memories}</strong></span><span title="Predator-intent estimates">⚠ <strong>${intents}</strong></span></div>`;
+  return `${authority}<div class="observer-overlay-groups"><fieldset class="observer-overlay-group"><legend>👁 Senses</legend><div class="observer-overlays">${option("vision", ui.overlayVision, "Vision")}${option("smell", ui.overlaySmell, "Smell")}${option("sound", ui.overlaySound, "Sound")}${option("memory", ui.overlayMemory, "Memory")}${option("intent", ui.overlayPredatorIntent, "Intent")}${option("fog", ui.overlayKnowledgeFog, "Knowledge fog")}</div></fieldset><fieldset class="observer-overlay-group"><legend>➜ Movement</legend><div class="observer-overlays">${option("personal", ui.overlayPersonalSpace, "Personal space")}${option("ring", ui.overlaySelectionRing, "Selection ring")}${option("navigation", ui.overlayNavigationCues, "Direction")}${option("trails", ui.overlayMotionTrails, "Recent path")}${option("focus", ui.overlayEntityFocus, "Known world")}</div></fieldset><fieldset class="observer-overlay-group"><legend>📣 Communication</legend><div class="observer-overlays">${option("calls", ui.overlayCalls, "Calls and receivers")}</div></fieldset><fieldset class="observer-overlay-group"><legend>◉ Environment</legend><div class="observer-overlays">${option("biomass", ui.overlayBiomass, "Vegetation")}${option("water", ui.overlayWater, "Water")}${option("scent", ui.overlayPheromone, "Scent field")}${option("territories", ui.overlayTerritories, "Territory")}</div></fieldset><fieldset class="observer-overlay-group"><legend>▣ Presentation</legend><div class="observer-overlays">${presentationOption}</div></fieldset></div>${counters}${observerLaboratoryLink("map", "Open perception records in Laboratory")}`;
 }
 
 function updateObserverHud(selected, herb, carn, corpse = selectedCorpse()) {
   const organization = selectedOrganization(), group = selectedGroupMembers(), organizationGroup = organizationMembers(organization);
+  ui.hudSelectedName.classList.remove("is-symbolic");
+  ui.hudSelectedAction.classList.remove("is-symbolic");
   ui.hudMode.textContent = selected ? "Selected-self observer" : corpse ? "Carcass inspection" : organization ? "Herd observer" : group.length ? "Strategic observer" : ui.labToggle?.checked ? "Laboratory diagnostic" : "Strategic overview";
   updateClockDisplay();
   ui.hudPlay.textContent = running ? "Pause" : "Play";
@@ -11577,12 +12505,14 @@ function updateObserverHud(selected, herb, carn, corpse = selectedCorpse()) {
     ui.hudLock.textContent = entityLocked ? "Unlock camera" : "Lock camera";
     ui.hudFavourite.textContent = "Favourite"; ui.hudLock.disabled = false; ui.hudFavourite.disabled = true;
     const lived = Number.isFinite(corpse.lived) ? `${corpse.lived.toFixed(1)} days` : "unknown";
-    ui.hudDetail.innerHTML = `<div class="observer-detail-title">Carcass and historical record</div><dl class="observer-detail-grid"><div><dt>Species / sex</dt><dd>${escapeHtml(species[corpse.speciesId]?.label || corpse.speciesId)} · ${escapeHtml(corpse.sex || "unknown")}</dd></div><div><dt>Life stage</dt><dd>${escapeHtml(corpse.lifeStage || "unknown")}</dd></div><div><dt>Lifetime</dt><dd>${escapeHtml(lived)}</dd></div><div><dt>Cause</dt><dd>${escapeHtml(corpse.cause)}</dd></div><div><dt>Remaining biomass</dt><dd>${corpse.biomass.toFixed(1)} / ${corpse.initialBiomass.toFixed(1)} (${remainingPercent}%)</dd></div><div><dt>Claimed by</dt><dd>${escapeHtml(corpse.ownerId || "none")}</dd></div><div><dt>Feeding activity</dt><dd>${Math.round(corpse.feedingMinutes || 0)} min · ${(corpse.biomassConsumed || 0).toFixed(1)} consumed</dd></div><div><dt>Carcass age</dt><dd>${Number(corpse.age || 0).toFixed(0)} hours</dd></div></dl>`;
+    updateObserverDetailMarkup(`<div class="observer-detail-title">Carcass and historical record</div><dl class="observer-detail-grid"><div><dt>Species / sex</dt><dd>${escapeHtml(species[corpse.speciesId]?.label || corpse.speciesId)} · ${escapeHtml(corpse.sex || "unknown")}</dd></div><div><dt>Life stage</dt><dd>${escapeHtml(corpse.lifeStage || "unknown")}</dd></div><div><dt>Lifetime</dt><dd>${escapeHtml(lived)}</dd></div><div><dt>Cause</dt><dd>${escapeHtml(corpse.cause)}</dd></div><div><dt>Remaining biomass</dt><dd>${corpse.biomass.toFixed(1)} / ${corpse.initialBiomass.toFixed(1)} (${remainingPercent}%)</dd></div><div><dt>Claimed by</dt><dd>${escapeHtml(corpse.ownerId || "none")}</dd></div><div><dt>Feeding activity</dt><dd>${Math.round(corpse.feedingMinutes || 0)} min · ${(corpse.biomassConsumed || 0).toFixed(1)} consumed</dd></div><div><dt>Carcass age</dt><dd>${Number(corpse.age || 0).toFixed(0)} hours</dd></div></dl>`, `corpse:${corpse.id || corpse.sourceId || "selected"}`);
     return;
   }
   if (!selected) return;
-  ui.hudSelectedName.textContent = `${selected.id} ${species[selected.speciesId].label} · ${selected.sex === "F" ? "female" : "male"} · ${selected.lifeStage} · ${selected.age.toFixed(1)} days`;
-  ui.hudSelectedAction.textContent = selected.actionState?.label || selected.drive || "observing surroundings";
+  ui.hudSelectedName.innerHTML = observerHeaderHtml(selected);
+  ui.hudSelectedName.classList.add("is-symbolic");
+  ui.hudSelectedAction.innerHTML = observerHeaderStateHtml(selected);
+  ui.hudSelectedAction.classList.add("is-symbolic");
   ui.hudEnergy.textContent = Math.max(0, selected.energy).toFixed(0);
   ui.hudHealth.textContent = `${Math.max(0, selected.health).toFixed(0)}%`;
   ui.hudWater.textContent = `${Math.max(0, selected.hydration).toFixed(0)}%`;

@@ -17,7 +17,7 @@ test("rare death narration communicates population consequence", () => {
 });
 
 test("narration settings are accessible by default and bounded", () => {
-  assert.deepEqual(normalizeNarrationSettings({}), { enabled: true, captions: true, preset: "brief", contextDepth: 2, length: "short", volume: .85, rate: .96 });
+  assert.deepEqual(normalizeNarrationSettings({}), { enabled: true, captions: true, preset: "custom", contextDepth: 2, length: "standard", volume: .85, rate: 1 });
   assert.equal(normalizeNarrationSettings({ volume: 4, rate: .1 }).volume, 1);
   assert.equal(normalizeNarrationSettings({ contextDepth: 99 }).contextDepth, 5);
 });
@@ -156,7 +156,7 @@ test("archive evidence rotates past recently covered records", () => {
 test("expanded language library covers major simulation systems at more than tenfold capacity", () => {
   assert.ok(Object.keys(DOCUMENTARY_LANGUAGE).length >= 30);
   assert.ok(documentaryLanguageCapacity() >= 900);
-  for (const key of ["hydration", "metabolism", "pregnancy", "perception", "memory", "predation", "bereavement", "weather", "hydrology", "vegetation", "fallenTree", "population"]) assert.ok(DOCUMENTARY_LANGUAGE[key]);
+  for (const key of ["hydration", "metabolism", "pregnancy", "perception", "memory", "predation", "bereavement", "weather", "hydrology", "vegetation", "fallenTree", "population", "foodPreference", "carcassProvenance", "treeBrowsing", "homeRange", "territoryEstablishment", "territory", "territoryDispute"]) assert.ok(DOCUMENTARY_LANGUAGE[key]);
 });
 
 test("every authoritative deterministic action has exact documentary text", () => {

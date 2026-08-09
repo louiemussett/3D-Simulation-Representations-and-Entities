@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$mime = @{ '.html'='text/html'; '.js'='text/javascript'; '.css'='text/css'; '.png'='image/png'; '.svg'='image/svg+xml' }
+$mime = @{ '.html'='text/html'; '.js'='text/javascript'; '.css'='text/css'; '.png'='image/png'; '.jpg'='image/jpeg'; '.jpeg'='image/jpeg'; '.webp'='image/webp'; '.avif'='image/avif'; '.svg'='image/svg+xml' }
 $server = $null
 $port = 8117
 while ($port -le 8127) {
@@ -44,6 +44,23 @@ try {
       $context.Response.Headers['Cache-Control'] = 'no-store, max-age=0'
       $context.Response.Headers['Pragma'] = 'no-cache'
       $context.Response.Headers['Referrer-Policy'] = 'no-referrer'
+      $context.Response.ContentLength64 = $payload.Length
+      $context.Response.OutputStream.Write($payload, 0, $payload.Length)
+      $context.Response.Close()
+      continue
+    }
+    if ($relative -eq '__menu-backgrounds') {
+      $menuRoot = Join-Path $root 'assets\menu'
+      $images = @()
+      if (Test-Path -LiteralPath $menuRoot -PathType Container) {
+        $images = @(Get-ChildItem -LiteralPath $menuRoot -File -Recurse | Where-Object { @('.png', '.jpg', '.jpeg', '.webp', '.avif') -contains $_.Extension.ToLowerInvariant() } | Sort-Object FullName | ForEach-Object {
+          $relativeImage = $_.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/')
+          @{ path = $relativeImage; name = $_.Name; size = $_.Length; modified = $_.LastWriteTimeUtc.ToString('o') }
+        })
+      }
+      $payload = [Text.Encoding]::UTF8.GetBytes((@{ version = 1; images = $images } | ConvertTo-Json -Compress -Depth 4))
+      $context.Response.ContentType = 'application/json'
+      $context.Response.Headers['Cache-Control'] = 'no-store, max-age=0'
       $context.Response.ContentLength64 = $payload.Length
       $context.Response.OutputStream.Write($payload, 0, $payload.Length)
       $context.Response.Close()

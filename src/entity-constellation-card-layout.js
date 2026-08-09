@@ -10,7 +10,7 @@ const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
 const PROFILE_SCALE_MINIMUM = .75;
 const PROFILE_SCALE_MAXIMUM = 2;
-const PANEL_SCALE_MINIMUM = .6;
+const PANEL_SCALE_MINIMUM = .1;
 const PANEL_SCALE_MAXIMUM = 1.5;
 const IDENTITY_SCALE_MAXIMUM = 1.5;
 const LEGACY_EXPRESSION_ART = freeze({ width: 44, height: 44 });
@@ -196,15 +196,21 @@ const expandedProfile = (scales, paddingPx) => {
   });
 };
 
-const summaryProfile = (scales, paddingPx) => {
+const summaryProfile = (scales, paddingPx, settings = {}) => {
   const source = ENTITY_CONSTELLATION_CARD_GEOMETRY.summary;
   const base = BASE_SCREEN_SIZE.summary;
   const screenX = base.width / source.canvas.width;
-  const outerWidth = source.expressionCell.left * screenX * scales.panel;
-  const centreWidth = (source.dividers.right - source.dividers.left) * screenX * Math.max(scales.panel, scales.identity);
-  const expressionBayWidth = (source.expressionCell.right - source.expressionCell.left) * screenX * Math.max(scales.panel, scales.expression);
-  const outwardBayWidth = (source.outwardCell.right - source.outwardCell.left) * screenX * Math.max(scales.panel, scales.publicCue);
-  const width = outerWidth * 2 + expressionBayWidth + centreWidth + outwardBayWidth;
+  const expressionEnabled = settings.expressionVisible !== false;
+  const identityEnabled = settings.identityVisible !== false;
+  const outwardEnabled = settings.publicCueVisible !== false;
+  // The original authored rail is exactly the sum of its three bays
+  // (82 + 128 + 104 = 314 px). Keep that canonical footprint available for
+  // direct comparison with the new designs instead of silently padding it.
+  const outerWidth = 0;
+  const centreWidth = identityEnabled ? (source.dividers.right - source.dividers.left) * screenX * Math.max(scales.panel, scales.identity) : 0;
+  const expressionBayWidth = expressionEnabled ? (source.expressionCell.right - source.expressionCell.left) * screenX * Math.max(scales.panel, scales.expression) : 0;
+  const outwardBayWidth = outwardEnabled ? (source.outwardCell.right - source.outwardCell.left) * screenX * Math.max(scales.panel, scales.publicCue) : 0;
+  const width = Math.max(28, outerWidth * 2 + expressionBayWidth + centreWidth + outwardBayWidth);
   const height = base.height * Math.max(scales.panel, scales.identity, scales.expression, scales.publicCue);
   const panel = rectangle(-width / 2, width / 2, -height / 2, height / 2);
   const expressionCell = rectangle(panel.left + outerWidth, panel.left + outerWidth + expressionBayWidth, panel.top, panel.bottom);
@@ -215,6 +221,8 @@ const summaryProfile = (scales, paddingPx) => {
     screenSize: { width, height },
     panelCenter: { x: 0, y: 0 },
     panel,
+    identityCell: rectangle(expressionCell.right, outwardCell.left, panel.top, panel.bottom),
+    settings,
     sideCells: sides,
     slots: {
       panel: { x: 0, y: 0 },
@@ -225,34 +233,42 @@ const summaryProfile = (scales, paddingPx) => {
   });
 };
 
-const singlePanelProfile = (scales, paddingPx, publicPanel) => {
+const singlePanelProfile = (scales, paddingPx, publicPanel, settings = {}) => {
   const gap = Math.max(6, 8 * scales.panel);
+  const thoughtEnabled = settings.thoughtAttachmentEnabled !== false;
+  const forecastEnabled = settings.forecastAttachmentEnabled !== false;
+  const attachmentCount = Number(thoughtEnabled) + Number(forecastEnabled);
+  const availableWidth = Math.max(36, publicPanel.panel.width - paddingPx * 2 - (attachmentCount === 2 ? gap : 0));
+  const bayWidth = attachmentCount === 2 ? availableWidth / 2 : availableWidth;
+  const thoughtWidth = thoughtEnabled ? bayWidth * scales.thought : 0;
+  const predictionWidth = forecastEnabled ? bayWidth * scales.prediction : 0;
   const thoughtSize = {
-    width: PRIVATE_BUBBLE_ART.width * scales.thought,
-    height: PRIVATE_BUBBLE_ART.height * scales.thought
+    width: thoughtWidth,
+    height: thoughtWidth * PRIVATE_BUBBLE_ART.height / PRIVATE_BUBBLE_ART.width
   };
   const predictionSize = {
-    width: PRIVATE_BUBBLE_ART.width * scales.prediction,
-    height: PRIVATE_BUBBLE_ART.height * scales.prediction
+    width: predictionWidth,
+    height: predictionWidth * PRIVATE_BUBBLE_ART.height / PRIVATE_BUBBLE_ART.width
   };
   const thought = freeze({
-    x: -gap / 2 - thoughtSize.width / 2,
+    x: thoughtEnabled ? (forecastEnabled ? -gap / 2 - thoughtSize.width / 2 : 0) : 0,
     y: publicPanel.panel.top - gap - thoughtSize.height / 2,
     ...thoughtSize,
     fit: 1
   });
   const prediction = freeze({
-    x: gap / 2 + predictionSize.width / 2,
+    x: forecastEnabled ? (thoughtEnabled ? gap / 2 + predictionSize.width / 2 : 0) : 0,
     y: publicPanel.panel.top - gap - predictionSize.height / 2,
     ...predictionSize,
     fit: 1
   });
-  const privateBounds = rectangle(
-    Math.min(thought.x - thought.width / 2, prediction.x - prediction.width / 2),
-    Math.max(thought.x + thought.width / 2, prediction.x + prediction.width / 2),
-    Math.min(thought.y - thought.height / 2, prediction.y - prediction.height / 2),
-    Math.max(thought.y + thought.height / 2, prediction.y + prediction.height / 2)
-  );
+  const attachments = [thoughtEnabled ? thought : null, forecastEnabled ? prediction : null].filter(Boolean);
+  const privateBounds = attachments.length ? rectangle(
+    Math.min(...attachments.map(item => item.x - item.width / 2)),
+    Math.max(...attachments.map(item => item.x + item.width / 2)),
+    Math.min(...attachments.map(item => item.y - item.height / 2)),
+    Math.max(...attachments.map(item => item.y + item.height / 2))
+  ) : publicPanel.panel;
   const selectedFootprint = rectangle(
     Math.min(publicPanel.panel.left, privateBounds.left),
     Math.max(publicPanel.panel.right, privateBounds.right),
@@ -274,6 +290,48 @@ const singlePanelProfile = (scales, paddingPx, publicPanel) => {
   });
 };
 
+const authoredPublicProfile = (variant, scales, paddingPx, settings) => {
+  const identity = settings.identityVisible !== false;
+  const expression = settings.expressionVisible !== false;
+  const outward = settings.publicCueVisible !== false;
+  let width = 314, height = 82, expressionCell, outwardCell, identityCell;
+  if (variant === "identity-mast") {
+    // The minimum design is deliberately identity-only. Unsupported modules
+    // remain enabled in settings so switching designs never loses a choice.
+    width = 40; height = 92;
+    expressionCell = rectangle(-20, -20, -46, -46);
+    identityCell = rectangle(-20, 20, -46, 46);
+    outwardCell = rectangle(20, 20, 46, 46);
+  } else if (variant === "status-mast") {
+    width = 62; height = (expression ? 50 : 0) + (identity ? 54 : 0) + (outward ? 46 : 0);
+    height = Math.max(54, height);
+    let cursor = -height / 2;
+    expressionCell = rectangle(-width / 2, width / 2, cursor, cursor += expression ? 50 : 0);
+    identityCell = rectangle(-width / 2, width / 2, cursor, cursor += identity ? 54 : 0);
+    outwardCell = rectangle(-width / 2, width / 2, cursor, height / 2);
+  } else if (variant === "capsule") {
+    const expressionWidth = expression ? 44 : 0, outwardWidth = outward ? 68 : 0, identityWidth = identity ? 108 : 0;
+    width = Math.max(42, expressionWidth + identityWidth + outwardWidth); height = 44;
+    expressionCell = rectangle(-width / 2, -width / 2 + expressionWidth, -22, 22);
+    identityCell = rectangle(expressionCell.right, expressionCell.right + identityWidth, -22, 22);
+    outwardCell = rectangle(identityCell.right, width / 2, -22, 22);
+  } else {
+    return null;
+  }
+  const panel = rectangle(-width / 2, width / 2, -height / 2, height / 2);
+  const safeExpressionCell = expressionCell.width > 0 ? expressionCell : rectangle(panel.left, panel.left, panel.top, panel.top);
+  const safeOutwardCell = outwardCell.width > 0 && outwardCell.height > 0 ? outwardCell : rectangle(panel.right, panel.right, panel.bottom, panel.bottom);
+  const sides = sideCellResult({ mode: variant, expressionCell: safeExpressionCell, outwardCell: safeOutwardCell, expressionScale: scales.expression, publicCueScale: scales.publicCue, paddingPx, expressionArt: PANEL_EXPRESSION_ART, publicCueArt: PANEL_PUBLIC_CUE_ART, actionArt: PANEL_ACTION_ART });
+  return freeze({
+    variant,
+    detailLevel: variant,
+    screenSize: { width, height },
+    panelCenter: { x: 0, y: 0 }, panel, identityCell,
+    sideCells: sides, settings,
+    slots: { panel: { x: 0, y: 0 }, identity: { x: identityCell.x, y: identityCell.y }, expression: { x: sides.expression.x, y: sides.expression.y }, outward: { x: sides.outward.x, y: sides.outward.y }, action: { x: sides.action.x, y: sides.action.y } }
+  });
+};
+
 const metricCellLayout = (cell, paddingPx, headerHeight, rowCount) => {
   if (!cell) return null;
   const left = cell.left + paddingPx;
@@ -292,25 +350,33 @@ const metricCellLayout = (cell, paddingPx, headerHeight, rowCount) => {
   return freeze({ header, rows, content: rectangle(left, right, top, bottom) });
 };
 
-const instrumentProfile = (scales, paddingPx, publicPanel, settings) => {
+const instrumentProfile = (scales, paddingPx, publicPanel, settings, style = "full-instrument") => {
   const geometry = ENTITY_INSTRUMENT_PANEL_GEOMETRY;
   const panelScale = scales.panel;
   const physiologyEnabled = settings.metabolicVisible || settings.performanceVisible;
-  const desiredExpressionWidth = PANEL_EXPRESSION_ART.width * scales.expression + paddingPx * 2;
-  const desiredOutwardWidth = PANEL_PUBLIC_CUE_ART.width * scales.publicCue + paddingPx * 2;
-  const expressionBayWidth = Math.max(geometry.expressionBayWidth * panelScale, desiredExpressionWidth);
-  const outwardBayWidth = Math.max(geometry.outwardBayWidth * panelScale, desiredOutwardWidth);
-  const identityMinimumWidth = geometry.identityMinimumWidth * Math.max(panelScale, scales.identity);
+  const desiredExpressionWidth = settings.expressionVisible ? PANEL_EXPRESSION_ART.width * scales.expression + paddingPx * 2 : 0;
+  const desiredOutwardWidth = settings.publicCueVisible ? PANEL_PUBLIC_CUE_ART.width * scales.publicCue + paddingPx * 2 : 0;
+  const expressionBayWidth = settings.expressionVisible ? Math.max(geometry.expressionBayWidth * panelScale, desiredExpressionWidth) : 0;
+  const outwardBayWidth = settings.publicCueVisible ? Math.max(geometry.outwardBayWidth * panelScale, desiredOutwardWidth) : 0;
+  const identityMinimumWidth = settings.identityVisible ? geometry.identityMinimumWidth * Math.max(panelScale, scales.identity) : 0;
   const typographyWidthScale = physiologyEnabled ? Math.max(1, settings.physiologyTextScale) : 1;
+  const authoredWidth = style === "context-ribbon" ? 310 : style === "vital-strip" ? 320 : geometry.width;
   const width = Math.max(
-    geometry.width * panelScale * typographyWidthScale,
+    authoredWidth * panelScale * typographyWidthScale,
     publicPanel.screenSize.width,
     paddingPx * 4 + expressionBayWidth + identityMinimumWidth + outwardBayWidth
   );
 
-  const identityHeight = Math.max(publicPanel.screenSize.height, geometry.identityHeight * panelScale);
-  const healthHeight = settings.healthVisible ? geometry.healthHeight * panelScale * settings.healthScale : 0;
-  const decisionHeight = settings.decisionVisible ? geometry.decisionHeight * panelScale * settings.physiologyTextScale : 0;
+  const compactIdentityHeight = style === "context-ribbon" ? 48 : style === "vital-strip" ? 44 : geometry.identityHeight;
+  const compactInstrumentIdentity = style === "context-ribbon" || style === "vital-strip";
+  const identityHeight = compactInstrumentIdentity
+    ? compactIdentityHeight * panelScale
+    : Math.max(publicPanel.screenSize.height, compactIdentityHeight * panelScale);
+  const authoredHealthHeight = style === "vital-strip" ? 28 : geometry.healthHeight;
+  const healthHeight = settings.healthVisible ? authoredHealthHeight * panelScale * settings.healthScale : 0;
+  const decisionVisible = settings.immediateConcernVisible || settings.forecastEffectVisible;
+  const authoredDecisionHeight = style === "context-ribbon" ? 26 : geometry.decisionHeight;
+  const decisionHeight = decisionVisible ? authoredDecisionHeight * panelScale * settings.physiologyTextScale : 0;
   const physiologyHeight = physiologyEnabled
     ? geometry.physiologyHeight * panelScale * Math.max(settings.physiologyScale, settings.physiologyTextScale)
     : 0;
@@ -320,7 +386,7 @@ const instrumentProfile = (scales, paddingPx, publicPanel, settings) => {
   let cursor = panel.top;
   const identityBand = rectangle(panel.left, panel.right, cursor, cursor += identityHeight);
   const healthBand = settings.healthVisible ? rectangle(panel.left, panel.right, cursor, cursor += healthHeight) : null;
-  const decisionBand = settings.decisionVisible ? rectangle(panel.left, panel.right, cursor, cursor += decisionHeight) : null;
+  const decisionBand = decisionVisible ? rectangle(panel.left, panel.right, cursor, cursor += decisionHeight) : null;
   const physiologyBand = physiologyEnabled ? rectangle(panel.left, panel.right, cursor, cursor += physiologyHeight) : null;
 
   const identityInset = Math.max(paddingPx, 8 * panelScale);
@@ -369,11 +435,11 @@ const instrumentProfile = (scales, paddingPx, publicPanel, settings) => {
   if (decisionBand) {
     const inset = Math.max(paddingPx, 8 * panelScale);
     const content = rectangle(decisionBand.left + inset, decisionBand.right - inset, decisionBand.top, decisionBand.bottom);
-    const middle = content.top + content.height / 2;
+    const middle = settings.immediateConcernVisible && settings.forecastEffectVisible ? content.top + content.height / 2 : content.bottom;
     decision = freeze({
       content,
-      immediate: rectangle(content.left, content.right, content.top, middle),
-      forecastEffect: rectangle(content.left, content.right, middle, content.bottom)
+      immediate: settings.immediateConcernVisible ? rectangle(content.left, content.right, content.top, middle) : null,
+      forecastEffect: settings.forecastEffectVisible ? rectangle(content.left, content.right, settings.immediateConcernVisible ? middle : content.top, content.bottom) : null
     });
   }
 
@@ -399,18 +465,24 @@ const instrumentProfile = (scales, paddingPx, publicPanel, settings) => {
   const performance = metricCellLayout(performanceCell, paddingPx, headerHeight, geometry.metricRows);
 
   // The two clouds live in transparent attachment bays owned by this root.
-  // Their art scale can change the selected collision footprint, but never the
-  // instrument panel itself.
+  // Each bay is just under half the panel width, so the pair reads as one
+  // integrated header at every whole-panel scale. Artwork keeps its authored
+  // aspect ratio and is capped by the bay rather than escaping the root.
   const attachmentGap = geometry.attachmentGap * panelScale;
-  const thoughtSize = {
-    width: settings.thoughtAttachmentEnabled ? PRIVATE_BUBBLE_ART.width * scales.thought : 0,
-    height: settings.thoughtAttachmentEnabled ? PRIVATE_BUBBLE_ART.height * scales.thought : 0
-  };
-  const predictionSize = {
-    width: settings.forecastAttachmentEnabled ? PRIVATE_BUBBLE_ART.width * scales.prediction : 0,
-    height: settings.forecastAttachmentEnabled ? PRIVATE_BUBBLE_ART.height * scales.prediction : 0
-  };
+  const attachmentInset = Math.max(paddingPx, 4 * panelScale);
   const attachmentCount = Number(settings.thoughtAttachmentEnabled) + Number(settings.forecastAttachmentEnabled);
+  const attachmentBayWidth = Math.max(0, (width - attachmentInset * 2 - (attachmentCount === 2 ? attachmentGap : 0)) / Math.max(1, attachmentCount));
+  const bubbleSize = (enabled, scale) => {
+    if (!enabled) return { width: 0, height: 0 };
+    // The bay—not the old source bitmap—is authoritative. One cloud spans
+    // the panel; a pair receives two near-half-width bays. The optional bubble
+    // scale is relative to that authored allocation and may deliberately grow
+    // beyond it for readability at marker-sized panel scales.
+    const width = attachmentBayWidth * scale;
+    return { width, height: width * PRIVATE_BUBBLE_ART.height / PRIVATE_BUBBLE_ART.width };
+  };
+  const thoughtSize = bubbleSize(settings.thoughtAttachmentEnabled, scales.thought);
+  const predictionSize = bubbleSize(settings.forecastAttachmentEnabled, scales.prediction);
   const attachmentWidth = thoughtSize.width + predictionSize.width + (attachmentCount === 2 ? attachmentGap : 0);
   const attachmentLeft = -attachmentWidth / 2;
   const attachmentBottom = panel.top - attachmentGap;
@@ -443,6 +515,7 @@ const instrumentProfile = (scales, paddingPx, publicPanel, settings) => {
   const predictionTarget = freeze({ x: panel.left + panel.width * .68, y: panel.top });
 
   return freeze({
+    variant: style,
     detailLevel: "instrument",
     screenSize: { width, height },
     panelCenter: { x: 0, y: 0 },
@@ -471,7 +544,9 @@ const instrumentProfile = (scales, paddingPx, publicPanel, settings) => {
     settings,
     visibleSections: {
       health: settings.healthVisible,
-      decision: settings.decisionVisible,
+      decision: decisionVisible,
+      immediateConcern: settings.immediateConcernVisible,
+      forecastEffect: settings.forecastEffectVisible,
       metabolic: settings.metabolicVisible,
       performance: settings.performanceVisible
     },
@@ -497,6 +572,7 @@ const instrumentProfile = (scales, paddingPx, publicPanel, settings) => {
  * a forecast appearing or expiring can never resize the selected card.
  */
 export function entityConstellationCardProfile({
+  style = "classic-rail",
   panelScale = 1,
   identityScale = 1,
   expressionScale = 1,
@@ -508,10 +584,15 @@ export function entityConstellationCardProfile({
   physiologyTextScale = 1,
   healthVisible = true,
   decisionContextVisible = true,
+  immediateConcernVisible = decisionContextVisible,
+  forecastEffectVisible = decisionContextVisible,
   metabolicVisible = true,
   performanceVisible = true,
   thoughtAttachmentEnabled = true,
   forecastAttachmentEnabled = true,
+  identityVisible = true,
+  expressionVisible = true,
+  publicCueVisible = true,
   paddingPx = 3
 } = {}) {
   const scales = freeze({
@@ -519,8 +600,8 @@ export function entityConstellationCardProfile({
     identity: clamp(finite(identityScale, 1), PROFILE_SCALE_MINIMUM, IDENTITY_SCALE_MAXIMUM),
     expression: normalizedProfileScale(expressionScale),
     publicCue: normalizedProfileScale(publicCueScale),
-    thought: normalizedProfileScale(thoughtScale),
-    prediction: normalizedProfileScale(predictionScale)
+    thought: clamp(finite(thoughtScale, 1), .5, 1.5),
+    prediction: clamp(finite(predictionScale, 1), .5, 1.5)
   });
   const instrumentSettings = freeze({
     healthScale: clamp(finite(healthScale, 1), INSTRUMENT_SCALE_MINIMUM, INSTRUMENT_SCALE_MAXIMUM),
@@ -528,16 +609,23 @@ export function entityConstellationCardProfile({
     physiologyTextScale: clamp(finite(physiologyTextScale, 1), INSTRUMENT_SCALE_MINIMUM, INSTRUMENT_SCALE_MAXIMUM),
     healthVisible: healthVisible !== false,
     decisionVisible: decisionContextVisible !== false,
+    immediateConcernVisible: immediateConcernVisible !== false,
+    forecastEffectVisible: forecastEffectVisible !== false,
     metabolicVisible: metabolicVisible !== false,
     performanceVisible: performanceVisible !== false,
+    identityVisible: identityVisible !== false,
+    expressionVisible: expressionVisible !== false,
+    publicCueVisible: publicCueVisible !== false,
     thoughtAttachmentEnabled: thoughtAttachmentEnabled !== false,
     forecastAttachmentEnabled: forecastAttachmentEnabled !== false
   });
+  const publicSettings = freeze({ identityVisible: identityVisible !== false, expressionVisible: expressionVisible !== false, publicCueVisible: publicCueVisible !== false, thoughtAttachmentEnabled: thoughtAttachmentEnabled !== false, forecastAttachmentEnabled: forecastAttachmentEnabled !== false });
   const padding = clamp(positive(paddingPx, 3), 0, 24);
   const expanded = expandedProfile(scales, padding);
-  const summary = summaryProfile(scales, padding);
-  const panel = singlePanelProfile(scales, padding, summary);
-  const instrument = instrumentProfile(scales, padding, panel, instrumentSettings);
+  const summary = summaryProfile(scales, padding, publicSettings);
+  const styledPublic = authoredPublicProfile(style, scales, padding, publicSettings) || freeze({ ...summary, variant: "classic-rail", settings: publicSettings });
+  const panel = singlePanelProfile(scales, padding, styledPublic, publicSettings);
+  const instrument = instrumentProfile(scales, padding, panel, instrumentSettings, style);
   const compactWidth = BASE_SCREEN_SIZE.compact.width * scales.panel;
   const compactHeight = BASE_SCREEN_SIZE.compact.height * scales.panel;
   const compact = freeze({
@@ -553,13 +641,18 @@ export function entityConstellationCardProfile({
     instrumentSettings.physiologyTextScale,
     instrumentSettings.healthVisible ? 1 : 0,
     instrumentSettings.decisionVisible ? 1 : 0,
+    instrumentSettings.immediateConcernVisible ? 1 : 0,
+    instrumentSettings.forecastEffectVisible ? 1 : 0,
     instrumentSettings.metabolicVisible ? 1 : 0,
     instrumentSettings.performanceVisible ? 1 : 0,
     instrumentSettings.thoughtAttachmentEnabled ? 1 : 0,
-    instrumentSettings.forecastAttachmentEnabled ? 1 : 0
+    instrumentSettings.forecastAttachmentEnabled ? 1 : 0,
+    instrumentSettings.identityVisible ? 1 : 0,
+    instrumentSettings.expressionVisible ? 1 : 0,
+    instrumentSettings.publicCueVisible ? 1 : 0
   ];
   return freeze({
-    key: [scales.panel, scales.identity, scales.expression, scales.publicCue, scales.thought, scales.prediction, padding, ...settingsKey].map((value) => value.toFixed(3)).join(":"),
+    key: [style, scales.panel, scales.identity, scales.expression, scales.publicCue, scales.thought, scales.prediction, padding, ...settingsKey].map((value) => typeof value === "number" ? value.toFixed(3) : value).join(":"),
     scales,
     instrumentSettings,
     paddingPx: padding,

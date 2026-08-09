@@ -1,6 +1,19 @@
 const ENTITY_CONSTELLATION_DEFAULTS = Object.freeze({
-  entityPanelScale: 1,
-  entityPanelTextScale: 1,
+  entityPanelScale: .4,
+  entityPanelTextScale: 1.3,
+  entityPanelStyle: "classic-rail",
+  entityPanelContentPreset: "predictive",
+  entityBubbleScale: 1,
+  entityPanelIdentityVisible: true,
+  entityPanelExpressionVisible: true,
+  entityPanelPublicCueVisible: true,
+  entityPanelHealthVisible: false,
+  entityPanelConcernVisible: false,
+  entityPanelForecastEffectVisible: false,
+  entityPanelMetabolicVisible: false,
+  entityPanelPerformanceVisible: false,
+  entityPanelThoughtVisible: true,
+  entityPanelForecastVisible: true,
   // Retained as migration data for saves made before the constellation became
   // one uniformly scaled surface. Runtime panel composition no longer reads
   // these component scales.
@@ -27,14 +40,27 @@ export const GRAPHICS_PRESETS = Object.freeze({
   high: graphicsPresetDefinition({ iconTextureQuality: 4, renderScale: 1.25, adaptiveMinScale: .75, adaptiveMaxScale: 1.25, vegetationStride: 1, animalDetail: 1.22, diagnosticScale: 1.25, effects: true, contactShadows: true, adaptiveResolution: true, frameCap: 60 }),
   ultra: graphicsPresetDefinition({ iconTextureQuality: 8, renderScale: 1.5, adaptiveMinScale: .75, adaptiveMaxScale: 1.5, vegetationStride: 1, animalDetail: 1.5, diagnosticScale: 1.25, effects: true, contactShadows: true, adaptiveResolution: true, frameCap: 60 })
 });
+const FIRST_RUN_GRAPHICS_DEFAULTS = graphicsPresetDefinition({
+  iconTextureQuality: 2,
+  renderScale: 1,
+  adaptiveMinScale: .75,
+  adaptiveMaxScale: 1.25,
+  vegetationStride: 2,
+  animalDetail: 1,
+  diagnosticScale: 1.25,
+  effects: true,
+  contactShadows: true,
+  adaptiveResolution: true,
+  frameCap: 30
+});
 export const READABLE_INTERFACE_DEFAULTS = Object.freeze({
   interfaceScale: .85,
-  fontScale: 1,
-  smallTextScale: 1.5,
-  bodyTextScale: 1.75,
-  controlTextScale: 1.3,
+  fontScale: 1.15,
+  smallTextScale: 1.3,
+  bodyTextScale: 1.15,
+  controlTextScale: 1,
   headingTextScale: 1,
-  titleTextScale: 1
+  titleTextScale: .75
 });
 // Reference/Documentation previews are transient explanatory thumbnails. They
 // never need the 4x/8x texture tiers used by close world-space symbols, and
@@ -48,17 +74,29 @@ export function documentationPreviewQuality(iconTextureQuality = 2) {
   return Math.min(quality, DOCUMENTATION_PREVIEW_QUALITY_CAP);
 }
 export function normalizeGraphicsSettings(value = {}) {
-  const base = GRAPHICS_PRESETS[value.preset] || GRAPHICS_PRESETS.balanced, preset = GRAPHICS_PRESETS[value.preset] ? value.preset : value.preset === "custom" ? "custom" : "balanced";
+  const namedPreset = GRAPHICS_PRESETS[value.preset];
+  const base = namedPreset || FIRST_RUN_GRAPHICS_DEFAULTS;
+  const preset = namedPreset ? value.preset : "custom";
   const renderScale = clamp(Number(value.renderScale ?? base.renderScale), .5, 1.5);
   const adaptiveMaxScale = clamp(Number(value.adaptiveMaxScale ?? value.renderScale ?? base.adaptiveMaxScale), .5, 1.5);
   const adaptiveMinScale = clamp(Number(value.adaptiveMinScale ?? base.adaptiveMinScale), .5, adaptiveMaxScale);
   const entityIconScale = clamp(Number(value.entityIconScale ?? base.entityIconScale), .75, 2);
   const thoughtScale = clamp(Number(value.thoughtScale ?? base.thoughtScale), .75, 2);
-  const requestedPanelTextScale = Number(value.entityPanelTextScale ?? base.entityPanelTextScale ?? 1);
+  const requestedPanelTextScale = Number(value.entityPanelTextScale ?? base.entityPanelTextScale);
   // Older saves had only a generic entity-icon size and a thought size. Use
   // their smaller normalized value as the new panel minimum, then let the
   // responsive card grow only when a larger child would otherwise overflow.
-  const migratedPanelScale = nearest(clamp(Math.min(entityIconScale, thoughtScale) / 1.25, .6, 1.5), [.6, .8, 1, 1.25, 1.5]);
+  const hasLegacyComponentScale = value.entityIconScale != null || value.thoughtScale != null || value.predictionScale != null || value.entityIdentityScale != null || value.entityExpressionScale != null;
+  const panelScaleChoices = [.1, .2, .3, .4, .5, .6, .8, 1, 1.25, 1.5];
+  const migratedPanelScale = hasLegacyComponentScale
+    ? nearest(clamp(Math.min(entityIconScale, thoughtScale) / 1.25, .1, 1.5), panelScaleChoices)
+    : base.entityPanelScale;
+  const hasOldPanelConfiguration = value.entityPanelScale != null || value.instrumentExpressionVisible != null || value.instrumentPublicCueVisible != null || value.instrumentThoughtVisible != null || value.instrumentForecastVisible != null;
+  const styleChoices = ["identity-mast", "status-mast", "capsule", "classic-rail", "context-ribbon", "vital-strip", "predictive-view", "full-instrument"];
+  const contentChoices = ["classic", "essential", "predictive", "full", "custom"];
+  const entityPanelStyle = styleChoices.includes(value.entityPanelStyle) ? value.entityPanelStyle : hasOldPanelConfiguration ? "full-instrument" : base.entityPanelStyle;
+  const entityPanelContentPreset = contentChoices.includes(value.entityPanelContentPreset) ? value.entityPanelContentPreset : hasOldPanelConfiguration ? "full" : base.entityPanelContentPreset;
+  const moduleValue = (name, legacyName, fallback) => value[name] ?? (legacyName ? value[legacyName] : undefined) ?? fallback;
   const iconTextureQuality = [1, 2, 4, 8].includes(Number(value.iconTextureQuality ?? base.iconTextureQuality)) ? Number(value.iconTextureQuality ?? base.iconTextureQuality) : 2;
   const requestedFrameCap = Number(value.frameCap ?? base.frameCap);
   // The renderer has two intentional pacing targets. Migrate the removed
@@ -74,8 +112,21 @@ export function normalizeGraphicsSettings(value = {}) {
     adaptiveMaxScale,
     vegetationStride: clamp(Math.round(Number(value.vegetationStride ?? base.vegetationStride)), 1, 5),
     animalDetail: clamp(Number(value.animalDetail ?? base.animalDetail), .6, 1.6),
-    entityPanelScale: clamp(Number(value.entityPanelScale ?? migratedPanelScale), .6, 1.5),
-    entityPanelTextScale: nearest(clamp(Number.isFinite(requestedPanelTextScale) ? requestedPanelTextScale : 1, .75, 1.5), [.75, .9, 1, 1.15, 1.3, 1.5]),
+    entityPanelScale: nearest(clamp(Number(value.entityPanelScale ?? migratedPanelScale), .1, 1.5), panelScaleChoices),
+    entityPanelTextScale: nearest(clamp(Number.isFinite(requestedPanelTextScale) ? requestedPanelTextScale : base.entityPanelTextScale, .75, 1.5), [.75, .9, 1, 1.15, 1.3, 1.5]),
+    entityPanelStyle,
+    entityPanelContentPreset,
+    entityBubbleScale: nearest(clamp(Number(value.entityBubbleScale ?? base.entityBubbleScale), .5, 1.5), [.5, .75, 1, 1.25, 1.5]),
+    entityPanelIdentityVisible: moduleValue("entityPanelIdentityVisible", null, base.entityPanelIdentityVisible) !== false,
+    entityPanelExpressionVisible: moduleValue("entityPanelExpressionVisible", "instrumentExpressionVisible", base.entityPanelExpressionVisible) !== false,
+    entityPanelPublicCueVisible: moduleValue("entityPanelPublicCueVisible", "instrumentPublicCueVisible", base.entityPanelPublicCueVisible) !== false,
+    entityPanelHealthVisible: moduleValue("entityPanelHealthVisible", null, hasOldPanelConfiguration ? true : base.entityPanelHealthVisible) !== false,
+    entityPanelConcernVisible: moduleValue("entityPanelConcernVisible", null, hasOldPanelConfiguration ? true : base.entityPanelConcernVisible) !== false,
+    entityPanelForecastEffectVisible: moduleValue("entityPanelForecastEffectVisible", null, hasOldPanelConfiguration ? true : base.entityPanelForecastEffectVisible) !== false,
+    entityPanelMetabolicVisible: moduleValue("entityPanelMetabolicVisible", null, hasOldPanelConfiguration ? true : base.entityPanelMetabolicVisible) !== false,
+    entityPanelPerformanceVisible: moduleValue("entityPanelPerformanceVisible", null, hasOldPanelConfiguration ? true : base.entityPanelPerformanceVisible) !== false,
+    entityPanelThoughtVisible: moduleValue("entityPanelThoughtVisible", "instrumentThoughtVisible", base.entityPanelThoughtVisible) !== false,
+    entityPanelForecastVisible: moduleValue("entityPanelForecastVisible", "instrumentForecastVisible", base.entityPanelForecastVisible) !== false,
     // Legacy component fields round-trip without data loss, but the active
     // renderer uses only `entityPanelScale` for both rail and instrument size.
     entityIdentityScale: clamp(Number(value.entityIdentityScale ?? base.entityIdentityScale), .75, 1.5),
@@ -84,10 +135,10 @@ export function normalizeGraphicsSettings(value = {}) {
     thoughtScale,
     predictionScale: clamp(Number(value.predictionScale ?? value.thoughtScale ?? base.predictionScale), .75, 2),
     entityPanelsVisible: value.entityPanelsVisible ?? base.entityPanelsVisible ?? true,
-    instrumentExpressionVisible: value.instrumentExpressionVisible ?? base.instrumentExpressionVisible ?? true,
-    instrumentPublicCueVisible: value.instrumentPublicCueVisible ?? base.instrumentPublicCueVisible ?? true,
-    instrumentThoughtVisible: value.instrumentThoughtVisible ?? base.instrumentThoughtVisible ?? true,
-    instrumentForecastVisible: value.instrumentForecastVisible ?? base.instrumentForecastVisible ?? true,
+    instrumentExpressionVisible: moduleValue("entityPanelExpressionVisible", "instrumentExpressionVisible", base.instrumentExpressionVisible) !== false,
+    instrumentPublicCueVisible: moduleValue("entityPanelPublicCueVisible", "instrumentPublicCueVisible", base.instrumentPublicCueVisible) !== false,
+    instrumentThoughtVisible: moduleValue("entityPanelThoughtVisible", "instrumentThoughtVisible", base.instrumentThoughtVisible) !== false,
+    instrumentForecastVisible: moduleValue("entityPanelForecastVisible", "instrumentForecastVisible", base.instrumentForecastVisible) !== false,
     diagnosticScale: clamp(Number(value.diagnosticScale ?? base.diagnosticScale), .75, 1.75),
     diagnosticTextScale: clamp(Number(value.diagnosticTextScale ?? 1.15), .85, 1.5),
     interfaceScale: clamp(Number(value.interfaceScale ?? READABLE_INTERFACE_DEFAULTS.interfaceScale), .85, 1.3),

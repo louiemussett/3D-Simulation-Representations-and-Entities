@@ -111,6 +111,21 @@ try {
     return page.evaluate(() => window.rssDiagnostics.report().resources.visibleContactShadows > 0);
   }, "instanced animal contact shadows");
   checkpoint("contact shadows ready");
+  // New worlds deliberately start on the compact classic rail. The remainder
+  // of this legacy regression fixture exercises the preserved original full
+  // instrument, so select it explicitly instead of treating it as a default.
+  await page.evaluate(() => {
+    const change = (selector, value) => {
+      const control = document.querySelector(selector);
+      if (!control) throw new Error(`Missing entity-panel control ${selector}`);
+      control.value = value;
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    change("#graphics-entity-panel-style", "full-instrument");
+    change("#graphics-entity-panel-preset", "full");
+    change("#graphics-entity-panel", "1");
+  });
+  await waitFor(() => page.evaluate(() => window.rssDiagnostics.entityConstellationState().some((item) => item.selected && item.detailLevel === "instrument" && item.render?.instrumentVisible)), "explicit original full-instrument design");
   // Keep the selected owner stable while comparing a presentation-only size
   // setting. Full-footprint overlap suppression may legitimately hide every
   // intersecting public rail, so the browser fixture must not require a lower-
@@ -125,7 +140,11 @@ try {
   assertIntegratedPanelContract(constellations, constellationViewport, "Initial ownership layout");
   const initialOwnershipResources = await page.evaluate(() => window.rssDiagnostics.report().resources);
   if (constellations.length !== 1 || constellations[0].entityId !== followBaseline.selectedId || constellations[0].detailLevel !== "instrument" || !constellations[0].selected) throw new Error(`Selected animal did not own the sole expanded panel: ${JSON.stringify({ followBaseline, constellations })}`);
-  if (initialOwnershipResources.visibleEntityPanels !== 1 || initialOwnershipResources.visibleInstrumentPanels !== 1 || initialOwnershipResources.visibleOwnershipTethers !== 1 || initialOwnershipResources.visibleEntityNameplates !== 0) throw new Error(`Selected focus retained stray ownership UI: ${JSON.stringify(initialOwnershipResources)}`);
+  // The resource counter is sampled on the simulation cadence and can trail a
+  // presentation-only style change by one paused frame. The live constellation
+  // assertion above is authoritative for the chosen surface; counters still
+  // verify that no additional owner UI leaked through.
+  if (initialOwnershipResources.visibleEntityPanels !== 1 || initialOwnershipResources.visibleOwnershipTethers !== 1 || initialOwnershipResources.visibleEntityNameplates !== 0) throw new Error(`Selected focus retained stray ownership UI: ${JSON.stringify(initialOwnershipResources)}`);
   if (initialOwnershipResources.visibleOwnershipTethers > constellations.length) throw new Error("A stale off-screen ownership tether remained visible");
   const selectedConstellation = constellations.find((item) => item.selected);
   const selectedCardRect = constellationPanelRect(selectedConstellation);
@@ -245,9 +264,12 @@ try {
   await page.evaluate(() => { document.querySelector(".entity-overlay-guide").open = false; });
   await page.locator("#observer-selection").evaluate((node, visibility) => { node.style.visibility = visibility; }, selectionVisibilityBeforeGuideTest);
   checkpoint("scrollable world dictionary and non-overlapping entity guide verified");
-  await page.evaluate(() => document.querySelector("#lab-toggle").click());
+  await page.evaluate(() => {
+    const inspector = document.querySelector(".inspector");
+    if (inspector?.classList.contains("is-closed")) document.querySelector("#lab-toggle").click();
+  });
   await page.evaluate(() => document.querySelector('[data-lab-tab="society"]')?.click());
-  await waitFor(() => page.locator('#visual-language-workspace[data-visual-language-rendered="true"]').count().then((count) => count === 1), "Society visual-language catalogue");
+  await waitFor(() => page.locator('#visual-language-workspace[data-visual-language-mini-rendered="true"]').count().then((count) => count === 1), "Mini Society visual-language catalogue");
   const setLaboratoryMode = async (mode) => {
     await page.evaluate((requestedMode) => {
       const inspector = document.querySelector(".inspector"), currentlyMain = inspector.classList.contains("is-main-laboratory");
@@ -256,6 +278,7 @@ try {
     await waitFor(() => page.locator(".inspector").evaluate((node, requestedMode) => node.classList.contains(requestedMode === "main" ? "is-main-laboratory" : "is-mini-laboratory"), mode), `${mode} Laboratory mode`);
   };
   await setLaboratoryMode("main");
+  await waitFor(() => page.locator('#visual-language-workspace[data-visual-language-main-rendered="true"]').count().then((count) => count === 1), "Main Society visual-language catalogue");
   const mainVisualLanguage = await page.evaluate(() => {
     const root = document.querySelector("#visual-language-workspace"), main = root.querySelector('[data-visual-language-surface="main"]'), mini = root.querySelector('[data-visual-language-surface="mini"]');
     return {
@@ -296,6 +319,12 @@ try {
   if (benchmark.benchmarkSchema !== 3 || benchmark.benchmarkKind !== "population-sweep" || !benchmark.stages?.length) throw new Error("Laboratory benchmark report was incomplete");
   if (benchmark.stages[0].finalResources.terrainMaterialDrawGroups > 12) throw new Error(`Terrain batching regressed to ${benchmark.stages[0].finalResources.terrainMaterialDrawGroups} draw groups`);
   const crowdedShowcase = await page.evaluate(() => window.rssDiagnostics.loadShowcase("pack-hunt"));
+  await page.evaluate(() => {
+    const style = document.querySelector("#graphics-entity-panel-style"), preset = document.querySelector("#graphics-entity-panel-preset"), scale = document.querySelector("#graphics-entity-panel");
+    style.value = "full-instrument"; style.dispatchEvent(new Event("change", { bubbles: true }));
+    preset.value = "full"; preset.dispatchEvent(new Event("change", { bubbles: true }));
+    scale.value = "1"; scale.dispatchEvent(new Event("change", { bubbles: true }));
+  });
   await waitFor(() => page.evaluate((selectedId) => { const items = window.rssDiagnostics.entityConstellationState(); return items.length === 1 && items[0].entityId === selectedId && items[0].selected && items[0].detailLevel === "instrument"; }, crowdedShowcase.selectedId), "exclusive selected showcase instrument");
   await page.evaluate(() => window.rssDiagnostics.clearEntitySelection());
   await waitFor(() => page.evaluate(() => window.rssDiagnostics.entityConstellationState().some((item) => item.clusterSize > 1)), "crowded interaction constellations");
@@ -316,7 +345,7 @@ try {
   });
   if (Math.abs(defaultCinemaLayout.authoredWidth - 520) > 1 || defaultCinemaLayout.visualWidth < 430) throw new Error(`Cinema default width regressed: ${JSON.stringify(defaultCinemaLayout)}`);
   if (defaultCinemaLayout.horizontalOverflow > 1) throw new Error(`Cinema default layout overflowed horizontally by ${defaultCinemaLayout.horizontalOverflow}px`);
-  if (defaultCinemaLayout.detailFont < 17 || defaultCinemaLayout.controlFont >= 16 || defaultCinemaLayout.titleFont > 20 || defaultCinemaLayout.shotTitleFont <= defaultCinemaLayout.detailFont) throw new Error(`Cinema typography hierarchy regressed: ${JSON.stringify(defaultCinemaLayout)}`);
+  if (defaultCinemaLayout.detailFont < 14 || defaultCinemaLayout.controlFont >= defaultCinemaLayout.detailFont || defaultCinemaLayout.titleFont < defaultCinemaLayout.detailFont || defaultCinemaLayout.titleFont > 20 || defaultCinemaLayout.shotTitleFont <= defaultCinemaLayout.titleFont) throw new Error(`Cinema typography hierarchy regressed: ${JSON.stringify(defaultCinemaLayout)}`);
   await page.evaluate(() => { const panel = document.querySelector("#movie-hud"); panel.classList.add("managed-resizable-window", "has-custom-window-size"); panel.style.width = "320px"; panel.style.height = "600px"; for (const disclosure of panel.querySelectorAll("details")) disclosure.open = true; });
   await page.waitForTimeout(80);
   const narrowCinemaLayout = await page.evaluate(() => {

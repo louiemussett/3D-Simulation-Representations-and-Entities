@@ -48,7 +48,15 @@ test("Cinema binds narration highlights, panel depth, and spoken copy to one pre
   const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
   assert.match(source, /cinemaEntityPresentation\(\{ text: narration/);
   assert.match(source, /shot\?\.entityPresentation\?\.subjectId/);
-  assert.match(source, /cinemaPresentationNeedsInstrument\(shot\.entityPresentation\)/);
+  assert.match(source, /cinemaPresentationNeedsInstrument\(presentation\)/);
   assert.match(source, /speakMovieNarration\(presentedNarration/);
   assert.match(source, /ringAt\(narrated, bodyRadius\(narrated\) \* 1\.85, mats\.selected\)/);
+});
+
+test("Cinema never opens the large physiology instrument for an unavailable or unrelated channel", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const resolver = source.match(/function cinemaNarrationNeedsInstrument\(shot = movieState\.shot\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(resolver, /presentation\.domains\?\.includes\("physiology"\)/);
+  assert.match(resolver, /movieChannelEnabled\("physiology"\)/);
+  assert.match(resolver, /cinemaPresentationNeedsInstrument\(presentation\)/);
 });

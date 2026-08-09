@@ -9,10 +9,10 @@ const joiner = { id: "RH2", label: "Ridge Hunter RH2", alive: true, canHunt: tru
 test("predation evidence becomes one ordered multi-subject Cinema thread", () => {
   const chain = buildCinemaInteractionChains([hunter, prey, joiner]).find(item => item.chainId === "predation:RH1:VG1");
   assert.equal(chain.chainId, "predation:RH1:VG1");
-  assert.deepEqual(chain.scenes.map(scene => scene.chainStage), ["evidence", "prey-response", "hunter-progress", "nearby-participant", "distance-overview", "prey-condition", "hunter-condition"]);
+  assert.deepEqual(chain.scenes.map(scene => scene.chainStage), ["evidence", "prey-response", "distance-overview"]);
   assert.deepEqual(chain.scenes[0].ids, ["RH1"]);
   assert.deepEqual(chain.scenes[1].ids, ["VG1"]);
-  assert.deepEqual(new Set(chain.scenes[4].ids), new Set(["RH1", "VG1", "RH2"]));
+  assert.deepEqual(new Set(chain.scenes[2].ids), new Set(["RH1", "VG1", "RH2"]));
   assert.match(chain.scenes[1].detail, /does not prove/);
 });
 
@@ -56,7 +56,7 @@ test("courtship and mating remain one paired thread as the phase changes", () =>
   const courtship = buildCinemaInteractionChains([female, male]).find(item => item.kind === "reproduction");
   assert.equal(courtship.chainId, "reproduction:VG1:VG2");
   assert.equal(courtship.phase, "courtship");
-  assert.deepEqual(courtship.scenes.map(scene => scene.chainStage), ["relationship-open", "partner-response", "relationship-progress", "relationship-overview", "reproductive-condition"]);
+  assert.deepEqual(courtship.scenes.map(scene => scene.chainStage), ["partner-response", "relationship-progress", "relationship-overview"]);
   const mating = buildCinemaInteractionChains([{ ...female, courtshipPartnerId: null, matingPartnerId: "VG2", actionKey: "mating", reproductionStage: "mating" }, { ...male, courtshipPartnerId: null, matingPartnerId: "VG1", actionKey: "mating", reproductionStage: "mating" }]).find(item => item.kind === "reproduction");
   assert.equal(mating.chainId, courtship.chainId);
   assert.notEqual(mating.signature, courtship.signature);
@@ -69,7 +69,7 @@ test("pregnancy and nursing create evidence-linked family threads", () => {
   assert.equal(pregnancy.phase, "late pregnancy");
   assert.match(pregnancy.scenes[0].detail, /82% complete/);
   assert.equal(care.phase, "nursing");
-  assert.deepEqual(care.scenes[2].ids, ["VG1", "VG3"]);
+  assert.deepEqual(care.scenes[0].ids, ["VG1", "VG3"]);
   assert.equal(cinemaInteractionLens("maternal-condition").physiology, true);
   assert.equal(cinemaInteractionLens("family-overview").physiology, undefined);
 });
@@ -81,4 +81,49 @@ test("a rapid predation phase jumps directly to the current action beat", () => 
   const changed = chooseCinemaInteractionBeat([pursuit], first.state, 1);
   assert.equal(changed.scene.chainStage, "hunter-progress");
   assert.equal(changed.state.phase, "pursuit");
+});
+
+test("animal-story coverage is bounded to three phase-appropriate views", () => {
+  const evidence = buildCinemaInteractionChains([hunter, prey, joiner]).find(item => item.kind === "predation");
+  const pursuit = buildCinemaInteractionChains([{ ...hunter, actionKey: "chasing prey", predationPhase: "pursuit" }, prey, joiner]).find(item => item.kind === "predation");
+  assert.equal(evidence.scenes.length, 3);
+  assert.deepEqual(pursuit.scenes.map(scene => scene.chainStage), ["distance-overview", "hunter-progress", "prey-condition"]);
+
+  const mother = { id: "VG10", label: "Valley Grazer VG10", alive: true, sex: "F", lifeStage: "adult", x: 0, z: 0, groupId: "family", pregnant: true, pregnancyProgress: .8, offspringIds: ["VG11"], actionKey: "allow-nursing", actionTargetId: "VG11" };
+  const child = { id: "VG11", label: "Valley Grazer VG11", alive: true, lifeStage: "dependent", x: 1, z: 0, groupId: "family", motherId: "VG10", actionKey: "nurse", actionTargetId: "VG10" };
+  const herbivoreStories = buildCinemaInteractionChains([mother, child]);
+  assert.equal(herbivoreStories.find(item => item.kind === "pregnancy").scenes.length, 3);
+  assert.equal(herbivoreStories.find(item => item.kind === "caregiving").scenes.length, 3);
+});
+
+test("predation admission follows evidence rather than a fixed real-time deadline", () => {
+  const near = buildCinemaInteractionChains([{ ...hunter, x: 0, speed: .5 }, { ...prey, x: 4, speed: .1 }]).find(item => item.kind === "predation");
+  const far = buildCinemaInteractionChains([{ ...hunter, x: 0, speed: .08 }, { ...prey, x: 40, speed: .1 }]).find(item => item.kind === "predation");
+  assert.ok(near.completionEstimateMs <= 60_000);
+  assert.ok(far.completionEstimateMs > 60_000);
+  assert.equal(chooseCinemaInteractionBeat([far], {}, 0, { nowMs: 10 }).scene.chainId, far.chainId);
+  const admitted = chooseCinemaInteractionBeat([near], {}, 0, { nowMs: 10 });
+  assert.equal(admitted.scene.chainId, near.chainId);
+  assert.equal(admitted.state.startedAtMs, 10);
+});
+
+test("committed stalking and pursuit are continuity-protected ahead of quieter arcs", () => {
+  const active = buildCinemaInteractionChains([
+    { ...hunter, x: 0, actionKey: "chasing prey", predationPhase: "pursuit" },
+    { ...prey, x: 40 },
+    { id: "VG2", label: "Valley Grazer VG2", alive: true, canHunt: false, x: 3, z: 2, pregnant: true, pregnancyProgress: .8 }
+  ]);
+  assert.equal(active[0].kind, "predation");
+  assert.equal(active[0].mustFollow, true);
+  const choice = chooseCinemaInteractionBeat(active, {}, 0, { nowMs: 10 });
+  assert.equal(choice.scene.mustFollow, true);
+});
+
+test("a disappearing active arc receives one evidence-bounded resolution beat", () => {
+  const chain = buildCinemaInteractionChains([{ ...hunter, speed: .5 }, { ...prey, x: 4 }]).find(item => item.kind === "predation");
+  const opened = chooseCinemaInteractionBeat([chain], {}, 0, { nowMs: 100 });
+  const resolved = chooseCinemaInteractionBeat([], opened.state, 1, { nowMs: 200 });
+  assert.equal(resolved.scene.chainStage, "resolution");
+  assert.equal(resolved.scene.chainId, chain.chainId);
+  assert.equal(resolved.state.chainId, null);
 });

@@ -90,7 +90,7 @@ test("an entirely hidden physiology stack preserves its anchor", () => {
   );
 });
 
-test("world overlays use the shared stack while retaining separate settings controls", () => {
+test("world physiology uses the shared stack behind one complete panel visibility control", () => {
   assert.match(app, /physiologyOverlayStackLayout\(\{/);
   assert.match(app, /performanceVisible:\s*showEndurance/);
   assert.match(app, /reservesVisible:\s*showComposition/);
@@ -99,8 +99,9 @@ test("world overlays use the shared stack while retaining separate settings cont
   assert.match(app, /physiologyRoot\.add\(enduranceBar\)/);
   assert.match(app, /physiologyRoot\.add\(compositionBar\)/);
   assert.match(app, /seamOverlap:\s*0/);
-  assert.match(html, /id="overlay-endurance-bar"[^>]*\/?>\s*Performance fuels/);
-  assert.match(html, /id="overlay-composition-bar"[^>]*\/?>\s*Metabolic reserves/);
+  assert.match(html, /id="overlay-hide-entity-presentation"[^>]*\/?>\s*No panel and bubbles/);
+  assert.match(html, /id="overlay-endurance-bar"[^>]*hidden/);
+  assert.match(html, /id="overlay-composition-bar"[^>]*hidden/);
   assert.match(html, /attached upper half of one physiology stack/);
   assert.match(html, /independent Overlays checkbox still controls it separately/);
 });
