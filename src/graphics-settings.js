@@ -1,13 +1,18 @@
 const ENTITY_CONSTELLATION_DEFAULTS = Object.freeze({
   entityPanelScale: .4,
+  entityPublicPanelScale: .4,
+  entitySelectedPanelScale: .4,
   entityPanelTextScale: 1.3,
   entityPanelStyle: "classic-rail",
-  entityPanelContentPreset: "predictive",
+  entityPanelContentPreset: "custom",
   entityBubbleScale: 1,
+  // Bubbles always originate above the animal. Retain the field only so old
+  // preferences migrate deterministically instead of restoring panel anchoring.
+  entityBubbleOrigin: "head",
   entityPanelIdentityVisible: true,
   entityPanelExpressionVisible: true,
   entityPanelPublicCueVisible: true,
-  entityPanelHealthVisible: false,
+  entityPanelHealthVisible: true,
   entityPanelConcernVisible: false,
   entityPanelForecastEffectVisible: false,
   entityPanelMetabolicVisible: false,
@@ -22,7 +27,12 @@ const ENTITY_CONSTELLATION_DEFAULTS = Object.freeze({
   entityIconScale: 1.25,
   thoughtScale: 1.25,
   predictionScale: 1.25,
-  entityPanelsVisible: true,
+  // Identity/status panels are optional. Private thought and forecast bubbles
+  // have their own switches and remain available without a panel.
+  entityAttachedPanelsVisible: false,
+  entityPanelsVisible: false,
+  entityPublicPanelsVisible: false,
+  entitySelectedPresentationVisible: false,
   instrumentExpressionVisible: true,
   instrumentPublicCueVisible: true,
   instrumentThoughtVisible: true,
@@ -92,10 +102,23 @@ export function normalizeGraphicsSettings(value = {}) {
     ? nearest(clamp(Math.min(entityIconScale, thoughtScale) / 1.25, .1, 1.5), panelScaleChoices)
     : base.entityPanelScale;
   const hasOldPanelConfiguration = value.entityPanelScale != null || value.instrumentExpressionVisible != null || value.instrumentPublicCueVisible != null || value.instrumentThoughtVisible != null || value.instrumentForecastVisible != null;
-  const styleChoices = ["identity-mast", "status-mast", "capsule", "classic-rail", "context-ribbon", "vital-strip", "predictive-view", "full-instrument"];
-  const contentChoices = ["classic", "essential", "predictive", "full", "custom"];
-  const entityPanelStyle = styleChoices.includes(value.entityPanelStyle) ? value.entityPanelStyle : hasOldPanelConfiguration ? "full-instrument" : base.entityPanelStyle;
-  const entityPanelContentPreset = contentChoices.includes(value.entityPanelContentPreset) ? value.entityPanelContentPreset : hasOldPanelConfiguration ? "full" : base.entityPanelContentPreset;
+  // Saves made before public rails and selected instruments had independent
+  // controls migrate their single panel scale to both surfaces. Once either
+  // dedicated value exists, it is authoritative for that surface.
+  const legacyPanelScale = nearest(clamp(Number(value.entityPanelScale ?? migratedPanelScale), .1, 1.5), panelScaleChoices);
+  const entityPublicPanelScale = nearest(clamp(Number(value.entityPublicPanelScale ?? legacyPanelScale), .1, 1.5), panelScaleChoices);
+  const entitySelectedPanelScale = nearest(clamp(Number(value.entitySelectedPanelScale ?? legacyPanelScale), .1, 1.5), panelScaleChoices);
+  // This dedicated value separates optional identity/status panels from the
+  // private bubbles. Old combined switches deliberately migrate to the new
+  // panel-off default instead of making a removed panel reappear.
+  const entityAttachedPanelsVisible = value.entityAttachedPanelsVisible ?? false;
+  const entityPublicPanelsVisible = entityAttachedPanelsVisible !== false;
+  const entitySelectedPresentationVisible = entityAttachedPanelsVisible !== false;
+  // The experimental design and information presets were removed. Retain
+  // stable compatibility fields so older saves load without data loss, but
+  // always render the proven thick rail plus selected main instrument.
+  const entityPanelStyle = "classic-rail";
+  const entityPanelContentPreset = "custom";
   const moduleValue = (name, legacyName, fallback) => value[name] ?? (legacyName ? value[legacyName] : undefined) ?? fallback;
   const iconTextureQuality = [1, 2, 4, 8].includes(Number(value.iconTextureQuality ?? base.iconTextureQuality)) ? Number(value.iconTextureQuality ?? base.iconTextureQuality) : 2;
   const requestedFrameCap = Number(value.frameCap ?? base.frameCap);
@@ -112,11 +135,16 @@ export function normalizeGraphicsSettings(value = {}) {
     adaptiveMaxScale,
     vegetationStride: clamp(Math.round(Number(value.vegetationStride ?? base.vegetationStride)), 1, 5),
     animalDetail: clamp(Number(value.animalDetail ?? base.animalDetail), .6, 1.6),
-    entityPanelScale: nearest(clamp(Number(value.entityPanelScale ?? migratedPanelScale), .1, 1.5), panelScaleChoices),
-    entityPanelTextScale: nearest(clamp(Number.isFinite(requestedPanelTextScale) ? requestedPanelTextScale : base.entityPanelTextScale, .75, 1.5), [.75, .9, 1, 1.15, 1.3, 1.5]),
+    // `entityPanelScale` remains a compatibility alias for old saves and
+    // extensions. Runtime layout uses the two explicit values below.
+    entityPanelScale: entitySelectedPanelScale,
+    entityPublicPanelScale,
+    entitySelectedPanelScale,
+    entityPanelTextScale: nearest(clamp(Number.isFinite(requestedPanelTextScale) ? requestedPanelTextScale : base.entityPanelTextScale, .75, 2), [.75, .9, 1, 1.15, 1.3, 1.5, 2]),
     entityPanelStyle,
     entityPanelContentPreset,
     entityBubbleScale: nearest(clamp(Number(value.entityBubbleScale ?? base.entityBubbleScale), .5, 1.5), [.5, .75, 1, 1.25, 1.5]),
+    entityBubbleOrigin: "head",
     entityPanelIdentityVisible: moduleValue("entityPanelIdentityVisible", null, base.entityPanelIdentityVisible) !== false,
     entityPanelExpressionVisible: moduleValue("entityPanelExpressionVisible", "instrumentExpressionVisible", base.entityPanelExpressionVisible) !== false,
     entityPanelPublicCueVisible: moduleValue("entityPanelPublicCueVisible", "instrumentPublicCueVisible", base.entityPanelPublicCueVisible) !== false,
@@ -128,13 +156,19 @@ export function normalizeGraphicsSettings(value = {}) {
     entityPanelThoughtVisible: moduleValue("entityPanelThoughtVisible", "instrumentThoughtVisible", base.entityPanelThoughtVisible) !== false,
     entityPanelForecastVisible: moduleValue("entityPanelForecastVisible", "instrumentForecastVisible", base.entityPanelForecastVisible) !== false,
     // Legacy component fields round-trip without data loss, but the active
-    // renderer uses only `entityPanelScale` for both rail and instrument size.
+    // renderer uses the dedicated public/selected root scale; these legacy
+    // child values are retained only for round-trip compatibility.
     entityIdentityScale: clamp(Number(value.entityIdentityScale ?? base.entityIdentityScale), .75, 1.5),
     entityExpressionScale: clamp(Number(value.entityExpressionScale ?? value.entityIconScale ?? base.entityExpressionScale), .75, 2),
     entityIconScale,
     thoughtScale,
     predictionScale: clamp(Number(value.predictionScale ?? value.thoughtScale ?? base.predictionScale), .75, 2),
-    entityPanelsVisible: value.entityPanelsVisible ?? base.entityPanelsVisible ?? true,
+    // Compatibility alias: old integrations still understand this as the
+    // complete presentation being visible only when both surfaces are shown.
+    entityPanelsVisible: entityPublicPanelsVisible !== false && entitySelectedPresentationVisible !== false,
+    entityAttachedPanelsVisible,
+    entityPublicPanelsVisible: entityPublicPanelsVisible !== false,
+    entitySelectedPresentationVisible: entitySelectedPresentationVisible !== false,
     instrumentExpressionVisible: moduleValue("entityPanelExpressionVisible", "instrumentExpressionVisible", base.instrumentExpressionVisible) !== false,
     instrumentPublicCueVisible: moduleValue("entityPanelPublicCueVisible", "instrumentPublicCueVisible", base.instrumentPublicCueVisible) !== false,
     instrumentThoughtVisible: moduleValue("entityPanelThoughtVisible", "instrumentThoughtVisible", base.instrumentThoughtVisible) !== false,

@@ -178,8 +178,9 @@ export function selectEntityConstellationBudget(rawItems = [], rawOptions = {}) 
 
 // There is one ownership surface at every admitted distance. These are base
 // coordinates at panelScale=1; the resolver scales the entire constellation as
-// one unit. Thought and prediction remain selected-only attachments above the
-// public panel rather than alternate black-panel zoom levels.
+// one unit. Thought and prediction are optional attachments above the public
+// panel rather than alternate black-panel zoom levels. Their visibility is
+// supplied by the caller; selection is not a cognition-visibility gate.
 const PANEL_SLOTS = freeze({
   panel: { x: 0, y: -5 },
   identity: { x: 0, y: -5 },
@@ -308,10 +309,6 @@ const normalizeItems = (items) => {
     const screenX = Number(item.screenX), screenY = Number(item.screenY);
     if (!Number.isFinite(screenX) || !Number.isFinite(screenY)) throw new TypeError(`Constellation ${entityId} requires finite projected screen coordinates`);
     const selected = Boolean(item.selected), visibleChannels = normalizeChannels(item.visibleChannels);
-    // Private world-space cognition belongs only to the explicitly selected
-    // owner. Treat this as a layout invariant as well as an application-level
-    // permission so malformed or stale channel input cannot expose it.
-    if (!selected) { visibleChannels.delete("thought"); visibleChannels.delete("prediction"); }
     const interactionIds = [...new Set((item.interactionIds || []).map(String).filter((id) => id && id !== entityId))].sort((left, right) => left.localeCompare(right));
     return {
       entityId,
@@ -470,12 +467,13 @@ const itemPanelGeometry = (item, options) => {
   let top = panelCenterY - panelHeight / 2, bottom = panelCenterY + panelHeight / 2;
   for (const [name, size] of Object.entries(slotSizes)) {
     const slot = slots[name];
-    // A selected owner reserves both private attachment bays even while one or
-    // both channels have no current content. Forecast/thought appearance must
-    // only change drawing visibility; it must not move the public panel,
-    // change collision grouping, or make the tether jump at a viewport edge.
-    const reservedForSelection = item.selected && (name === "thought" || name === "prediction");
-    if ((!slot?.visible && !reservedForSelection) || size.width <= 0 || size.height <= 0) continue;
+    // Reserve the cognition pair whenever either attachment is enabled, and
+    // retain the selected owner's historical reservation while both are
+    // temporarily empty. Appearance must not move the public panel, change
+    // collision grouping, or make the tether jump at a viewport edge.
+    const cognitionPairRequested = item.selected || item.visibleChannels.has("thought") || item.visibleChannels.has("prediction");
+    const reservedForCognitionPair = cognitionPairRequested && (name === "thought" || name === "prediction");
+    if ((!slot?.visible && !reservedForCognitionPair) || size.width <= 0 || size.height <= 0) continue;
     const halfWidth = size.width * scale / 2 + attachmentPaddingPx * scale;
     const halfHeight = size.height * scale / 2 + attachmentPaddingPx * scale;
     left = Math.min(left, slot.x - halfWidth); right = Math.max(right, slot.x + halfWidth);

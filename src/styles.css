@@ -1151,6 +1151,18 @@ dd { margin: 0; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
 .observer-header-state.is-public { border-color:#73d9c1; }
 
 .observer-visual-overview,.observer-social-visual,.observer-commitment-visual,.observer-forecast-visual { display:grid; gap:.55rem; padding:.35rem; }
+.observer-overview-physiology { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.45rem; }
+.observer-overview-physiology-group { min-width:0; padding:.48rem; border:1px solid #315b4e; border-radius:.52rem; background:#07130f; }
+.observer-overview-physiology-group > header { margin-bottom:.35rem; padding-bottom:.25rem; border-bottom:1px solid #29483e; color:#f0d487; font-size:.76rem; font-weight:800; letter-spacing:.055em; text-transform:uppercase; }
+.observer-overview-physiology-group.is-performance > header { color:#78e1c5; }
+.observer-overview-physiology-group > div { display:grid; gap:.38rem; }
+.observer-overview-physiology-group article { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-rows:auto .3rem; align-items:end; gap:.16rem .35rem; min-width:0; }
+.observer-overview-physiology-group article > span { overflow:hidden; color:#d8e7df; font-size:.78rem; line-height:1.1; text-overflow:ellipsis; white-space:nowrap; }
+.observer-overview-physiology-group article > strong { display:flex; align-items:baseline; gap:.18rem; color:#f4fbf7; font-size:.93rem; line-height:1; }
+.observer-overview-physiology-group article > strong small { font-size:.62em; opacity:.72; }
+.observer-overview-physiology-group article > strong em { color:#b8cbc1; font-size:.64em; font-style:normal; font-weight:650; }
+.observer-overview-physiology-group article > i { grid-column:1/-1; overflow:hidden; min-height:.3rem; border-radius:99px; background:#22332d; }
+.observer-overview-physiology-group article > i b { display:block; width:var(--observer-value); height:100%; min-height:.3rem; border-radius:inherit; background:var(--observer-metric-colour,#70dec1); }
 .observer-visual-presentation { display:grid; grid-template-columns:1fr 1fr; gap:.4rem; }
 .observer-visual-presentation > article { display:grid; place-items:center; min-height:7.2rem; overflow:hidden; border:1px solid #315b4e; border-radius:.5rem; background:#07130f; }
 .observer-visual-presentation .exact-symbol-preview { width:100%; height:100%; min-height:7rem; }
@@ -1181,6 +1193,15 @@ dd { margin: 0; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
 .observer-symbol-bays.is-four { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.35rem; }
 .observer-symbol-bays.is-four .observer-symbol-bay { min-height:9rem; }
 .observer-symbol-bays.is-four .exact-symbol-preview { width:100%; height:100%; min-height:8.7rem; }
+.observer-social-context { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.35rem; }
+.observer-social-context > article { position:relative; display:grid; grid-template-columns:2rem minmax(0,1fr) auto; align-items:center; gap:.4rem; min-width:0; min-height:3.2rem; padding:.38rem .48rem; overflow:hidden; border:1px solid #294c41; border-radius:.45rem; background:linear-gradient(135deg,#10251d,#091712); }
+.observer-social-context > article > i { display:grid; place-items:center; width:1.8rem; height:1.8rem; border:1px solid #4d8977; border-radius:50%; color:#8ce7ce; background:#132a22; font-size:1.05rem; font-style:normal; }
+.observer-social-context > article > span { display:grid; min-width:0; gap:.08rem; }
+.observer-social-context > article small { color:#80b9a8; font-size:.61rem; letter-spacing:.045em; line-height:1; text-transform:uppercase; }
+.observer-social-context > article strong { overflow:hidden; color:#edf9f4; font-size:.82rem; line-height:1.15; text-overflow:ellipsis; white-space:nowrap; }
+.observer-social-context > article > b { display:grid; place-items:center; min-width:1.55rem; height:1.55rem; padding:0 .2rem; border-radius:99px; color:#06110d; background:#7fe1c6; font-size:.75rem; }
+.observer-social-context > article > em { position:absolute; right:.48rem; bottom:.28rem; left:2.88rem; height:.18rem; overflow:hidden; border-radius:99px; background:#243a32; }
+.observer-social-context > article > em b { display:block; width:var(--observer-social-value); height:100%; background:#79dec3; }
 .observer-social-network { position:relative; width:min(16rem,90%); aspect-ratio:1; margin:.2rem auto; border:1px dashed #31594d; border-radius:50%; background:radial-gradient(circle,#173128 0 18%,#07130f 19% 100%); }
 .observer-network-center { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); display:grid; place-items:center; width:3.2rem; height:3.2rem; border:2px solid #69dec1; border-radius:50%; font-weight:800; }
 .observer-network-link { --radius:5.5rem; position:absolute; left:50%; top:50%; width:var(--radius); height:calc(1px + 2px * var(--network-strength)); transform-origin:0 50%; transform:rotate(var(--network-angle)); background:rgba(126,218,194,calc(.25 + .55 * var(--network-strength))); }.observer-network-link.is-mate,.observer-network-link.is-offspring,.observer-network-link.is-parent { background:#d6bb7c; }.observer-network-link.is-remembered { background:repeating-linear-gradient(90deg,#7edad0 0 5px,transparent 5px 9px); }
@@ -1208,6 +1229,7 @@ dd { margin: 0; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
 .observer-overlay-group .observer-overlays { grid-template-columns:repeat(2,minmax(0,1fr)); }
 
 @media (max-width:420px) {
+  .observer-overview-physiology { grid-template-columns:1fr; }
   .observer-visual-meter-grid,.observer-forecast-medallions { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .observer-symbol-bays.is-four { grid-template-columns:1fr 1fr; }
   .observer-physiology-badges { grid-template-columns:repeat(2,minmax(0,1fr)); }

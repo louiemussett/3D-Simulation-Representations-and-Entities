@@ -99,6 +99,21 @@ export function ingestNutrients(animal, { calories = 0, carbohydrate = .3, fat =
   return total;
 }
 
+export function fillMetabolicReserves(animal, { gut = 1, blood = 1, liver = 1 } = {}) {
+  const metabolism = initializeMetabolism(animal), limits = capacities(animal);
+  const existingGut = sumGut(metabolism.gut);
+  const fallbackFractions = { carbohydrate: .3, fat: .18, protein: .22, fermentation: .3 };
+  const fractions = existingGut > 0
+    ? Object.fromEntries(Object.entries(metabolism.gut).map(([key, value]) => [key, Math.max(0, value) / existingGut]))
+    : fallbackFractions;
+  const targetGut = limits.gut * clamp(Number(gut) || 0);
+  for (const key of Object.keys(metabolism.gut)) metabolism.gut[key] = targetGut * (fractions[key] ?? fallbackFractions[key] ?? 0);
+  metabolism.bloodFuel = limits.blood * clamp(Number(blood) || 0);
+  metabolism.liverGlycogen = limits.liver * clamp(Number(liver) || 0);
+  syncLegacyEnergy(animal);
+  return metabolism;
+}
+
 export function spendMetabolicEnergy(animal, amount, activity = "ordinary") {
   const metabolism = initializeMetabolism(animal), profile = metabolicProfile(animal), demand = Math.max(0, amount), mix = { gut: 0, blood: 0, liver: 0, muscle: 0, fat: 0, protein: 0 };
   let remaining = demand;

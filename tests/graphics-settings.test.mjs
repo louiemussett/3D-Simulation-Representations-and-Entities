@@ -16,25 +16,49 @@ test("adaptive resolution defaults on and can be disabled", () => { assert.equal
 test("adaptive thresholds are bounded and lower never exceeds upper", () => { const value = normalizeGraphicsSettings({ preset: "custom", adaptiveMinScale: 1.5, adaptiveMaxScale: .75 }); assert.equal(value.adaptiveMinScale, .75); assert.equal(value.adaptiveMaxScale, .75); });
 test("entity constellations expose one bounded uniform panel scale", () => {
   assert.equal(normalizeGraphicsSettings({}).entityPanelScale, .4);
+  assert.equal(normalizeGraphicsSettings({}).entityPublicPanelScale, .4);
+  assert.equal(normalizeGraphicsSettings({}).entitySelectedPanelScale, .4);
   assert.equal(normalizeGraphicsSettings({ entityPanelScale: .1, entityPanelStyle: "classic-rail" }).entityPanelScale, .1);
   assert.equal(normalizeGraphicsSettings({ entityPanelScale: 9 }).entityPanelScale, 1.5);
+});
+
+test("public thick rails and the selected main panel have independent scales", () => {
+  const settings = normalizeGraphicsSettings({ entityPublicPanelScale: .2, entitySelectedPanelScale: 1.25 });
+  assert.equal(settings.entityPublicPanelScale, .2);
+  assert.equal(settings.entitySelectedPanelScale, 1.25);
+  assert.equal(settings.entityPanelScale, 1.25);
+});
+
+test("the former shared panel scale migrates into both independent controls", () => {
+  const settings = normalizeGraphicsSettings({ entityPanelScale: .6 });
+  assert.equal(settings.entityPublicPanelScale, .6);
+  assert.equal(settings.entitySelectedPanelScale, .6);
+});
+test("bubble origin always migrates to the animal head", () => {
+  assert.equal(normalizeGraphicsSettings({}).entityBubbleOrigin, "head");
+  assert.equal(normalizeGraphicsSettings({ entityBubbleOrigin: "head" }).entityBubbleOrigin, "head");
+  assert.equal(normalizeGraphicsSettings({ entityBubbleOrigin: "panel" }).entityBubbleOrigin, "head");
+  assert.equal(normalizeGraphicsSettings({ entityBubbleOrigin: "both" }).entityBubbleOrigin, "head");
+  const saved = normalizeGraphicsSettings({ entityBubbleOrigin: "head", entityBubbleScale: 1.25 });
+  assert.deepEqual([saved.entityBubbleOrigin, saved.entityBubbleScale], ["head", 1.25]);
 });
 test("entity panel text scale is independent, discrete and bounded", () => {
   const defaults = normalizeGraphicsSettings({});
   assert.deepEqual([defaults.entityPanelScale, defaults.entityPanelTextScale], [.4, 1.3]);
   assert.equal(normalizeGraphicsSettings({ entityPanelScale: 1.5, entityPanelTextScale: .1 }).entityPanelTextScale, .75);
-  assert.equal(normalizeGraphicsSettings({ entityPanelScale: .6, entityPanelTextScale: 9 }).entityPanelTextScale, 1.5);
+  assert.equal(normalizeGraphicsSettings({ entityPanelScale: .6, entityPanelTextScale: 9 }).entityPanelTextScale, 2);
+  assert.equal(normalizeGraphicsSettings({ entityPanelTextScale: 1.9 }).entityPanelTextScale, 2);
   assert.equal(normalizeGraphicsSettings({ entityPanelTextScale: 1.12 }).entityPanelTextScale, 1.15);
   assert.equal(normalizeGraphicsSettings({ entityPanelTextScale: "not-a-number" }).entityPanelTextScale, 1.3);
   assert.equal(normalizeGraphicsSettings({ entityPanelTextScale: 1.3 }).entityPanelScale, .4);
   const saved = normalizeGraphicsSettings({ preset: "custom", entityPanelTextScale: 1.3 });
   assert.equal(normalizeGraphicsSettings(saved).entityPanelTextScale, 1.3);
 });
-test("new worlds use the compact predictive classic rail while retaining every authored design", () => {
+test("new worlds use the fixed classic rail and selected main instrument", () => {
   const defaults = normalizeGraphicsSettings({});
   assert.deepEqual(
     [defaults.entityPanelStyle, defaults.entityPanelContentPreset, defaults.entityPanelScale],
-    ["classic-rail", "predictive", .4]
+    ["classic-rail", "custom", .4]
   );
   assert.deepEqual(
     [defaults.entityPanelIdentityVisible, defaults.entityPanelExpressionVisible, defaults.entityPanelPublicCueVisible, defaults.entityPanelThoughtVisible, defaults.entityPanelForecastVisible],
@@ -42,16 +66,14 @@ test("new worlds use the compact predictive classic rail while retaining every a
   );
   assert.deepEqual(
     [defaults.entityPanelHealthVisible, defaults.entityPanelConcernVisible, defaults.entityPanelForecastEffectVisible, defaults.entityPanelMetabolicVisible, defaults.entityPanelPerformanceVisible],
-    [false, false, false, false, false]
+    [true, false, false, false, false]
   );
-  for (const style of ["identity-mast", "status-mast", "capsule", "classic-rail", "context-ribbon", "vital-strip", "predictive-view", "full-instrument"]) {
-    assert.equal(normalizeGraphicsSettings({ entityPanelStyle: style }).entityPanelStyle, style);
-  }
+  for (const removedStyle of ["identity-mast", "status-mast", "capsule", "context-ribbon", "vital-strip", "predictive-view", "full-instrument"]) assert.equal(normalizeGraphicsSettings({ entityPanelStyle: removedStyle }).entityPanelStyle, "classic-rail");
 });
-test("older complete-panel saves migrate to the preserved full instrument", () => {
+test("older complete-panel saves retain their module choices but use the stable surface pair", () => {
   const migrated = normalizeGraphicsSettings({ entityPanelScale: .6, instrumentThoughtVisible: false });
-  assert.equal(migrated.entityPanelStyle, "full-instrument");
-  assert.equal(migrated.entityPanelContentPreset, "full");
+  assert.equal(migrated.entityPanelStyle, "classic-rail");
+  assert.equal(migrated.entityPanelContentPreset, "custom");
   assert.equal(migrated.entityPanelThoughtVisible, false);
   assert.deepEqual([migrated.entityPanelHealthVisible, migrated.entityPanelConcernVisible, migrated.entityPanelForecastEffectVisible, migrated.entityPanelMetabolicVisible, migrated.entityPanelPerformanceVisible], [true, true, true, true, true]);
 });
@@ -79,13 +101,28 @@ test("selected instrument channels default on and remain independently disableab
     [false, true, false, true]
   );
 });
-test("the complete entity-panel surface can be hidden without losing child preferences", () => {
-  const hidden = normalizeGraphicsSettings({ entityPanelsVisible: false, instrumentExpressionVisible: false, instrumentPublicCueVisible: true, instrumentThoughtVisible: false, instrumentForecastVisible: true });
-  assert.equal(hidden.entityPanelsVisible, false);
-  assert.deepEqual([hidden.instrumentExpressionVisible, hidden.instrumentPublicCueVisible, hidden.instrumentThoughtVisible, hidden.instrumentForecastVisible], [false, true, false, true]);
-  const restored = normalizeGraphicsSettings({ ...hidden, entityPanelsVisible: true });
-  assert.equal(restored.entityPanelsVisible, true);
-  assert.deepEqual([restored.instrumentExpressionVisible, restored.instrumentPublicCueVisible, restored.instrumentThoughtVisible, restored.instrumentForecastVisible], [false, true, false, true]);
+test("identity and status panels default off without disabling private bubbles", () => {
+  const defaults = normalizeGraphicsSettings({});
+  assert.deepEqual(
+    [defaults.entityAttachedPanelsVisible, defaults.entityPanelsVisible, defaults.entityPublicPanelsVisible, defaults.entitySelectedPresentationVisible],
+    [false, false, false, false]
+  );
+  assert.deepEqual([defaults.entityPanelThoughtVisible, defaults.entityPanelForecastVisible], [true, true]);
+});
+test("old combined visibility switches cannot silently restore removed panels", () => {
+  for (const legacy of [
+    { entityPanelsVisible: true },
+    { entityPublicPanelsVisible: true, entitySelectedPresentationVisible: true }
+  ]) {
+    const migrated = normalizeGraphicsSettings(legacy);
+    assert.deepEqual([migrated.entityAttachedPanelsVisible, migrated.entityPublicPanelsVisible, migrated.entitySelectedPresentationVisible], [false, false, false]);
+  }
+});
+test("the dedicated optional panel switch controls both stable panel surfaces", () => {
+  const visible = normalizeGraphicsSettings({ entityAttachedPanelsVisible: true });
+  assert.deepEqual([visible.entityAttachedPanelsVisible, visible.entityPublicPanelsVisible, visible.entitySelectedPresentationVisible, visible.entityPanelsVisible], [true, true, true, true]);
+  const hidden = normalizeGraphicsSettings({ entityAttachedPanelsVisible: false });
+  assert.deepEqual([hidden.entityAttachedPanelsVisible, hidden.entityPublicPanelsVisible, hidden.entitySelectedPresentationVisible, hidden.entityPanelsVisible], [false, false, false, false]);
 });
 test("content visibility remains independent of uniform panel size", () => {
   const result = normalizeGraphicsSettings({ entityPanelScale: 1.5, instrumentExpressionVisible: false, instrumentPublicCueVisible: true, instrumentThoughtVisible: false, instrumentForecastVisible: true });

@@ -116,7 +116,10 @@ test("entity Social tab separates observable channels from private thought and f
   const visualSocialStart = app.indexOf("function observerSocialVisualHtml(");
   const visualSocialEnd = app.indexOf("\nfunction observerCommitmentVisualHtml(", visualSocialStart);
   const visualSocial = app.slice(visualSocialStart, visualSocialEnd);
-  for (const visualOnly of ["guide.visual", "observer-social-network", "observer-social-counters", 'observerLaboratoryLink("society"']) assert.match(visualSocial, new RegExp(visualOnly.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  for (const visualOnly of ["guide.visual", "observer-social-context", "observer-social-network", "observer-social-counters", 'observerLaboratoryLink("society"']) assert.match(visualSocial, new RegExp(visualOnly.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  for (const restoredContext of ["Current social life", "Current organisation", "Current social role", "Social recognition", "Remembered social contacts", "Known relatives", "Messages received"]) assert.match(visualSocial, new RegExp(restoredContext));
+  assert.match(visualSocial, /groupDisplayName\(sim\.groupIdentities, animal\.groupId\)/);
+  assert.match(visualSocial, /candidate\.alive && candidate\.groupId === animal\.groupId/);
   for (const movedProse of ["Recent social memory", "observer-symbol-explanations", "observer-social-summary"]) assert.doesNotMatch(visualSocial, new RegExp(movedProse));
 
   const overviewStart = app.indexOf("function observerWholeAnimalOverviewHtml(");
@@ -144,7 +147,7 @@ test("admitted forecasts use accessible circular confidence meters without losin
   assert.match(css, /\.prediction-confidence-gauge \{[^\n]+border-radius:50%;[^\n]+conic-gradient/);
 });
 
-test("entity Overview is a visual instrument with a Laboratory handoff", () => {
+test("entity Overview is a dedicated metabolic and performance dashboard", () => {
   const summaryStart = app.indexOf("const summaryContent =", app.indexOf("function entityPredictiveSummaryHtml("));
   const compactReturn = app.indexOf("if (compact) return", summaryStart);
   const compactMarkup = app.slice(summaryStart, compactReturn), overviewStart = app.indexOf("function observerWholeAnimalOverviewHtml("), overviewEnd = app.indexOf("function observerSocialVisualGuideHtml(", overviewStart), overviewMarkup = app.slice(overviewStart, overviewEnd);
@@ -152,9 +155,8 @@ test("entity Overview is a visual instrument with a Laboratory handoff", () => {
   for (const retained of ["entity-predictive-heading", "entity-predictive-hero", "entity-predictive-modules"]) assert.match(compactMarkup, new RegExp(retained));
   for (const omitted of ["entity-predictive-flow", "entity-predictive-effect", "entity-predictive-impact", "entity-predictive-expanded", "entity-predictive-open", "prediction-symbol-legend"]) assert.doesNotMatch(compactMarkup, new RegExp(omitted));
   assert.ok(overviewStart >= 0 && overviewEnd > overviewStart, "whole-animal Overview is extractable");
-  for (const visual of ["observer-visual-presentation", "observer-visual-meter-grid", "observerDecisionChainHtml", "observerPrimaryForecastHtml", 'observerLaboratoryLink("entity"', 'observerLaboratoryLink("reference"']) assert.match(overviewMarkup, new RegExp(visual.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  for (const meter of ["Health", "Hydration", "Accessible fuel", "Burst capacity", "Aerobic headroom", "Recovery burden"]) assert.match(overviewMarkup, new RegExp(meter));
-  for (const omitted of ["entityPredictiveSummaryHtml", "predictionSymbolLegendHtml", "entity-predictive-flow", "<details", "<summary", "observerSocialVisualGuideHtml", "observer-symbol-explanations", "observer-trait-profile", "Needs and goals", "Action and context"]) assert.doesNotMatch(overviewMarkup, new RegExp(omitted));
+  for (const visual of ["instrumentMetricSnapshot", "observer-overview-physiology", "observerOverviewPhysiologyGroupHtml", "Metabolic reserves", "Fuel and performance"]) assert.match(overviewMarkup, new RegExp(visual.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  for (const omitted of ["observer-visual-presentation", "observer-visual-meter-grid", "observerDecisionChainHtml", "observerPrimaryForecastHtml", "visibleExpression", "activeEmittedSignal", "entityPredictiveSummaryHtml", "predictionSymbolLegendHtml", "entity-predictive-flow", "<details", "<summary", "observerSocialVisualGuideHtml", "observer-symbol-explanations", "observer-trait-profile", "Needs and goals", "Action and context"]) assert.doesNotMatch(overviewMarkup, new RegExp(omitted));
   assert.match(app, /updateObserverDetailMarkup\(observerWholeAnimalOverviewHtml\(selected\), detailKey\)/);
   assert.match(app, /updateObserverDetailMarkup\(observerForecastVisualHtml\(selected\), detailKey\)/);
   assert.match(app, /entityPredictiveSummaryHtml\(selected, \{ expanded: true, surface: "laboratory-entity" \}\)/);

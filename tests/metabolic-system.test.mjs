@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SPECIES_IDS } from "../src/species-registry.js";
-import { advanceMetabolism, ingestNutrients, initializeMetabolism, metabolicJourneyBudget, metabolicPresentation, predictiveHunger, SPECIES_METABOLIC_TRAITS, spendMetabolicEnergy } from "../src/metabolic-system.js";
+import { advanceMetabolism, fillMetabolicReserves, ingestNutrients, initializeMetabolism, metabolicJourneyBudget, metabolicPresentation, predictiveHunger, SPECIES_METABOLIC_TRAITS, spendMetabolicEnergy } from "../src/metabolic-system.js";
 
 const animal = (speciesId = "grazer") => ({ speciesId, sex: "F", lifeStage: "adult", bodyMass: 65, leanMass: 50, fatMass: 15, muscleMass: 30, bodyFatPercent: 23, stomach: 35, health: 100, healthCap: 100, fatigue: 10, pregnant: null, lactation: 0 });
 
@@ -33,6 +33,17 @@ test("juveniles begin with age-appropriate fuel and partial muscle glycogen", ()
   assert.ok(presentation.blood >= .89);
   assert.ok(presentation.liver >= .85);
   assert.ok(presentation.muscle > .7 && presentation.muscle < .75);
+});
+
+test("protected founders can begin with full stomach and rapid fuel reserves", () => {
+  const subject = animal("hunter"), metabolism = fillMetabolicReserves(subject, { gut: 1, blood: 1, liver: 1 });
+  const presentation = metabolicPresentation(subject);
+  assert.equal(presentation.gut, 1);
+  assert.equal(presentation.blood, 1);
+  assert.equal(presentation.liver, 1);
+  assert.equal(subject.stomach, 100);
+  assert.equal(subject.accessibleFuel, 100);
+  assert.ok(metabolism.cumulative.ingested >= 0);
 });
 
 test("sprinting preferentially consumes muscle glycogen and creates anaerobic debt", () => {

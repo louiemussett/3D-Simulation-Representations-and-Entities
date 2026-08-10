@@ -1,6 +1,7 @@
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 import { eatsMeat } from "./species-registry.js";
 export const FAT_CALORIES_PER_KG = 7700;
+export const MAX_BODY_FAT_PERCENT = 99;
 
 export const BODY_COMPOSITION_PROFILES = Object.freeze({
   grazer: Object.freeze({
@@ -14,7 +15,15 @@ export const BODY_COMPOSITION_PROFILES = Object.freeze({
 });
 
 export function compositionProfile(speciesId, sex) { return BODY_COMPOSITION_PROFILES[speciesId]?.[sex] || BODY_COMPOSITION_PROFILES[eatsMeat(speciesId) ? "hunter" : "grazer"][sex] || BODY_COMPOSITION_PROFILES.grazer.M; }
-export function bodyFatPercent(animal) { return animal.bodyMass > 0 ? clamp(animal.fatMass / animal.bodyMass * 100, 0, 99) : 0; }
+export function bodyFatPercent(animal) { return animal.bodyMass > 0 ? clamp(animal.fatMass / animal.bodyMass * 100, 0, MAX_BODY_FAT_PERCENT) : 0; }
+export function setBodyFatPercent(animal, requestedPercent) {
+  const percent = clamp(Number(requestedPercent) || 0, 0, MAX_BODY_FAT_PERCENT), leanMass = Math.max(.5, Number(animal.leanMass) || .5);
+  animal.leanMass = leanMass;
+  animal.fatMass = leanMass * (percent / 100) / Math.max(.01, 1 - percent / 100);
+  animal.bodyMass = animal.leanMass + animal.fatMass;
+  animal.bodyFatPercent = bodyFatPercent(animal);
+  return animal.bodyFatPercent;
+}
 export function stomachCapacityCalories(animal) { return Math.max(100, (animal.leanMass || animal.bodyMass || 1) * compositionProfile(animal.speciesId, animal.sex).stomachCaloriesPerKg); }
 export function stomachFillPercent(animal) { return clamp((animal.stomachCalories || 0) / stomachCapacityCalories(animal) * 100, 0, 100); }
 
@@ -23,6 +32,7 @@ export function migrateBodyComposition(animal = {}) {
   animal.fatMass = Math.max(0, Number.isFinite(Number(animal.fatMass)) ? Number(animal.fatMass) : mass * midpoint);
   animal.leanMass = Math.max(.5, Number.isFinite(Number(animal.leanMass)) ? Number(animal.leanMass) : mass - animal.fatMass);
   animal.bodyMass = animal.leanMass + animal.fatMass;
+  if (animal.fatMass / animal.bodyMass * 100 > MAX_BODY_FAT_PERCENT) setBodyFatPercent(animal, MAX_BODY_FAT_PERCENT);
   animal.stomachCalories = Math.max(0, Number.isFinite(Number(animal.stomachCalories)) ? Number(animal.stomachCalories) : stomachCapacityCalories(animal) * clamp((Number(animal.stomach) || 35) / 100, 0, 1));
   animal.bodyFatPercent = bodyFatPercent(animal); animal.stomach = stomachFillPercent(animal);
   animal.lowFatTicks = Math.max(0, Number(animal.lowFatTicks) || 0); animal.fertilityImpaired = Boolean(animal.fertilityImpaired);

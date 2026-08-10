@@ -85,7 +85,7 @@ test("the public renderer uses a square face bay, fixed identity bay and wide cu
 test("an animal selection exclusively admits its integrated instrument and suppresses other panels", () => {
   const resolver = app.match(/function resolveVisibleEntityConstellations\(entries\) \{([\s\S]*?)\n\}/)?.[1] || "";
   const applier = app.match(/function applyEntityConstellationLayout\(rendered, a, state\) \{([\s\S]*?)\n\}/)?.[1] || "";
-  assert.match(resolver, /projection\.layoutProfile = constellationResolverProfile\(projection\.instrumentOwner \? cardProfile\.selected : cardProfile\.public, graphicsSettings\.entityPanelScale\)/);
+  assert.match(resolver, /projection\.layoutProfile = constellationResolverProfile\(projection\.instrumentOwner \? cardProfile\.selected : cardProfile\.public, panelSettingScale\(projection\.instrumentOwner\)\)/);
   assert.match(resolver, /const panelFocus = entityConstellationPanelFocus\(\)/);
   assert.match(resolver, /if \(panelFocus\.exclusive\) budgetOptions\.exclusiveFocusId = panelFocus\.ownerId/);
   assert.match(resolver, /selectEntityConstellationBudget\(onScreenProjected, budgetOptions\)/);
@@ -183,6 +183,21 @@ test("selected private clouds occupy instrument-owned attachment slots above the
   assert.ok(instrument.selectedFootprint.top < instrument.panel.top);
 });
 
+test("selected bubbles always use the animal-head origin", () => {
+  assert.doesNotMatch(app, /id="graphics-entity-bubble-origin"/);
+  assert.doesNotMatch(app, /Panel top edge/);
+  assert.doesNotMatch(app, /Bubble origin/);
+  assert.match(app, /function selectedBubbleSlots\(layout, panelProfile, panelScale, projection\)/);
+  assert.doesNotMatch(app, /graphicsSettings\.entityBubbleOrigin !== "head"/);
+  assert.match(app, /headPart\.getWorldPosition\(constellationScratch\.headAnchor\)/);
+  assert.match(app, /const headX = Number\.isFinite\(projection\?\.headScreenX\) \? projection\.headScreenX : layout\.body\.x/);
+  assert.match(app, /const headTopY = headY - Math\.max\(3, Number\(projection\?\.projectedHeadPx\)/);
+  assert.match(app, /const bubbleSlots = selectedBubbleSlots\(layout, panelProfile, panelScale, projection\)/);
+  assert.match(app, /setConstellationSlot\(parts\.thought, bubbleSlots\.thought/);
+  assert.match(app, /setConstellationSlot\(parts\.predictionThought, bubbleSlots\.prediction/);
+  assert.doesNotMatch(app, /clone\(parts\.(?:thought|predictionThought)\)/);
+});
+
 test("canonical selected clouds fill two proportional near-half-width panel bays", () => {
   const instrument = entityConstellationCardProfile({
     thoughtScale: 1,
@@ -211,10 +226,10 @@ test("one canonical card profile drives geometry while panel and text scales rem
   assert.match(profile, /physiologyTextScale: 1\.15/);
   assert.doesNotMatch(profile, /entityPanelTextScale/);
   for (const legacySetting of ["graphicsSettings.entityIdentityScale", "graphicsSettings.entityExpressionScale", "graphicsSettings.entityIconScale", "graphicsSettings.thoughtScale", "graphicsSettings.predictionScale", "graphicsSettings.diagnosticScale", "graphicsSettings.diagnosticTextScale"]) assert.doesNotMatch(profile, new RegExp(legacySetting.replaceAll(".", "\\.")), legacySetting);
-  assert.match(profile, /styleUsesInstrumentSurface \? value\.instrument : value\.panel/);
+  assert.match(profile, /public: value\.panel, selected: value\.instrument/);
   assert.doesNotMatch(profile, /enabledBandsNeedInstrumentSurface/);
   assert.match(applier, /panelProfile = integratedInstrument \? cardProfile\.selected : cardProfile\.public/);
-  assert.match(applier, /uniformPanelScale = graphicsSettings\.entityPanelScale/);
+  assert.match(applier, /uniformPanelScale = integratedInstrument \? graphicsSettings\.entitySelectedPanelScale : graphicsSettings\.entityPublicPanelScale/);
   assert.match(applier, /panelScale = layout\.panelDimensions\?\.width > 0 \? layout\.panelDimensions\.width \/ panelProfile\.screenSize\.width : requestedPanelScale/);
   assert.match(app, /const sideCells = panelProfile\.sideCells/);
   assert.match(app, /parts\.face\.scale\.set\(sideCells\.expression\.width/);
@@ -222,7 +237,7 @@ test("one canonical card profile drives geometry while panel and text scales rem
   assert.match(app, /parts\.actionBadge\.scale\.set\(sideCells\.action\.width/);
   assert.match(app, /panelProfile\.thought\.width \* panelScale/);
   assert.match(app, /panelProfile\.prediction\.width \* panelScale/);
-  assert.match(app, /projection\.layoutProfile = constellationResolverProfile\(projection\.instrumentOwner \? cardProfile\.selected : cardProfile\.public, graphicsSettings\.entityPanelScale\)/);
+  assert.match(app, /projection\.layoutProfile = constellationResolverProfile\(projection\.instrumentOwner \? cardProfile\.selected : cardProfile\.public, panelSettingScale\(projection\.instrumentOwner\)\)/);
   assert.match(app, /panelWidthPx: profile\.screenSize\.width \* scale/);
   assert.match(app, /const identityScale = graphicsSettings\.entityPanelTextScale \|\| 1/);
   assert.match(app, /profile\.settings\.physiologyTextScale \* panelTextScale/);
@@ -266,9 +281,14 @@ test("labels and symbols are first-class hover and selection targets", () => {
 });
 
 test("only front-viewport owners receive cards and rejected owners clear the one stale surface", () => {
-  assert.match(app, /clipZ:\s*constellationScratch\.projected\.z/);
+  assert.match(app, /const bodyClipZ = constellationScratch\.projected\.z/);
+  assert.match(app, /clipZ: bodyClipZ/);
   assert.match(app, /viewDepth/);
-  assert.match(app, /\.filter\(\(projection\) => projectedEntityIntersectsViewport\(projection, canvasViewport\)\)/);
+  assert.match(app, /const panelVisible = projection\.instrumentOwner \? selectedPresentationVisible : publicPanelsVisible/);
+  assert.match(app, /const independentLayerVisible = projection\.visibleChannels\.some/);
+  assert.match(app, /const surfaceVisible = panelVisible \|\| independentLayerVisible/);
+  assert.match(app, /if \(!surfaceVisible\) \{[\s\S]*?hideEntityConstellation\(rendered\);[\s\S]*?return null;/);
+  assert.match(app, /\.filter\(\(projection\) => projection && projectedEntityIntersectsViewport\(projection, canvasViewport\)\)/);
   assert.match(app, /function hideEntityConstellation\(rendered\)/);
   for (const surface of ["parts.constellationRoot", "parts.ownershipTether", "parts.ownershipTetherRibbon", "parts.ownershipEndpoint"]) assert.match(app, new RegExp(surface.replaceAll(".", "\\.")));
   assert.match(app, /parts\.identityPanel/);
@@ -320,7 +340,7 @@ test("on-screen cards use a centre-weighted strict budget and suppressed owners 
   assert.match(app, /entityConstellationBudgetState:/);
 });
 
-test("ordinary thought and predictive forecast are separate selected-and-permitted private sprites", () => {
+test("ordinary thought and predictive forecast are separate permitted private sprites", () => {
   const start = app.indexOf("function updateEntityIndicators("), end = app.indexOf("\nfunction ", start + 10), indicators = app.slice(start, end);
   assert.ok(start >= 0 && end > start, "entity-indicator renderer is extractable");
   assert.match(app, /rendered\.userData\.predictionThoughtBubble/);
@@ -329,11 +349,13 @@ test("ordinary thought and predictive forecast are separate selected-and-permitt
   assert.match(app, /predictionThought\.userData\.predictionInsight = true/);
   assert.match(app, /thought\.visible = Boolean\(privateCloudsAllowed && thoughtRule\.visible && heldThought\)/);
   assert.match(app, /predictionThought\.visible = Boolean\(privateCloudsAllowed && showPredictionInsight && displayedPredictionCue\)/);
-  assert.match(indicators, /const privateOwnerSelected = !movieState\.active && a\.id === selectedId/);
-  assert.match(app, /const privateCognitionVisible = privateOwnerSelected[^;]*state\.permittedChannels\.includes\("thought"\)/);
+  assert.doesNotMatch(indicators, /a\.id === selectedId[^;]*permittedChannels\.includes\("thought"\)/);
+  assert.match(app, /const cognitionBubbleOwner = !embodiedSelf && \(!movieState\.active \|\| movieFeaturedAnimal\(a, true\)\)/);
+  assert.match(app, /const privateCognitionVisible = cognitionChannelPermitted[^;]*graphicsSettings\.entityPanelThoughtVisible !== false/);
   assert.match(app, /\.\.\.\(privateCognitionVisible \? \["thought"\] : \[\]\)/);
   assert.match(app, /\.\.\.\(predictionAvailable \? \["prediction"\] : \[\]\)/);
-  assert.match(app, /const privateCognitionPermitted = privateWorldOwner && state\.permittedChannels\.includes\("thought"\)/);
+  assert.match(app, /const privateCognitionPermitted = cognitionBubbleOwner/);
+  assert.doesNotMatch(app, /const privateCognitionPermitted = cognitionBubbleOwner && state\.permittedChannels\.includes\("thought"\)/);
   assert.match(app, /if \(!thought && heldThought\)/);
   assert.match(app, /if \(!predictionThought && displayedPredictionCue\)/);
   assert.match(app, /presentationChannelHolds\.resolve\(\{ entityId: a\.id, channel: "thought"/);
@@ -397,21 +419,52 @@ test("the public rail and selected instrument are mutually exclusive surfaces", 
   assert.match(applier, /instrumentBackdrop\.visible = instrumentMetrics\.visible = false/);
 });
 
-test("settings expose authored designs, modular presets, uniform scale and independent text size", () => {
-  for (const id of ["graphics-entity-panels-visible", "graphics-entity-panel-style", "graphics-entity-panel-preset", "graphics-entity-panel", "graphics-entity-panel-text", "graphics-entity-bubble-scale"]) assert.ok(app.includes(id), id);
+test("settings expose independently switchable animal-attached layers without design or information presets", () => {
+  for (const id of ["graphics-entity-public-panels-visible", "graphics-entity-public-panel", "graphics-entity-selected-panel", "graphics-entity-panel-text", "graphics-entity-bubble-scale"]) assert.ok(app.includes(id), id);
+  assert.doesNotMatch(app, /id="graphics-entity-selected-presentation-visible"/);
+  for (const removedId of ["graphics-entity-panel-style", "graphics-entity-panel-preset"]) assert.ok(!app.includes(removedId), removedId);
   for (const obsoleteId of ["graphics-entity-expression", "graphics-entity-identity", "graphics-prediction-size", "graphics-entity-icons", "graphics-thought-size", "graphics-diagnostic-size", "graphics-diagnostic-text"]) assert.ok(!app.includes(obsoleteId), obsoleteId);
-  assert.match(app, /Entity panel size · all contents/);
-  assert.match(app, /Entity panel text · labels and values/);
+  assert.match(app, /Ordinary constellation size · all layers/);
+  assert.match(app, /Selected constellation size · all layers/);
+  assert.match(app, /Identity marking and numerical text size/);
   assert.match(app, /ui\.graphicsEntityPanelText\.value = String\(graphicsSettings\.entityPanelTextScale\)/);
   assert.match(app, /entityPanelTextScale: Number\(ui\.graphicsEntityPanelText\.value\)/);
   assert.match(app, /panelTextSettingScale: graphicsSettings\.entityPanelTextScale/);
-  assert.match(app, /Show entity panels and selected bubbles/i);
-  assert.match(app, /Choose a genuine panel design/i);
-  for (const style of ["identity-mast", "status-mast", "capsule", "classic-rail", "context-ribbon", "vital-strip", "predictive-view", "full-instrument"]) assert.ok(app.includes(`value="${style}"`), style);
-  for (const preset of ["classic", "essential", "predictive", "full", "custom"]) assert.ok(app.includes(`value="${preset}"`), preset);
-  for (const module of ["identity", "expression", "public-cue", "health", "concern", "forecast-effect", "metabolic", "performance", "thought", "forecast"]) assert.ok(app.includes(`["${module}",`), module);
+  assert.match(app, /Show optional identity and status frame/i);
+  assert.doesNotMatch(app, /Show selected main panel and bubbles/i);
+  assert.match(app, /Configure every layer in the visual constellation around an animal/i);
+  assert.match(app, /Body identity and pregnancy marking/i);
+  for (const module of ["identity", "expression", "public-cue", "health", "thought", "forecast"]) assert.ok(app.includes(`["${module}",`), module);
   for (const typographyId of ["font-small-scale", "font-body-scale", "font-control-scale", "font-heading-scale", "font-title-scale"]) assert.ok(app.includes(typographyId), typographyId);
   assert.match(app, /Typography categories/);
+});
+
+test("constellation settings remain editable while optional presentation layers are hidden", () => {
+  const sync = app.match(/function syncGraphicsControls\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(sync, /graphicsEntityPublicPanel\.disabled = false/);
+  assert.match(sync, /graphicsEntitySelectedPanel\.disabled = false/);
+  assert.match(sync, /graphicsEntityPanelText\.disabled = false/);
+  assert.match(sync, /Object\.values\(ui\.graphicsEntityPanelModules \|\| \{\}\)/);
+  assert.match(sync, /graphicsEntityBubbleScale\.disabled = false/);
+  assert.doesNotMatch(sync, /graphicsEntityPublicPanel\.disabled = publicPanelsHidden/);
+  assert.doesNotMatch(sync, /graphicsEntitySelectedPanel\.disabled = selectedPresentationHidden/);
+});
+
+test("animal-attached presentation places each visual channel around the physical animal", () => {
+  const start = app.indexOf("function applyAnimalAttachedHudLayout");
+  const end = app.indexOf("function applyEntityConstellationLayout", start);
+  const applier = start >= 0 && end > start ? app.slice(start, end) : "";
+  assert.match(applier, /headX - headRadius - faceSize/);
+  assert.match(applier, /headX \+ headRadius \+ cueWidth/);
+  assert.match(applier, /bodyIdentityMarking/);
+  assert.match(applier, /updateAnimalBodyMarking/);
+  assert.match(applier, /groundHealthBar/);
+  assert.match(applier, /updateAnimalGroundHealth/);
+  assert.match(applier, /headY - headRadius - bubble\.height/);
+  assert.match(applier, /entityPanelIdentityVisible !== false/);
+  assert.match(applier, /entityPanelExpressionVisible !== false/);
+  assert.match(applier, /entityPanelPublicCueVisible === false/);
+  assert.match(applier, /entityPanelHealthVisible !== false/);
 });
 
 test("ownership shape reaches endpoints and attached symbol notches", () => {

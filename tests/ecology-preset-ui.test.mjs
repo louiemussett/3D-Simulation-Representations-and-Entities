@@ -28,4 +28,9 @@ test("low hunting populations start with a protected late-pregnant female founde
   assert.match(app, /plan\[0\] = \{ \.\.\.plan\[0\], sex: "F", stage: "adult" \}/);
   assert.match(app, /protectedFounder \? \.95/);
   assert.match(app, /lowPopulationFounderSafeguard: true/);
+  assert.match(app, /singleCarnivoreFounder = protectedFounder && population\.length === 1 && isCarnivore\(female\)/);
+  assert.match(app, /maximumFounderFatPercent = Math\.max\(20, profile\.obeseAbove - 2\)/);
+  assert.match(app, /Math\.max\(20, profile\.idealHigh \+ 6, profile\.idealHigh \* 1\.25\)/);
+  assert.match(app, /setBodyFatPercent\(female, targetFatPercent\)/);
+  assert.match(app, /fillMetabolicReserves\(female, \{ gut: 1, blood: 1, liver: 1 \}\)/);
 });

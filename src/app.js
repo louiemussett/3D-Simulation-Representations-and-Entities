@@ -52,7 +52,7 @@ import { emergencyReleaseAssessment, recordEmergencyAssessment } from "./emergen
 import { BEHAVIOUR_ONTOLOGY, classifySatisfierEffects, contextSnapshot, needStateSnapshot, ontologyIntegrity, SATISFIER_DEFINITIONS } from "./behaviour-ontology.js";
 import { checkedPreyEvidence, choosePreyEvidence, groupObservation, inferPreyAwareness, observedPreyCompatible, stealthNoiseMultiplier } from "./hunting-awareness.js";
 import { carcassCommitmentRequired, claimedCarcassPenalty, clearPredation, closeRangeHuntEligible, contactAttackIntentEligible, createPredationState, detectedPreyResponse, herdCounterattackChance, huntOpportunityBonus, huntRange, huntRecoveryNeeded, huntSuppressed, lastResortHuntAssessment, losePrey, migratePredationState, movementRecoveryRequired, observePrey, opportunisticHuntEligible, ordinaryHuntEligible, predationAbandonReason, predationCommitmentBonus, predatorAttackSuccessChance, predatorBiteDamage, protectiveDefenderEligible, recordFailedStrike, recordSuccessfulKill, shouldInitiateChase, transitionPredation, urgentCarcassTravel } from "./carnivore-behavior.js";
-import { adaptTrainableCondition, compositionPresentation, compositionProfile, improvableConditionNeeds, migrateBodyComposition, recordTrainingStimulus, stomachFillPercent } from "./body-composition.js";
+import { adaptTrainableCondition, compositionPresentation, compositionProfile, improvableConditionNeeds, migrateBodyComposition, recordTrainingStimulus, setBodyFatPercent, stomachFillPercent } from "./body-composition.js";
 import { ACTIVITY_COMMIT_TICKS, carcassMeal, carnivoreActivityMode, digestionRate, forageBite, locomotionFatigueScale, passiveFatigueRecovery, restRecovery, seedChanceForBite } from "./activity-rates.js";
 import { initialStomachPercent } from "./ecology-balance.js";
 import { assignStartingCareFamilies } from "./starting-care.js";
@@ -115,7 +115,7 @@ import { activeBereavement, ageBereavement, bereavementDisposition, createBereav
 import { captureGenerationalAudit, compareGenerationalAudit } from "./generational-audit.js";
 import { ECOLOGY_POPULATION_LEVELS, ECOLOGY_PRESETS, ECOLOGY_PRESET_POPULATIONS, SPECIES as species, SPECIES_IDS, canHunt as speciesCanHunt, canScavenge as speciesCanScavenge, carcassPreference, eatsMeat, eatsPlants, ecologyPresetCounts, ecologyWarnings, enabledSpeciesCounts, foodPreferenceSummary, guildOf, isCarnivore, isHerbivore, isOmnivore, isSustainableForage, needsPregnantPredatorFounder, plantPreference, preyCompatible, spatialEcology, speciesCategoryTotals, speciesProfile } from "./species-registry.js";
 import { biologicalPhenotype, digestiveEfficiency, phenotypeSummary, sensoryPhenotype, thermalPerformance } from "./biological-phenotypes.js";
-import { advanceMetabolism, ingestNutrients, initializeMetabolism, metabolicJourneyBudget, metabolicPresentation, predictiveHunger, spendMetabolicEnergy, syncLegacyEnergy } from "./metabolic-system.js";
+import { advanceMetabolism, fillMetabolicReserves, ingestNutrients, initializeMetabolism, metabolicJourneyBudget, metabolicPresentation, predictiveHunger, spendMetabolicEnergy, syncLegacyEnergy } from "./metabolic-system.js";
 import { difficultyProfile, resolveEmbodimentCapabilities } from "./embodiment-capabilities.js";
 import { guaranteePopulationSlot, randomEmbodiedSetup, speciesForRole, validateEmbodiedSetup } from "./embodied-setup.js";
 import { defaultEmbodiment, embodimentAnimal, normalizeEmbodiment, updateEmbodimentLifecycle } from "./embodiment-session.js";
@@ -216,10 +216,11 @@ const displayScaleFieldset = ui.graphicsResolution?.closest("fieldset");
 if (displayScaleFieldset && !document.querySelector("#graphics-entity-panel")) {
   const constellationFieldset = document.createElement("fieldset");
   constellationFieldset.className = "entity-constellation-settings";
-  constellationFieldset.innerHTML = `<legend>Entity constellations</legend><p class="hint">Choose a genuine panel design, then choose its information density. The original rail and full instrument remain available for comparison.</p><label class="graphics-check"><input id="graphics-entity-panels-visible" type="checkbox" checked/><span>Show entity panels and selected bubbles</span></label><label><span>Panel design</span><select id="graphics-entity-panel-style"><option value="identity-mast">Identity mast · vertical minimum</option><option value="status-mast">Status mast · vertical icons</option><option value="capsule">Entity capsule · compact horizontal</option><option value="classic-rail">Classic rail · original compact panel</option><option value="context-ribbon">Context ribbon · identity and decision</option><option value="vital-strip">Vital-sign strip · health and fuel</option><option value="predictive-view">Predictive view · rail and two bubbles</option><option value="full-instrument">Full instrument · original detailed panel</option></select></label><label><span>Information preset</span><select id="graphics-entity-panel-preset"><option value="classic">Classic · identity and public display</option><option value="essential">Essential · add health and concern</option><option value="predictive">Predictive · add both private bubbles</option><option value="full">Full instrument · every module</option><option value="custom">Custom · choose modules below</option></select></label><label><span>Entity panel size · all contents</span><select id="graphics-entity-panel"><option value="0.1">Marker · 10%</option><option value="0.2">Tiny · 20%</option><option value="0.3">Very compact · 30%</option><option value="0.4">Compact · 40%</option><option value="0.5">Compact plus · 50%</option><option value="0.6">Small · 60%</option><option value="0.8">Medium · 80%</option><option value="1">Standard · 100%</option><option value="1.25">Large · 125%</option><option value="1.5">Maximum · 150%</option></select></label><label><span>Entity panel text · labels and values</span><select id="graphics-entity-panel-text"><option value="0.75">Very small · 75%</option><option value="0.9">Small · 90%</option><option value="1">Standard · 100%</option><option value="1.15">Large · 115%</option><option value="1.3">Very large · 130%</option><option value="1.5">Maximum · 150%</option></select></label><label><span>Selected bubble size · relative to panel</span><select id="graphics-entity-bubble-scale"><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option></select></label><div class="entity-panel-module-grid"><strong>Panel modules</strong>${[["identity","Identity and sex"],["expression","Visible expression"],["public-cue","Public call or action"],["health","Health"],["concern","Immediate concern"],["forecast-effect","Forecast effect"],["metabolic","Metabolic reserves"],["performance","Fuel and performance"],["thought","Private thought bubble"],["forecast","Private forecast bubble"]].map(([id,label])=>`<label class="graphics-check"><input id="graphics-panel-${id}" type="checkbox"/><span>${label}</span></label>`).join("")}</div>`;
+  const entityPanelScaleOptions = `<option value="0.1">Marker · 10%</option><option value="0.2">Tiny · 20%</option><option value="0.3">Very compact · 30%</option><option value="0.4">Compact · 40%</option><option value="0.5">Compact plus · 50%</option><option value="0.6">Small · 60%</option><option value="0.8">Medium · 80%</option><option value="1">Standard · 100%</option><option value="1.25">Large · 125%</option><option value="1.5">Maximum · 150%</option>`;
+constellationFieldset.innerHTML = `<legend>Animal-attached display</legend><p class="hint">Configure every layer in the visual constellation around an animal. These controls remain available even when the optional identity/status frame is hidden, so a layout can be prepared before it is shown.</p><label class="graphics-check"><input id="graphics-entity-public-panels-visible" type="checkbox"/><span>Show optional identity and status frame</span></label><label><span>Ordinary constellation size · all layers</span><select id="graphics-entity-public-panel">${entityPanelScaleOptions}</select></label><label><span>Selected constellation size · all layers</span><select id="graphics-entity-selected-panel">${entityPanelScaleOptions}</select></label><label><span>Identity marking and numerical text size</span><select id="graphics-entity-panel-text"><option value="0.75">Very small · 75%</option><option value="0.9">Small · 90%</option><option value="1">Standard · 100%</option><option value="1.15">Large · 115%</option><option value="1.3">Very large · 130%</option><option value="1.5">Extra large · 150%</option><option value="2">Maximum · 200%</option></select></label><label><span>Thought and forecast bubble size</span><select id="graphics-entity-bubble-scale"><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option></select></label><div class="entity-panel-module-grid"><strong>Attached layers</strong>${[["identity","Body identity and pregnancy marking"],["expression","Expression left of head"],["public-cue","Public cue right of head"],["health","Ground health bar"],["thought","Private thought above head"],["forecast","Private forecast above head"]].map(([id,label])=>`<label class="graphics-check"><input id="graphics-panel-${id}" type="checkbox"/><span>${label}</span></label>`).join("")}</div>`;
   displayScaleFieldset.insertAdjacentElement("afterend", constellationFieldset);
 }
-ui.graphicsEntityPanelsVisible = document.querySelector("#graphics-entity-panels-visible"); ui.graphicsEntityPanel = document.querySelector("#graphics-entity-panel"); ui.graphicsEntityPanelText = document.querySelector("#graphics-entity-panel-text"); ui.graphicsEntityPanelStyle = document.querySelector("#graphics-entity-panel-style"); ui.graphicsEntityPanelPreset = document.querySelector("#graphics-entity-panel-preset"); ui.graphicsEntityBubbleScale = document.querySelector("#graphics-entity-bubble-scale");
+ui.graphicsEntityPublicPanelsVisible = document.querySelector("#graphics-entity-public-panels-visible"); ui.graphicsEntityPublicPanel = document.querySelector("#graphics-entity-public-panel"); ui.graphicsEntitySelectedPanel = document.querySelector("#graphics-entity-selected-panel"); ui.graphicsEntityPanelText = document.querySelector("#graphics-entity-panel-text"); ui.graphicsEntityBubbleScale = document.querySelector("#graphics-entity-bubble-scale");
 ui.graphicsEntityPanelModules = Object.fromEntries(["identity","expression","public-cue","health","concern","forecast-effect","metabolic","performance","thought","forecast"].map(id => [id, document.querySelector(`#graphics-panel-${id}`)]));
 const menuBackgroundSettingsRoot = document.querySelector(".menu-background-settings");
 if (menuBackgroundSettingsRoot && !document.querySelector("#menu-background-mode")) menuBackgroundSettingsRoot.querySelector(".menu-background-heading")?.insertAdjacentHTML("afterend", `<div class="menu-background-mode-controls"><label><span>Background mode</span><select id="menu-background-mode"><option value="fixed">Fixed image</option><option value="cycle" selected>Random selected-image cycle</option><option value="sequence">Selected images in order</option></select></label><label id="menu-background-interval-row"><span>Change image every</span><select id="menu-background-interval"><option value="10">10 seconds</option><option value="20">20 seconds</option><option value="30" selected>30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option></select></label></div>`);
@@ -542,7 +543,7 @@ function uiCanvasTexture(canvas, ownership = RESOURCE_OWNERSHIP.shared) {
 }
 const visualEvents = new VisualEventManager();
 const frameScratch = { up: new THREE.Vector3(0, 1, 0), normal: new THREE.Vector3(), direction: new THREE.Vector3(), origin: new THREE.Vector3(), target: new THREE.Vector3(), slope: new THREE.Quaternion(), heading: new THREE.Quaternion(), flat: new THREE.Quaternion(), visual: { x: 0, z: 0, orientation: 0 }, partnerVisual: { x: 0, z: 0, orientation: 0 } };
-const constellationScratch = { bodyAnchor: new THREE.Vector3(), bodyWorld: new THREE.Vector3(), worldAnchor: new THREE.Vector3(), projected: new THREE.Vector3(), cameraRight: new THREE.Vector3(), cameraUp: new THREE.Vector3(), parentQuaternion: new THREE.Quaternion(), localQuaternion: new THREE.Quaternion(), parentScale: new THREE.Vector3(), offset: new THREE.Vector3(), ribbonOffset: new THREE.Vector3(), ribbonPoint: new THREE.Vector3(), relationStart: new THREE.Vector3(), relationEnd: new THREE.Vector3(), relationDirection: new THREE.Vector3() };
+const constellationScratch = { bodyAnchor: new THREE.Vector3(), headAnchor: new THREE.Vector3(), bodyWorld: new THREE.Vector3(), worldAnchor: new THREE.Vector3(), projected: new THREE.Vector3(), cameraRight: new THREE.Vector3(), cameraUp: new THREE.Vector3(), parentQuaternion: new THREE.Quaternion(), localQuaternion: new THREE.Quaternion(), parentScale: new THREE.Vector3(), offset: new THREE.Vector3(), ribbonOffset: new THREE.Vector3(), ribbonPoint: new THREE.Vector3(), relationStart: new THREE.Vector3(), relationEnd: new THREE.Vector3(), relationDirection: new THREE.Vector3() };
 const constellationCameraFrame = { width: 1, height: 1, pixelsPerWorldNumerator: 1, token: 0, now: 0, cameraRight: new THREE.Vector3(1, 0, 0), cameraUp: new THREE.Vector3(0, 1, 0) };
 let constellationViewportBoundsCache = { at: -Infinity, width: 0, height: 0, value: null };
 const physiologyOverlayScratch = { parentQuaternion: new THREE.Quaternion(), localQuaternion: new THREE.Quaternion() };
@@ -816,6 +817,82 @@ function createInstrumentPanelLayer(kind = "backdrop") {
   const sprite = new THREE.Sprite(material); sprite.renderOrder = kind === "metrics" ? 87 : 86;
   sprite.userData.instrumentCanvas = canvas; sprite.userData.instrumentKind = kind; sprite.userData.signature = ""; sprite.userData.constellationBaseOpacity = 1;
   return sprite;
+}
+
+function createAnimalAttachedCanvasSprite(logicalWidth, logicalHeight, name) {
+  const { canvas, context, quality } = iconCanvas(logicalWidth, logicalHeight);
+  const map = uiCanvasTexture(canvas, RESOURCE_OWNERSHIP.entity);
+  const material = markResource(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false, depthWrite: false }), RESOURCE_OWNERSHIP.entity);
+  const sprite = new THREE.Sprite(material);
+  sprite.name = name;
+  sprite.renderOrder = 99;
+  sprite.visible = false;
+  sprite.userData.hudCanvas = canvas;
+  sprite.userData.hudContext = context;
+  sprite.userData.hudQuality = quality;
+  sprite.userData.logicalWidth = logicalWidth;
+  sprite.userData.logicalHeight = logicalHeight;
+  sprite.userData.signature = "";
+  sprite.userData.constellationBaseOpacity = 1;
+  return sprite;
+}
+
+function updateAnimalBodyMarking(sprite, animal, accent = "#75dfc1") {
+  if (!sprite) return;
+  const identity = entityIdentityPresentation(animal), displayName = entityDisplayName(animal);
+  const name = displayName === identity.fullId ? identity.shortId : displayName;
+  const pregnancy = ownershipPregnancySummary(animal);
+  const textScale = Number(graphicsSettings.entityPanelTextScale) || 1;
+  const signature = [name, identity.sexGlyph, identity.lifeStageCode, pregnancy, accent, textScale].join("|");
+  if (sprite.userData.signature === signature) return;
+  const c = sprite.userData.hudContext, width = sprite.userData.logicalWidth, height = sprite.userData.logicalHeight;
+  c.clearRect(0, 0, width, height);
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.lineJoin = "round";
+  const primary = [name, identity.sexGlyph, identity.lifeStageCode].filter(Boolean).join(" · ");
+  let fontSize = Math.min(30, 22 * textScale);
+  c.font = `900 ${fontSize}px system-ui`;
+  while (fontSize > 10 && c.measureText(primary).width > width - 14) { fontSize -= .5; c.font = `900 ${fontSize}px system-ui`; }
+  c.strokeStyle = "rgba(0,0,0,.92)";
+  c.lineWidth = Math.max(3, fontSize * .2);
+  c.strokeText(primary, width / 2, pregnancy ? height * .35 : height * .5, width - 10);
+  c.fillStyle = "#f3faf5";
+  c.fillText(primary, width / 2, pregnancy ? height * .35 : height * .5, width - 10);
+  if (pregnancy) {
+    let detailSize = Math.min(17, 12 * textScale);
+    c.font = `900 ${detailSize}px system-ui`;
+    while (detailSize > 7 && c.measureText(pregnancy).width > width - 14) { detailSize -= .5; c.font = `900 ${detailSize}px system-ui`; }
+    c.strokeStyle = "rgba(0,0,0,.9)";
+    c.lineWidth = Math.max(2.5, detailSize * .22);
+    c.strokeText(pregnancy, width / 2, height * .72, width - 10);
+    c.fillStyle = animal.speciesId === "hunter" ? "#e4b0ff" : "#f3d990";
+    c.fillText(pregnancy, width / 2, height * .72, width - 10);
+  }
+  c.strokeStyle = accent;
+  c.lineWidth = 3;
+  c.beginPath(); c.moveTo(width * .22, height - 4); c.lineTo(width * .78, height - 4); c.stroke();
+  sprite.material.map.needsUpdate = true;
+  sprite.userData.signature = signature;
+}
+
+function updateAnimalGroundHealth(sprite, animal, state, accent = "#75dfc1") {
+  if (!sprite) return;
+  const health = Number.isFinite(Number(state?.health?.health)) ? state.health : healthPresentation(animal.health, animal.healthCap);
+  const percent = Math.round(clamp(Number(health.health) || 0, 0, 100));
+  const signature = `${percent}|${health.acuteTier || "stable"}|${accent}`;
+  if (sprite.userData.signature === signature) return;
+  const c = sprite.userData.hudContext, width = sprite.userData.logicalWidth, height = sprite.userData.logicalHeight;
+  c.clearRect(0, 0, width, height);
+  const colour = percent < 25 ? "#ff6767" : percent < 55 ? "#e9c45c" : "#66e693";
+  c.fillStyle = "rgba(3,10,7,.78)"; c.beginPath(); c.roundRect(2, 2, width - 4, height - 4, height * .28); c.fill();
+  c.strokeStyle = accent; c.lineWidth = 2; c.stroke();
+  c.fillStyle = "#eff8f2"; c.font = "900 15px system-ui"; c.textAlign = "left"; c.textBaseline = "middle"; c.fillText(`♥ ${percent}%`, 10, 13);
+  const x = 10, y = height - 12, trackWidth = width - 20;
+  c.fillStyle = "rgba(220,238,226,.18)"; c.beginPath(); c.roundRect(x, y, trackWidth, 6, 3); c.fill();
+  c.fillStyle = colour; c.beginPath(); c.roundRect(x, y, trackWidth * percent / 100, 6, 3); c.fill();
+  sprite.material.map.needsUpdate = true;
+  sprite.userData.signature = signature;
 }
 
 function prepareInstrumentCanvas(sprite, profile) {
@@ -1363,7 +1440,8 @@ function cinemaCarnivoreOnly() { return movieState.presetName === "carnivore"; }
 function entityConstellationPanelFocus() {
   if (movieState.active) return cinemaUsesConnectedStories() ? { exclusive: true, ownerId: null, reason: "cinema-ring-only" } : { exclusive: true, ownerId: cinemaPanelSubjectId(), reason: "cinema-focus" };
   const animal = selectedId ? animalById(selectedId) : null;
-  return animal?.alive ? { exclusive: true, ownerId: animal.id, reason: "selection-focus" } : { exclusive: false, ownerId: null, reason: null };
+  const selectedWorldPanelVisible = graphicsSettings.entitySelectedPresentationVisible !== false;
+  return animal?.alive && selectedWorldPanelVisible ? { exclusive: true, ownerId: animal.id, reason: "selection-focus" } : { exclusive: false, ownerId: null, reason: null };
 }
 function updateMovieLens(context = movieState.shot?.context || "quiet-landscape", beat = movieState.shot?.beat) {
   const chainStage = movieState.shot?.chainStage;
@@ -1820,7 +1898,7 @@ window.rssDiagnostics = Object.freeze({
     const cardProfile = currentEntityConstellationCardProfile();
     return {
       entityId: layout.entityId, shortId: panel?.userData.identity?.shortId || layout.entityId, clusterId: layout.clusterId, clusterSize: layout.clusterSize, clusterMembers: [...layout.clusterMembers], mode: layout.mode, placement: layout.placement, detailLevel: layout.detailLevel, projectedBodyPx: layout.projectedBodyPx, presentationTier: layout.presentationTier,
-      panelAdmitted: Boolean(projection.panelAdmitted), panelScale: layout.panelScale, panelSettingScale: graphicsSettings.entityPanelScale, panelTextSettingScale: graphicsSettings.entityPanelTextScale, panelDistance: projection.panelDistance, panelScaleRevision: projection.panelScaleRevision, panelDimensions: layout.panelDimensions ? { ...layout.panelDimensions } : null,
+      panelAdmitted: Boolean(projection.panelAdmitted), panelScale: layout.panelScale, panelSettingScale: integrated ? graphicsSettings.entitySelectedPanelScale : graphicsSettings.entityPublicPanelScale, publicPanelSettingScale: graphicsSettings.entityPublicPanelScale, selectedPanelSettingScale: graphicsSettings.entitySelectedPanelScale, panelTextSettingScale: graphicsSettings.entityPanelTextScale, panelDistance: projection.panelDistance, panelScaleRevision: projection.panelScaleRevision, panelDimensions: layout.panelDimensions ? { ...layout.panelDimensions } : null,
       style: { ...layout.style, dash: [...layout.style.dash] }, body: { ...layout.body }, anchor: { ...layout.anchor }, anchorOffset: { ...layout.anchorOffset }, footprint: { ...layout.footprint }, collisionBounds: { left: layout.anchor.x + layout.footprint.left, right: layout.anchor.x + layout.footprint.right, top: layout.anchor.y + layout.footprint.top, bottom: layout.anchor.y + layout.footprint.bottom }, tether: { ...layout.tether, from: { ...layout.tether.from }, to: { ...layout.tether.to }, dash: [...layout.tether.dash] },
       selected: layout.selected, cinemaInstrumentOwner: Boolean(projection.cinemaInstrumentOwner), hovered: layout.hovered, dimmed: layout.dimmed, opacity: layout.opacity, cue: cue ? { ...cue } : null,
       render: { panelTexture: panel ? { width: panel.userData.ownershipCanvas?.width || panel.userData.instrumentCanvas?.width || 0, height: panel.userData.ownershipCanvas?.height || panel.userData.instrumentCanvas?.height || 0, logicalWidth: panel.userData.instrumentLogicalSize?.width || panel.userData.ownershipCanvas?.width || 0, logicalHeight: panel.userData.instrumentLogicalSize?.height || panel.userData.ownershipCanvas?.height || 0, quality: panel.userData.ownershipTextureQuality || panel.userData.instrumentQuality || 0 } : null, panelScreenSize: panel?.userData.screenSize ? { ...panel.userData.screenSize } : null, panelTextScale: panel?.userData.panelTextScale || graphicsSettings.entityPanelTextScale, effectivePanelScale: panel?.userData.panelScale || null, wheelPanelScale: panel?.userData.wheelPanelScale || null, uniformPanelScale: panel?.userData.uniformPanelScale || null, panelCenter: layout.panelDimensions ? { x: layout.panelDimensions.centerX, y: layout.panelDimensions.centerY } : { ...(integrated ? cardProfile.selected : cardProfile.public).panelCenter }, geometryKey: cardProfile.key, panelVisible: Boolean(panel?.visible), instrumentVisible: Boolean(instrumentBackdrop?.visible), instrumentMetricsVisible: Boolean(instrumentMetrics?.visible), integratedPhysiology: integrated ? { ...rendered?.userData.instrumentSectionVisibility, standaloneHealthVisible: Boolean(rendered?.userData.healthBar?.visible), standalonePerformanceVisible: Boolean(rendered?.userData.enduranceBar?.visible), standaloneMetabolicVisible: Boolean(rendered?.userData.compositionBar?.visible) } : null, ordinaryThoughtVisible: Boolean(parts?.thought?.visible), predictionVisible: Boolean(parts?.predictionThought?.visible), dualCloudsVisible: Boolean(parts?.thought?.visible && parts?.predictionThought?.visible), channelHolds: Object.fromEntries(Object.entries(rendered?.userData.presentationChannelHolds || {}).map(([channel, hold]) => [channel, { semanticKey: hold.semanticKey, placeholder: hold.placeholder, shownAt: hold.shownAt, holdUntil: hold.holdUntil, pendingKey: hold.pendingKey }])), thickTetherVisible: Boolean(parts?.ownershipTetherRibbon?.visible), endpointShape: layout.tether.endpointShape, visibleNotches: Object.entries(parts?.ownershipNotches || {}).filter(([, notch]) => notch.visible).map(([channel]) => channel) },
@@ -3252,22 +3330,29 @@ ui.newWorldOpen.addEventListener("click", () => { ui.newWorldPanel.hidden = fals
 ui.newWorldClose.addEventListener("click", () => { closeNewWorldPanel(); if (returnToGameMenuAfterModal) showGameMenu(); else document.body.classList.remove("menu-modal-open"); returnToGameMenuAfterModal = false; }); ui.newWorldCancel.addEventListener("click", () => { closeNewWorldPanel(); if (returnToGameMenuAfterModal) showGameMenu(); else document.body.classList.remove("menu-modal-open"); returnToGameMenuAfterModal = false; });
 ui.newWorldGenerate.addEventListener("click", () => { const request = selectedEmbodimentRequest(), setup = selectedWorldSetup(), capabilities = difficultyProfile(request.difficulty); if (request.experience === "embodied") { const result = validateEmbodiedSetup({ role: request.role, ...request.setupRequest }, setup, capabilities, species); if (!result.valid) { ui.embodimentReview.textContent = result.errors.join(" "); ui.embodimentReview.classList.add("has-warning"); return; } } pendingEmbodiment = request; closeNewWorldPanel(); loadSeedWorld(1337 + Math.floor(Math.random() * 9999), setup, request); returnToGameMenuAfterModal = false; enterGame(); });
 function syncGraphicsControls() {
-  ui.graphicsPreset.value = graphicsSettings.preset; ui.graphicsIconQuality.value = String(graphicsSettings.iconTextureQuality); ui.graphicsResolution.value = String(graphicsSettings.renderScale); ui.graphicsVegetation.value = String(graphicsSettings.vegetationStride); ui.graphicsAnimals.value = String(graphicsSettings.animalDetail); ui.graphicsEntityPanel.value = String(graphicsSettings.entityPanelScale); ui.graphicsEntityPanelText.value = String(graphicsSettings.entityPanelTextScale); ui.interfaceScale.value = String(graphicsSettings.interfaceScale); ui.fontScale.value = String(graphicsSettings.fontScale); ui.fontSmallScale.value = String(graphicsSettings.smallTextScale); ui.fontBodyScale.value = String(graphicsSettings.bodyTextScale); ui.fontControlScale.value = String(graphicsSettings.controlTextScale); ui.fontHeadingScale.value = String(graphicsSettings.headingTextScale); ui.fontTitleScale.value = String(graphicsSettings.titleTextScale); ui.graphicsFrameCap.value = String(graphicsSettings.frameCap); ui.graphicsEffects.checked = graphicsSettings.effects; ui.graphicsShadows.checked = graphicsSettings.contactShadows; ui.graphicsAdaptiveResolution.checked = graphicsSettings.adaptiveResolution; ui.graphicsAdaptiveMin.value = String(graphicsSettings.adaptiveMinScale); ui.graphicsAdaptiveMax.value = String(graphicsSettings.adaptiveMaxScale);
-  if (ui.graphicsEntityPanelsVisible) ui.graphicsEntityPanelsVisible.checked = graphicsSettings.entityPanelsVisible !== false;
-  if (ui.graphicsEntityPanelStyle) ui.graphicsEntityPanelStyle.value = graphicsSettings.entityPanelStyle;
-  if (ui.graphicsEntityPanelPreset) ui.graphicsEntityPanelPreset.value = graphicsSettings.entityPanelContentPreset;
+  ui.graphicsPreset.value = graphicsSettings.preset; ui.graphicsIconQuality.value = String(graphicsSettings.iconTextureQuality); ui.graphicsResolution.value = String(graphicsSettings.renderScale); ui.graphicsVegetation.value = String(graphicsSettings.vegetationStride); ui.graphicsAnimals.value = String(graphicsSettings.animalDetail); ui.graphicsEntityPublicPanel.value = String(graphicsSettings.entityPublicPanelScale); ui.graphicsEntitySelectedPanel.value = String(graphicsSettings.entitySelectedPanelScale); ui.graphicsEntityPanelText.value = String(graphicsSettings.entityPanelTextScale); ui.interfaceScale.value = String(graphicsSettings.interfaceScale); ui.fontScale.value = String(graphicsSettings.fontScale); ui.fontSmallScale.value = String(graphicsSettings.smallTextScale); ui.fontBodyScale.value = String(graphicsSettings.bodyTextScale); ui.fontControlScale.value = String(graphicsSettings.controlTextScale); ui.fontHeadingScale.value = String(graphicsSettings.headingTextScale); ui.fontTitleScale.value = String(graphicsSettings.titleTextScale); ui.graphicsFrameCap.value = String(graphicsSettings.frameCap); ui.graphicsEffects.checked = graphicsSettings.effects; ui.graphicsShadows.checked = graphicsSettings.contactShadows; ui.graphicsAdaptiveResolution.checked = graphicsSettings.adaptiveResolution; ui.graphicsAdaptiveMin.value = String(graphicsSettings.adaptiveMinScale); ui.graphicsAdaptiveMax.value = String(graphicsSettings.adaptiveMaxScale);
+  if (ui.graphicsEntityPublicPanelsVisible) ui.graphicsEntityPublicPanelsVisible.checked = graphicsSettings.entityPublicPanelsVisible !== false;
   if (ui.graphicsEntityBubbleScale) ui.graphicsEntityBubbleScale.value = String(graphicsSettings.entityBubbleScale);
   const moduleValues = { identity: graphicsSettings.entityPanelIdentityVisible, expression: graphicsSettings.entityPanelExpressionVisible, "public-cue": graphicsSettings.entityPanelPublicCueVisible, health: graphicsSettings.entityPanelHealthVisible, concern: graphicsSettings.entityPanelConcernVisible, "forecast-effect": graphicsSettings.entityPanelForecastEffectVisible, metabolic: graphicsSettings.entityPanelMetabolicVisible, performance: graphicsSettings.entityPanelPerformanceVisible, thought: graphicsSettings.entityPanelThoughtVisible, forecast: graphicsSettings.entityPanelForecastVisible };
   for (const [id, control] of Object.entries(ui.graphicsEntityPanelModules || {})) if (control) control.checked = moduleValues[id] !== false;
-  if (ui.overlayHideEntityPresentation) ui.overlayHideEntityPresentation.checked = graphicsSettings.entityPanelsVisible === false;
-  const panelControlsDisabled = graphicsSettings.entityPanelsVisible === false;
-  for (const control of [ui.graphicsEntityPanel, ui.graphicsEntityPanelText, ui.graphicsEntityPanelStyle, ui.graphicsEntityPanelPreset, ui.graphicsEntityBubbleScale, ...Object.values(ui.graphicsEntityPanelModules || {})]) if (control) control.disabled = panelControlsDisabled;
+  const publicPanelsHidden = graphicsSettings.entityPublicPanelsVisible === false;
+  const selectedPresentationHidden = graphicsSettings.entitySelectedPresentationVisible === false;
+  if (ui.overlayHideEntityPresentation) ui.overlayHideEntityPresentation.checked = publicPanelsHidden && selectedPresentationHidden;
+  // Configuration is independent of current visibility. Users can prepare the
+  // complete around-animal constellation before showing any optional frame.
+  if (ui.graphicsEntityPublicPanel) ui.graphicsEntityPublicPanel.disabled = false;
+  if (ui.graphicsEntitySelectedPanel) ui.graphicsEntitySelectedPanel.disabled = false;
+  if (ui.graphicsEntityPanelText) ui.graphicsEntityPanelText.disabled = false;
+  for (const control of Object.values(ui.graphicsEntityPanelModules || {})) if (control) control.disabled = false;
+  if (ui.graphicsEntityBubbleScale) ui.graphicsEntityBubbleScale.disabled = false;
   if (ui.graphicsInstrumentExpression) ui.graphicsInstrumentExpression.checked = graphicsSettings.instrumentExpressionVisible;
   if (ui.graphicsInstrumentPublicCue) ui.graphicsInstrumentPublicCue.checked = graphicsSettings.instrumentPublicCueVisible;
   if (ui.graphicsInstrumentThought) ui.graphicsInstrumentThought.checked = graphicsSettings.instrumentThoughtVisible;
   if (ui.graphicsInstrumentForecast) ui.graphicsInstrumentForecast.checked = graphicsSettings.instrumentForecastVisible;
   const adaptive = graphicsSettings.adaptiveResolution ? `${Math.round(graphicsSettings.adaptiveMinScale * 100)}–${Math.round(graphicsSettings.adaptiveMaxScale * 100)}% adaptive range · now ${Math.round(effectiveRenderScale * 100)}%` : `${Math.round(graphicsSettings.renderScale * 100)}% fixed resolution`;
-  const panelSummary = graphicsSettings.entityPanelsVisible === false ? "entity panels hidden" : `${graphicsSettings.entityPanelStyle.replaceAll("-", " ")} panels ${Math.round(graphicsSettings.entityPanelScale * 100)}% · ${graphicsSettings.entityPanelContentPreset} contents · text ${Math.round(graphicsSettings.entityPanelTextScale * 100)}%`;
+  const publicSummary = publicPanelsHidden ? "identity/status panels hidden" : `identity/status panels ${Math.round(graphicsSettings.entityPublicPanelScale * 100)}%`;
+  const selectedSummary = selectedPresentationHidden ? "selected status panel hidden" : `selected status panel ${Math.round(graphicsSettings.entitySelectedPanelScale * 100)}%`;
+  const panelSummary = `${publicSummary} · ${selectedSummary} · text ${Math.round(graphicsSettings.entityPanelTextScale * 100)}%`;
   ui.graphicsSummary.textContent = `${adaptive} · icon textures ${graphicsSettings.iconTextureQuality}× · ${panelSummary} · ${graphicsSettings.frameCap} FPS`;
 }
 // Presentation scaling belongs to the running simulation and its diagnostic
@@ -3353,21 +3438,20 @@ function resetIconTextureCaches() {
   heartSpriteMaterial = rejectionSpriteMaterial = acceptanceSpriteMaterial = attackSpriteMaterial = null;
 }
 function applyGraphicsSettings(next, rebuild = true) {
-  const previousStride = graphicsSettings.vegetationStride, previousIconQuality = graphicsSettings.iconTextureQuality; graphicsSettings = normalizeGraphicsSettings(next); localStorage.setItem(GRAPHICS_KEY, JSON.stringify(graphicsSettings));
+  const previousStride = graphicsSettings.vegetationStride, previousIconQuality = graphicsSettings.iconTextureQuality;
+  graphicsSettings = normalizeGraphicsSettings(next); localStorage.setItem(GRAPHICS_KEY, JSON.stringify(graphicsSettings));
   effectiveRenderScale = adaptiveResolution.reset(graphicsSettings.adaptiveResolution ? graphicsSettings.adaptiveMaxScale : graphicsSettings.renderScale, graphicsSettings.adaptiveMinScale); renderer.setPixelRatio(TEST_MODE ? 1 : Math.min(2, window.devicePixelRatio * effectiveRenderScale)); renderer.setSize(ui.viewport.clientWidth, ui.viewport.clientHeight, false);
   if (previousStride !== graphicsSettings.vegetationStride) { lastTerrainDetail = -1; landscapeDirty = true; }
   if (previousIconQuality !== graphicsSettings.iconTextureQuality) { clearEntityPresentation(); resetIconTextureCaches(); renderWorldSymbolKey(); }
   syncGraphicsControls(); applyInterfacePresentation(); if (rebuild) { renderAll(); updateUI(); applyInterfacePresentation(); }
 }
-function readCustomGraphicsControls() { const modules = ui.graphicsEntityPanelModules || {}; return { preset: "custom", iconTextureQuality: Number(ui.graphicsIconQuality.value), renderScale: Number(ui.graphicsResolution.value), adaptiveMinScale: Number(ui.graphicsAdaptiveMin.value), adaptiveMaxScale: Number(ui.graphicsAdaptiveMax.value), vegetationStride: Number(ui.graphicsVegetation.value), animalDetail: Number(ui.graphicsAnimals.value), entityPanelsVisible: ui.graphicsEntityPanelsVisible?.checked !== false, entityPanelScale: Number(ui.graphicsEntityPanel.value), entityPanelTextScale: Number(ui.graphicsEntityPanelText.value), entityPanelStyle: ui.graphicsEntityPanelStyle?.value, entityPanelContentPreset: ui.graphicsEntityPanelPreset?.value || "custom", entityBubbleScale: Number(ui.graphicsEntityBubbleScale?.value || 1), entityPanelIdentityVisible: modules.identity?.checked !== false, entityPanelExpressionVisible: modules.expression?.checked !== false, entityPanelPublicCueVisible: modules["public-cue"]?.checked !== false, entityPanelHealthVisible: modules.health?.checked !== false, entityPanelConcernVisible: modules.concern?.checked !== false, entityPanelForecastEffectVisible: modules["forecast-effect"]?.checked !== false, entityPanelMetabolicVisible: modules.metabolic?.checked !== false, entityPanelPerformanceVisible: modules.performance?.checked !== false, entityPanelThoughtVisible: modules.thought?.checked !== false, entityPanelForecastVisible: modules.forecast?.checked !== false, entityExpressionScale: graphicsSettings.entityExpressionScale, entityIdentityScale: graphicsSettings.entityIdentityScale, entityIconScale: graphicsSettings.entityIconScale, thoughtScale: graphicsSettings.thoughtScale, predictionScale: graphicsSettings.predictionScale, diagnosticScale: graphicsSettings.diagnosticScale, diagnosticTextScale: graphicsSettings.diagnosticTextScale, interfaceScale: Number(ui.interfaceScale.value), fontScale: Number(ui.fontScale.value), smallTextScale: Number(ui.fontSmallScale.value), bodyTextScale: Number(ui.fontBodyScale.value), controlTextScale: Number(ui.fontControlScale.value), headingTextScale: Number(ui.fontHeadingScale.value), titleTextScale: Number(ui.fontTitleScale.value), frameCap: Number(ui.graphicsFrameCap.value), effects: ui.graphicsEffects.checked, contactShadows: ui.graphicsShadows.checked, adaptiveResolution: ui.graphicsAdaptiveResolution.checked }; }
+function readCustomGraphicsControls() { const modules = ui.graphicsEntityPanelModules || {}, entityAttachedPanelsVisible = ui.graphicsEntityPublicPanelsVisible?.checked === true, entityPublicPanelsVisible = entityAttachedPanelsVisible, entitySelectedPresentationVisible = entityAttachedPanelsVisible; return { preset: "custom", iconTextureQuality: Number(ui.graphicsIconQuality.value), renderScale: Number(ui.graphicsResolution.value), adaptiveMinScale: Number(ui.graphicsAdaptiveMin.value), adaptiveMaxScale: Number(ui.graphicsAdaptiveMax.value), vegetationStride: Number(ui.graphicsVegetation.value), animalDetail: Number(ui.graphicsAnimals.value), entityPanelsVisible: entityAttachedPanelsVisible, entityAttachedPanelsVisible, entityPublicPanelsVisible, entitySelectedPresentationVisible, entityPublicPanelScale: Number(ui.graphicsEntityPublicPanel.value), entitySelectedPanelScale: Number(ui.graphicsEntitySelectedPanel.value), entityPanelTextScale: Number(ui.graphicsEntityPanelText.value), entityBubbleScale: Number(ui.graphicsEntityBubbleScale?.value || 1), entityPanelIdentityVisible: modules.identity?.checked !== false, entityPanelExpressionVisible: modules.expression?.checked !== false, entityPanelPublicCueVisible: modules["public-cue"]?.checked !== false, entityPanelHealthVisible: modules.health?.checked !== false, entityPanelConcernVisible: graphicsSettings.entityPanelConcernVisible, entityPanelForecastEffectVisible: graphicsSettings.entityPanelForecastEffectVisible, entityPanelMetabolicVisible: graphicsSettings.entityPanelMetabolicVisible, entityPanelPerformanceVisible: graphicsSettings.entityPanelPerformanceVisible, entityPanelThoughtVisible: modules.thought?.checked !== false, entityPanelForecastVisible: modules.forecast?.checked !== false, entityExpressionScale: graphicsSettings.entityExpressionScale, entityIdentityScale: graphicsSettings.entityIdentityScale, entityIconScale: graphicsSettings.entityIconScale, thoughtScale: graphicsSettings.thoughtScale, predictionScale: graphicsSettings.predictionScale, diagnosticScale: graphicsSettings.diagnosticScale, diagnosticTextScale: graphicsSettings.diagnosticTextScale, interfaceScale: Number(ui.interfaceScale.value), fontScale: Number(ui.fontScale.value), smallTextScale: Number(ui.fontSmallScale.value), bodyTextScale: Number(ui.fontBodyScale.value), controlTextScale: Number(ui.fontControlScale.value), headingTextScale: Number(ui.fontHeadingScale.value), titleTextScale: Number(ui.fontTitleScale.value), frameCap: Number(ui.graphicsFrameCap.value), effects: ui.graphicsEffects.checked, contactShadows: ui.graphicsShadows.checked, adaptiveResolution: ui.graphicsAdaptiveResolution.checked }; }
 ui.graphicsOpen.addEventListener("click", () => { ui.graphicsPanel.hidden = false; ui.realityPanel.hidden = true; ui.newWorldPanel.hidden = true; syncGraphicsControls(); void discoverMenuBackgrounds(); });
 ui.graphicsClose.addEventListener("click", () => { ui.graphicsPanel.hidden = true; if (returnToGameMenuAfterModal) showGameMenu(); else document.body.classList.remove("menu-modal-open"); returnToGameMenuAfterModal = false; });
 const currentTypographySettings = () => ({ entityPanelTextScale: graphicsSettings.entityPanelTextScale, interfaceScale: graphicsSettings.interfaceScale, fontScale: graphicsSettings.fontScale, smallTextScale: graphicsSettings.smallTextScale, bodyTextScale: graphicsSettings.bodyTextScale, controlTextScale: graphicsSettings.controlTextScale, headingTextScale: graphicsSettings.headingTextScale, titleTextScale: graphicsSettings.titleTextScale });
 ui.graphicsPreset.addEventListener("change", () => { if (ui.graphicsPreset.value !== "custom") applyGraphicsSettings({ ...graphicsPreset(ui.graphicsPreset.value), ...currentTypographySettings() }); });
-const ENTITY_PANEL_PRESET_MODULES = Object.freeze({ classic: { identity: true, expression: true, "public-cue": true, health: false, concern: false, "forecast-effect": false, metabolic: false, performance: false, thought: false, forecast: false }, essential: { identity: true, expression: true, "public-cue": true, health: true, concern: true, "forecast-effect": false, metabolic: false, performance: false, thought: false, forecast: false }, predictive: { identity: true, expression: true, "public-cue": true, health: false, concern: false, "forecast-effect": false, metabolic: false, performance: false, thought: true, forecast: true }, full: { identity: true, expression: true, "public-cue": true, health: true, concern: true, "forecast-effect": true, metabolic: true, performance: true, thought: true, forecast: true } });
-ui.graphicsEntityPanelPreset?.addEventListener("change", () => { const preset = ENTITY_PANEL_PRESET_MODULES[ui.graphicsEntityPanelPreset.value]; if (!preset) return applyGraphicsSettings(readCustomGraphicsControls()); for (const [id, enabled] of Object.entries(preset)) if (ui.graphicsEntityPanelModules[id]) ui.graphicsEntityPanelModules[id].checked = enabled; applyGraphicsSettings(readCustomGraphicsControls()); });
-for (const control of Object.values(ui.graphicsEntityPanelModules || {})) control?.addEventListener("change", () => { if (ui.graphicsEntityPanelPreset) ui.graphicsEntityPanelPreset.value = "custom"; applyGraphicsSettings(readCustomGraphicsControls()); });
-for (const control of [ui.graphicsIconQuality, ui.graphicsResolution, ui.graphicsVegetation, ui.graphicsAnimals, ui.graphicsEntityPanelsVisible, ui.graphicsEntityPanel, ui.graphicsEntityPanelText, ui.graphicsEntityPanelStyle, ui.graphicsEntityBubbleScale, ui.interfaceScale, ui.fontScale, ui.fontSmallScale, ui.fontBodyScale, ui.fontControlScale, ui.fontHeadingScale, ui.fontTitleScale, ui.graphicsFrameCap, ui.graphicsEffects, ui.graphicsShadows, ui.graphicsAdaptiveResolution, ui.graphicsAdaptiveMin, ui.graphicsAdaptiveMax].filter(Boolean)) control.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
+for (const control of Object.values(ui.graphicsEntityPanelModules || {})) control?.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
+for (const control of [ui.graphicsIconQuality, ui.graphicsResolution, ui.graphicsVegetation, ui.graphicsAnimals, ui.graphicsEntityPublicPanelsVisible, ui.graphicsEntityPublicPanel, ui.graphicsEntitySelectedPanel, ui.graphicsEntityPanelText, ui.graphicsEntityBubbleScale, ui.interfaceScale, ui.fontScale, ui.fontSmallScale, ui.fontBodyScale, ui.fontControlScale, ui.fontHeadingScale, ui.fontTitleScale, ui.graphicsFrameCap, ui.graphicsEffects, ui.graphicsShadows, ui.graphicsAdaptiveResolution, ui.graphicsAdaptiveMin, ui.graphicsAdaptiveMax].filter(Boolean)) control.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
 ui.fontScalesReset?.addEventListener("click", () => applyGraphicsSettings({ ...graphicsSettings, preset: "custom", fontScale: 1, smallTextScale: 1, bodyTextScale: 1, controlTextScale: 1, headingTextScale: 1, titleTextScale: 1 }));
 syncGraphicsControls(); applyInterfacePresentation();
 const pendingTypographyRoots = new Set();
@@ -3876,8 +3960,8 @@ ui.hudDetail.addEventListener("click", (event) => {
   const overlay = event.target.closest("input")?.dataset.observerOverlay;
   if (!overlay) return;
   if (overlay === "presentation") {
-    applyGraphicsSettings({ ...graphicsSettings, preset: "custom", entityPanelsVisible: !event.target.checked, instrumentExpressionVisible: true, instrumentPublicCueVisible: true, instrumentThoughtVisible: true, instrumentForecastVisible: true });
-    for (const control of [ui.overlayEntitySymbols, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar]) if (control) control.checked = !event.target.checked;
+    const visible = !event.target.checked;
+    applyGraphicsSettings({ ...graphicsSettings, preset: "custom", entityAttachedPanelsVisible: visible, entityPanelsVisible: visible, entityPublicPanelsVisible: visible, entitySelectedPresentationVisible: visible });
     return;
   }
   const source = ({ vision: ui.overlayVision, personal: ui.overlayPersonalSpace, intent: ui.overlayPredatorIntent, fog: ui.overlayKnowledgeFog, smell: ui.overlaySmell, sound: ui.overlaySound, calls: ui.overlayCalls, memory: ui.overlayMemory, ring: ui.overlaySelectionRing, navigation: ui.overlayNavigationCues, trails: ui.overlayMotionTrails, focus: ui.overlayEntityFocus, symbols: ui.overlayEntitySymbols, names: ui.overlayEntityNames, health: ui.overlayHealthBars, endurance: ui.overlayEnduranceBar, composition: ui.overlayCompositionBar, stage: ui.overlayAnalysisStage, clean: ui.overlayOrganismOnly, biomass: ui.overlayBiomass, water: ui.overlayWater, scent: ui.overlayPheromone, territories: ui.overlayTerritories })[overlay];
@@ -4087,8 +4171,8 @@ try { if (ui.overlayEntityNames) ui.overlayEntityNames.checked = localStorage.ge
 ui.overlayEntityNames?.addEventListener("change", () => { try { localStorage.setItem("rss-laboratory-entity-names-v1", String(ui.overlayEntityNames.checked)); } catch {} });
 [ui.overlayVision, ui.overlayPersonalSpace, ui.overlayPredatorIntent, ui.overlayKnowledgeFog, ui.overlaySmell, ui.overlaySound, ui.overlayCalls, ui.overlayMemory, ui.overlaySelectionRing, ui.overlayNavigationCues, ui.overlayMotionTrails, ui.overlayEntityFocus, ui.overlayEntitySymbols, ui.overlayEntityNames, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar, ui.overlayAnalysisStage, ui.overlayOrganismOnly, ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone, ui.overlayTerritories].forEach((el) => el?.addEventListener("change", () => { renderAll(); updateUI(); }));
 ui.overlayHideEntityPresentation?.addEventListener("change", () => {
-  applyGraphicsSettings({ ...graphicsSettings, preset: "custom", entityPanelsVisible: !ui.overlayHideEntityPresentation.checked, instrumentExpressionVisible: true, instrumentPublicCueVisible: true, instrumentThoughtVisible: true, instrumentForecastVisible: true });
-  for (const control of [ui.overlayEntitySymbols, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar]) if (control) control.checked = !ui.overlayHideEntityPresentation.checked;
+  const visible = !ui.overlayHideEntityPresentation.checked;
+  applyGraphicsSettings({ ...graphicsSettings, preset: "custom", entityAttachedPanelsVisible: visible, entityPanelsVisible: visible, entityPublicPanelsVisible: visible, entitySelectedPresentationVisible: visible });
 });
 ui.overlayCalls?.addEventListener("change", () => { renderAll(); updateUI(); });
 ui.graphicsUnstuckEntity?.addEventListener("click", () => recoverStuckEntity());
@@ -4327,12 +4411,17 @@ function seedStartingPregnancies(animals, rng) {
     for (const [selectedIndex, female] of selected.entries()) {
       const s = species[speciesId], father = males.length ? males[Math.floor(rng() * males.length)] : null;
       const protectedFounder = protectPredatorFounder && selectedIndex === 0;
+      const singleCarnivoreFounder = protectedFounder && population.length === 1 && isCarnivore(female);
       female.pregnant = { age: s.gestation * (protectedFounder ? .95 : .08 + rng() * .68), fatherId: father?.id || null, viability: .88 + rng() * .12, offspringCount: chooseOffspringCount(s.litter, rng()), startedBeforeObservation: true, ...(protectedFounder ? { lowPopulationFounderSafeguard: true } : {}) };
       female.pregnancyHormones = pregnancyHormonalCycle(female.pregnant, s.gestation);
-      const profile = compositionProfile(female.speciesId, female.sex), targetFat = profile.idealHigh * .94 / 100;
-      female.fatMass = female.leanMass * targetFat / Math.max(.01, 1 - targetFat); female.bodyMass = female.leanMass + female.fatMass; female.bodyFatPercent = targetFat * 100;
+      const profile = compositionProfile(female.speciesId, female.sex), maximumFounderFatPercent = Math.max(20, profile.obeseAbove - 2), targetFatPercent = singleCarnivoreFounder
+        ? Math.min(maximumFounderFatPercent, Math.max(20, profile.idealHigh + 6, profile.idealHigh * 1.25))
+        : profile.idealHigh * .94;
+      setBodyFatPercent(female, targetFatPercent);
       initializeMetabolism(female); recordNutrientIntake(female, { calories: female.leanMass * profile.stomachCaloriesPerKg, carbohydrate: .2, fat: .22, protein: .2, fermentable: .38 }); female.hydration = 100;
+      if (singleCarnivoreFounder) fillMetabolicReserves(female, { gut: 1, blood: 1, liver: 1 });
       female.timeline.push(`${protectedFounder ? "observation began at 95% gestation under the low-predator founder safeguard" : "observation began during pregnancy"}${father ? ` with ${father.id}` : ""}`);
+      if (singleCarnivoreFounder) female.timeline.push("observation began with protected maternal fat, hydration, stomach and rapid fuel reserves");
     }
   }
 }
@@ -7600,21 +7689,38 @@ function projectConstellationEntry(rendered, a, state, channels) {
   frameProjection.bodyX = constellationScratch.bodyAnchor.x; frameProjection.bodyY = constellationScratch.bodyAnchor.y; frameProjection.bodyZ = constellationScratch.bodyAnchor.z;
   const viewDepth = constellationScratch.projected.copy(constellationScratch.bodyAnchor).applyMatrix4(camera.matrixWorldInverse).z;
   constellationScratch.projected.copy(constellationScratch.bodyAnchor).project(camera);
+  const bodyScreenX = (constellationScratch.projected.x * .5 + .5) * width;
+  const bodyScreenY = (-constellationScratch.projected.y * .5 + .5) * height;
+  const bodyClipZ = constellationScratch.projected.z;
+  const headPart = rendered.userData.parts?.head;
+  if (headPart) headPart.getWorldPosition(constellationScratch.headAnchor);
+  else constellationScratch.headAnchor.copy(constellationScratch.bodyAnchor);
+  constellationScratch.projected.copy(constellationScratch.headAnchor).project(camera);
+  const headScreenX = (constellationScratch.projected.x * .5 + .5) * width;
+  const headScreenY = (-constellationScratch.projected.y * .5 + .5) * height;
   const privateOwnerSelected = !movieState.active && a.id === selectedId;
   const cinemaInstrumentOwner = Boolean(movieState.active && movieFeaturedAnimal(a, true) && cinemaNarrationNeedsInstrument());
   const instrumentOwner = privateOwnerSelected || cinemaInstrumentOwner;
-  // Reserve both private attachment bays for the selected owner even during a
-  // quiet heartbeat phase. Otherwise an empty-state pulse would resize the
-  // complete constellation every time it appeared or disappeared.
-  const privateCognitionVisible = privateOwnerSelected && graphicsSettings.entityPanelThoughtVisible !== false && state.permittedChannels.includes("thought"), predictionAvailable = privateOwnerSelected && graphicsSettings.entityPanelForecastVisible !== false && state.permittedChannels.includes("thought");
   const projectedBodyPx = clamp(animalVisualScale(a) * 1.8 * pixelsPerWorld, 4, 180);
+  const projectedHeadPx = clamp(scale * .44 * pixelsPerWorld, 3, 54);
+  // In observer mode, cognition bubbles are presentation overlays rather than
+  // a selection privilege. Cinema remains bounded to its featured animal.
+  const embodiedSelf = a.id === sim?.embodiment?.inhabitedAnimalId && sim?.embodiment?.experience === "embodied";
+  const cognitionBubbleOwner = !embodiedSelf && (!movieState.active || movieFeaturedAnimal(a, true));
+  // Reserve both attachment bays during quiet phases. Otherwise an empty-state
+  // pulse would resize the complete constellation as it appeared/disappeared.
+  const cognitionChannelPermitted = cognitionBubbleOwner;
+  const privateCognitionVisible = cognitionChannelPermitted && graphicsSettings.entityPanelThoughtVisible !== false, predictionAvailable = cognitionChannelPermitted && graphicsSettings.entityPanelForecastVisible !== false;
   return {
     id: a.id,
-    screenX: (constellationScratch.projected.x * .5 + .5) * width,
-    screenY: (-constellationScratch.projected.y * .5 + .5) * height,
+    screenX: bodyScreenX,
+    screenY: bodyScreenY,
+    headScreenX,
+    headScreenY,
     projectedBodyPx,
+    projectedHeadPx,
     livePanelDistance: distance,
-    clipZ: constellationScratch.projected.z,
+    clipZ: bodyClipZ,
     viewDepth,
     tier: rendered.userData.presentationTier || "close",
     selected: privateOwnerSelected,
@@ -7646,14 +7752,12 @@ function entityConstellationViewportBounds() {
 }
 function currentEntityConstellationCardProfile() {
   const cinemaPhysiology = movieState.active && movieChannelEnabled("physiology");
-  const style = graphicsSettings.entityPanelStyle;
-  const contextOnly = style === "context-ribbon";
-  const vitalsOnly = style === "vital-strip";
-  const healthVisible = !contextOnly && (cinemaPhysiology || graphicsSettings.entityPanelHealthVisible);
-  const metabolicVisible = !contextOnly && (cinemaPhysiology || graphicsSettings.entityPanelMetabolicVisible);
-  const performanceVisible = !contextOnly && (cinemaPhysiology || graphicsSettings.entityPanelPerformanceVisible);
-  const immediateConcernVisible = !vitalsOnly && graphicsSettings.entityPanelConcernVisible;
-  const forecastEffectVisible = !vitalsOnly && graphicsSettings.entityPanelForecastEffectVisible;
+  const style = "classic-rail";
+  const healthVisible = cinemaPhysiology || graphicsSettings.entityPanelHealthVisible;
+  const metabolicVisible = cinemaPhysiology || graphicsSettings.entityPanelMetabolicVisible;
+  const performanceVisible = cinemaPhysiology || graphicsSettings.entityPanelPerformanceVisible;
+  const immediateConcernVisible = graphicsSettings.entityPanelConcernVisible;
+  const forecastEffectVisible = graphicsSettings.entityPanelForecastEffectVisible;
   const decisionContextVisible = immediateConcernVisible || forecastEffectVisible;
   const thoughtAttachmentEnabled = graphicsSettings.entityPanelThoughtVisible !== false;
   const forecastAttachmentEnabled = graphicsSettings.entityPanelForecastVisible !== false;
@@ -7697,12 +7801,11 @@ function currentEntityConstellationCardProfile() {
     };
   }
   const value = entityConstellationCardProfileCache.value;
-  const styleUsesInstrumentSurface = ["context-ribbon", "vital-strip", "full-instrument"].includes(style);
-  // Design chooses the physical surface; the information preset only chooses
-  // which modules that surface may show. Enabling health or physiology must
-  // never silently replace a mast, capsule, classic rail or predictive rail
-  // with the full instrument.
-  return { ...value, public: value.panel, selected: styleUsesInstrumentSurface ? value.instrument : value.panel };
+  // The stable presentation has exactly two surfaces: every unselected animal
+  // uses the thick rail, while the selected animal uses the integrated main
+  // instrument. Module switches change content only; they never substitute a
+  // different panel geometry.
+  return { ...value, public: value.panel, selected: value.instrument };
 }
 function constellationResolverProfile(profile, uniformScale = 1) {
   const scale = clamp(Number(uniformScale) || 1, .1, 1.5);
@@ -7736,7 +7839,7 @@ function constellationSolveSignature(projected, canvasViewport, usableViewport, 
   return [
     canvasViewport.right, canvasViewport.bottom,
     usableViewport.left, usableViewport.top, usableViewport.right, usableViewport.bottom,
-    cardProfile.key, graphicsSettings.entityPanelScale, graphicsSettings.entityPanelTextScale,
+    cardProfile.key, graphicsSettings.entityPublicPanelScale, graphicsSettings.entitySelectedPanelScale, graphicsSettings.entityPanelTextScale,
     entityPanelScaleWheelRevision, movieState.active ? 1 : 0,
     panelFocus.exclusive ? 1 : 0, panelFocus.ownerId || "", panelFocus.reason || "", entrySignature
   ].join(";");
@@ -7761,7 +7864,13 @@ function reuseResolvedEntityConstellations(entries, onScreenProjected) {
   return entityConstellationLayouts;
 }
 function resolveVisibleEntityConstellations(entries) {
-  if (graphicsSettings.entityPanelsVisible === false) {
+  const publicPanelsVisible = graphicsSettings.entityPublicPanelsVisible !== false;
+  const selectedPresentationVisible = graphicsSettings.entitySelectedPresentationVisible !== false;
+  const independentLayersVisible = graphicsSettings.entityPanelThoughtVisible !== false
+    || graphicsSettings.entityPanelForecastVisible !== false
+    || graphicsSettings.entityPanelExpressionVisible !== false
+    || graphicsSettings.entityPanelPublicCueVisible !== false;
+  if (!publicPanelsVisible && !selectedPresentationVisible && !independentLayersVisible) {
     for (const { rendered } of entries) hideEntityConstellation(rendered);
     entityConstellationLayouts = new Map();
     entityConstellationBudgetState = { visibleEntityIds: [], suppressedEntityIds: entries.map(({ a }) => String(a.id)), decisions: entries.map(({ a }) => ({ entityId: String(a.id), visible: false, reason: "entity-panels-disabled" })) };
@@ -7773,14 +7882,22 @@ function resolveVisibleEntityConstellations(entries) {
   const cardProfile = currentEntityConstellationCardProfile();
   const canvasViewport = { left: 0, top: 0, right: Math.max(1, renderer.domElement.clientWidth), bottom: Math.max(1, renderer.domElement.clientHeight) };
   const renderedById = new Map(entries.map(({ rendered, a }) => [String(a.id), rendered]));
-  const panelResolverProfile = constellationResolverProfile(cardProfile.public, graphicsSettings.entityPanelScale);
+  const panelSettingScale = (instrumentOwner) => instrumentOwner ? graphicsSettings.entitySelectedPanelScale : graphicsSettings.entityPublicPanelScale;
+  const panelResolverProfile = constellationResolverProfile(cardProfile.public, panelSettingScale(false));
   const onScreenProjected = entries.map(({ rendered, a, state, channels }) => {
     const projection = projectConstellationEntry(rendered, a, state, channels), onScreen = projectedEntityIntersectsViewport(projection, canvasViewport);
-    projection.layoutProfile = constellationResolverProfile(projection.instrumentOwner ? cardProfile.selected : cardProfile.public, graphicsSettings.entityPanelScale);
-    projection.viewportAdmitted = onScreen;
-    rendered.userData.constellationProjection = { screenX: projection.screenX, screenY: projection.screenY, projectedBodyPx: projection.projectedBodyPx, clipZ: projection.clipZ, viewDepth: projection.viewDepth, onScreen, panelAdmitted: false, instrumentOwner: projection.instrumentOwner, cinemaInstrumentOwner: projection.cinemaInstrumentOwner };
+    const panelVisible = projection.instrumentOwner ? selectedPresentationVisible : publicPanelsVisible;
+    const independentLayerVisible = projection.visibleChannels.some((channel) => ["thought", "prediction", "expression", "signal", "action"].includes(channel));
+    const surfaceVisible = panelVisible || independentLayerVisible;
+    projection.layoutProfile = constellationResolverProfile(projection.instrumentOwner ? cardProfile.selected : cardProfile.public, panelSettingScale(projection.instrumentOwner));
+    projection.viewportAdmitted = onScreen && surfaceVisible;
+    rendered.userData.constellationProjection = { screenX: projection.screenX, screenY: projection.screenY, headScreenX: projection.headScreenX, headScreenY: projection.headScreenY, projectedBodyPx: projection.projectedBodyPx, projectedHeadPx: projection.projectedHeadPx, clipZ: projection.clipZ, viewDepth: projection.viewDepth, onScreen, panelAdmitted: false, instrumentOwner: projection.instrumentOwner, cinemaInstrumentOwner: projection.cinemaInstrumentOwner, panelVisible, independentLayerVisible, surfaceVisible };
+    if (!surfaceVisible) {
+      hideEntityConstellation(rendered);
+      return null;
+    }
     return projection;
-  }).filter((projection) => projectedEntityIntersectsViewport(projection, canvasViewport));
+  }).filter((projection) => projection && projectedEntityIntersectsViewport(projection, canvasViewport));
   const usableViewport = entityConstellationViewportBounds();
   const panelFocus = entityConstellationPanelFocus();
   const solveSignature = constellationSolveSignature(onScreenProjected, canvasViewport, usableViewport, cardProfile, panelFocus);
@@ -7800,7 +7917,7 @@ function resolveVisibleEntityConstellations(entries) {
     if (rendered?.userData.constellationProjection) Object.assign(rendered.userData.constellationProjection, { panelScale: projection.panelScale, panelDistance: projection.panelDistance, panelScaleRevision: projection.panelScaleRevision });
     return projection;
   });
-  const layoutScale = graphicsSettings.entityPanelScale;
+  const layoutScale = Math.max(graphicsSettings.entityPublicPanelScale, graphicsSettings.entitySelectedPanelScale);
   // Prefer the unobstructed play area, but a deliberately enlarged selected
   // instrument can be wider/taller than the space beside a docked HUD. In that
   // case clamp against the full simulation canvas: partial overlap with a
@@ -7809,7 +7926,7 @@ function resolveVisibleEntityConstellations(entries) {
   const requiresFullCanvas = projected.some((projection) => {
     const profile = projection.instrumentOwner ? cardProfile.selected : cardProfile.public;
     const bounds = projection.instrumentOwner ? profile.selectedFootprint || profile.panel : profile.panel;
-    const effectiveScale = layoutScale * projection.panelScale;
+    const effectiveScale = panelSettingScale(projection.instrumentOwner) * projection.panelScale;
     return bounds.width * effectiveScale > usableWidth || bounds.height * effectiveScale > usableHeight;
   });
   const placementViewport = requiresFullCanvas ? canvasViewport : usableViewport;
@@ -7886,7 +8003,8 @@ function constellationPanelResourceProtected(rendered) {
 function hideEntityConstellation(rendered) {
   const parts = rendered?.userData.parts;
   if (!parts) return;
-  for (const part of [parts.constellationRoot, parts.ownershipTether, parts.ownershipTetherRibbon, parts.ownershipEndpoint, parts.identityPanel, parts.instrumentBackdrop, parts.instrumentMetrics, ...Object.values(parts.ownershipNotches || {})]) if (part) part.visible = false;
+  for (const part of [parts.constellationRoot, parts.ownershipTether, parts.ownershipTetherRibbon, parts.ownershipEndpoint, parts.identityPanel, parts.instrumentBackdrop, parts.instrumentMetrics, parts.bodyIdentityMarking, parts.groundHealthBar, ...Object.values(parts.ownershipNotches || {})]) if (part) part.visible = false;
+  for (const part of [rendered.userData.healthBar, rendered.userData.enduranceBar, rendered.userData.compositionBar]) if (part) part.visible = false;
   if (!constellationPanelResourceProtected(rendered)) releaseInstrumentPanelLayers(parts);
   rendered.userData.constellationLayout = null;
   rendered.userData.constellationCue = null;
@@ -7905,10 +8023,128 @@ function sweepDormantConstellationPanelResources(now = performance.now()) {
     }
   }
 }
+function selectedBubbleSlots(layout, panelProfile, panelScale, projection) {
+  const panelSlots = { thought: layout.slots.thought, prediction: layout.slots.prediction };
+  const bubbles = [];
+  if (graphicsSettings.entityPanelThoughtVisible !== false && layout.slots.thought) bubbles.push({ key: "thought", source: layout.slots.thought, size: panelProfile.thought });
+  if (graphicsSettings.entityPanelForecastVisible !== false && layout.slots.prediction) bubbles.push({ key: "prediction", source: layout.slots.prediction, size: panelProfile.prediction });
+  if (!bubbles.length) return panelSlots;
+  const gap = Math.max(4, 6 * panelScale);
+  const widths = bubbles.map(({ size }) => size.width * panelScale);
+  const totalWidth = widths.reduce((sum, width) => sum + width, 0) + gap * Math.max(0, bubbles.length - 1);
+  const headX = Number.isFinite(projection?.headScreenX) ? projection.headScreenX : layout.body.x;
+  const headY = Number.isFinite(projection?.headScreenY) ? projection.headScreenY : layout.body.y;
+  const headTopY = headY - Math.max(3, Number(projection?.projectedHeadPx) || (Number(layout.projectedBodyPx) || 4) * .25);
+  const slots = { ...panelSlots };
+  let cursorX = headX - totalWidth * .5;
+  bubbles.forEach((bubble, index) => {
+    const width = widths[index], height = bubble.size.height * panelScale;
+    slots[bubble.key] = {
+      ...bubble.source,
+      x: cursorX + width * .5 - layout.anchor.x,
+      y: headTopY - gap - height * .5 - layout.anchor.y
+    };
+    cursorX += width + gap;
+  });
+  return slots;
+}
+
+function setAnimalAttachedHudSprite(sprite, xPx, yPx, widthPx, heightPx, unitsPerPixel, z = .004) {
+  if (!sprite) return;
+  sprite.position.set(xPx * unitsPerPixel, -yPx * unitsPerPixel, z);
+  sprite.scale.set(Math.max(.001, widthPx * unitsPerPixel), Math.max(.001, heightPx * unitsPerPixel), 1);
+}
+
+function applyAnimalAttachedHudLayout(rendered, animal, state, layout) {
+  const parts = rendered.userData.parts, root = parts.constellationRoot;
+  const selected = String(selectedId || "") === String(animal.id);
+  const panelAllowed = selected ? graphicsSettings.entitySelectedPresentationVisible !== false : graphicsSettings.entityPublicPanelsVisible !== false;
+  const independentLayersAllowed = graphicsSettings.entityPanelThoughtVisible !== false
+    || graphicsSettings.entityPanelForecastVisible !== false
+    || graphicsSettings.entityPanelExpressionVisible !== false
+    || graphicsSettings.entityPanelPublicCueVisible !== false;
+  const symbolsAllowed = (movieState.active ? ["thoughts", "expressions", "calls", "actions", "identity"].some((channel) => movieChannelEnabled(channel)) : ui.overlayEntitySymbols?.checked !== false) && !ui.overlayOrganismOnly?.checked;
+  if ((!panelAllowed && !independentLayersAllowed) || !symbolsAllowed) { hideEntityConstellation(rendered); return; }
+
+  const thoughtVisible = Boolean(parts.thought?.visible && graphicsSettings.entityPanelThoughtVisible !== false);
+  const forecastVisible = Boolean(parts.predictionThought?.visible && graphicsSettings.entityPanelForecastVisible !== false);
+  const faceVisible = Boolean(parts.face?.visible && graphicsSettings.entityPanelExpressionVisible !== false);
+  const cueCandidates = [parts.injuryAlert, parts.signal, parts.actionBadge, parts.rejection, parts.acceptance, parts.attackIcon, ...(parts.courtshipHearts || [])];
+  const publicCue = graphicsSettings.entityPanelPublicCueVisible === false ? null : cueCandidates.find((part) => part?.visible) || null;
+
+  for (const part of [parts.identityPanel, parts.instrumentBackdrop, parts.instrumentMetrics, parts.ownershipTether, parts.ownershipTetherRibbon, parts.ownershipEndpoint, ...Object.values(parts.ownershipNotches || {})]) if (part) part.visible = false;
+  for (const part of cueCandidates) if (part && part !== publicCue) part.visible = false;
+  if (parts.face) parts.face.visible = faceVisible;
+  if (parts.thought) parts.thought.visible = thoughtVisible;
+  if (parts.predictionThought) parts.predictionThought.visible = forecastVisible;
+  if (publicCue) publicCue.visible = true;
+  for (const part of [rendered.userData.healthBar, rendered.userData.enduranceBar, rendered.userData.compositionBar]) if (part) part.visible = false;
+
+  const unitsPerPixel = constellationWorldUnitsPerPixel(rendered);
+  constellationScratch.ribbonPoint.copy(constellationScratch.bodyAnchor); rendered.worldToLocal(constellationScratch.ribbonPoint); root.position.copy(constellationScratch.ribbonPoint);
+  rendered.getWorldQuaternion(constellationScratch.parentQuaternion); constellationScratch.localQuaternion.copy(constellationScratch.parentQuaternion).invert().multiply(camera.quaternion); root.quaternion.copy(constellationScratch.localQuaternion);
+  rendered.getWorldScale(constellationScratch.parentScale); root.scale.set(1 / Math.max(.001, constellationScratch.parentScale.x), 1 / Math.max(.001, constellationScratch.parentScale.y), 1 / Math.max(.001, constellationScratch.parentScale.z));
+
+  const projection = rendered.userData.constellationProjection || {};
+  const bodyScreenX = Number.isFinite(projection.screenX) ? projection.screenX : Number(layout.body?.x) || 0;
+  const bodyScreenY = Number.isFinite(projection.screenY) ? projection.screenY : Number(layout.body?.y) || 0;
+  const headX = (Number.isFinite(projection.headScreenX) ? projection.headScreenX : bodyScreenX) - bodyScreenX;
+  const headY = (Number.isFinite(projection.headScreenY) ? projection.headScreenY : bodyScreenY) - bodyScreenY;
+  const headRadius = Math.max(5, Number(projection.projectedHeadPx) || Math.max(7, (Number(projection.projectedBodyPx) || 14) * .25));
+  const configuredScale = selected ? graphicsSettings.entitySelectedPanelScale : graphicsSettings.entityPublicPanelScale;
+  const displayScale = clamp(Number(configuredScale) || .4, .1, 2);
+  const bubbleScale = clamp((Number(graphicsSettings.entityBubbleScale) || 1) * displayScale, .2, 3);
+  const accent = layout.style?.accent || "#75dfc1";
+
+  const faceSize = 74 * displayScale, cueWidth = 104 * displayScale, cueHeight = 78 * displayScale;
+  const sideY = headY + Math.max(1, headRadius * .18);
+  if (parts.face) setAnimalAttachedHudSprite(parts.face, headX - headRadius - faceSize * .56 - 5 * displayScale, sideY, faceSize, faceSize, unitsPerPixel, .008);
+  if (publicCue) setAnimalAttachedHudSprite(publicCue, headX + headRadius + cueWidth * .52 + 5 * displayScale, sideY, cueWidth, cueHeight, unitsPerPixel, .008);
+
+  const identityVisible = panelAllowed && graphicsSettings.entityPanelIdentityVisible !== false;
+  if (parts.bodyIdentityMarking) {
+    parts.bodyIdentityMarking.visible = identityVisible;
+    if (identityVisible) {
+      updateAnimalBodyMarking(parts.bodyIdentityMarking, animal, accent);
+      setAnimalAttachedHudSprite(parts.bodyIdentityMarking, 0, 5 * displayScale, 245 * displayScale, 70 * displayScale, unitsPerPixel, .006);
+    }
+  }
+  const healthVisible = panelAllowed && graphicsSettings.entityPanelHealthVisible !== false;
+  if (parts.groundHealthBar) {
+    parts.groundHealthBar.visible = healthVisible;
+    if (healthVisible) {
+      updateAnimalGroundHealth(parts.groundHealthBar, animal, state, accent);
+      const healthY = headY + headRadius + 29 * displayScale;
+      setAnimalAttachedHudSprite(parts.groundHealthBar, headX, healthY, 158 * displayScale, 38 * displayScale, unitsPerPixel, .005);
+    }
+  }
+
+  const bubbles = [];
+  if (thoughtVisible) bubbles.push({ part: parts.thought, width: 228 * bubbleScale, height: 142 * bubbleScale });
+  if (forecastVisible) bubbles.push({ part: parts.predictionThought, width: 276 * bubbleScale, height: 142 * bubbleScale });
+  const bubbleGap = 7 * displayScale, totalBubbleWidth = bubbles.reduce((sum, bubble) => sum + bubble.width, 0) + Math.max(0, bubbles.length - 1) * bubbleGap;
+  let bubbleCursor = headX - totalBubbleWidth * .5;
+  for (const bubble of bubbles) {
+    const centerX = bubbleCursor + bubble.width * .5;
+    const centerY = headY - headRadius - bubble.height * .5 - 8 * displayScale;
+    setAnimalAttachedHudSprite(bubble.part, centerX, centerY, bubble.width, bubble.height, unitsPerPixel, .01);
+    bubbleCursor += bubble.width + bubbleGap;
+  }
+
+  root.visible = Boolean(identityVisible || healthVisible || faceVisible || publicCue || bubbles.length);
+  applyConstellationSemanticOpacity(parts, layout.opacity ?? 1);
+  if (parts.bodyIdentityMarking?.material) parts.bodyIdentityMarking.material.opacity = layout.opacity ?? 1;
+  if (parts.groundHealthBar?.material) parts.groundHealthBar.material.opacity = layout.opacity ?? 1;
+  rendered.userData.constellationLayout = layout;
+  rendered.userData.constellationCue = null;
+}
+
 function applyEntityConstellationLayout(rendered, a, state) {
   const parts = rendered.userData.parts, layout = entityConstellationLayouts.get(a.id);
   if (!parts?.constellationRoot) return;
   if (!layout) { hideEntityConstellation(rendered); return; }
+  applyAnimalAttachedHudLayout(rendered, a, state, layout);
+  return;
   const showEntitySymbols = (movieState.active ? ["thoughts", "expressions", "calls", "actions", "identity"].some((channel) => movieChannelEnabled(channel)) : ui.overlayEntitySymbols?.checked !== false) && !ui.overlayOrganismOnly?.checked;
   const root = parts.constellationRoot, tether = parts.ownershipTether, tetherRibbon = parts.ownershipTetherRibbon, endpoint = parts.ownershipEndpoint, unitsPerPixel = constellationWorldUnitsPerPixel(rendered);
   constellationScratch.cameraRight.copy(constellationCameraFrame.cameraRight);
@@ -7957,12 +8193,13 @@ function applyEntityConstellationLayout(rendered, a, state) {
   // once and use that same result for the rail/instrument and every child.
   // Neither legacy child-scale preference may distort an individual cell.
   const wheelPanelScale = layout.panelScale || 1;
-  const uniformPanelScale = graphicsSettings.entityPanelScale;
+  const uniformPanelScale = integratedInstrument ? graphicsSettings.entitySelectedPanelScale : graphicsSettings.entityPublicPanelScale;
   const requestedPanelScale = wheelPanelScale * uniformPanelScale;
   // The resolver owns the collision geometry. Derive the render factor from
   // that resolved width so visible pixels and the placement footprint cannot
   // diverge if either scale path is adjusted later.
   const panelScale = layout.panelDimensions?.width > 0 ? layout.panelDimensions.width / panelProfile.screenSize.width : requestedPanelScale;
+  const bubbleSlots = selectedBubbleSlots(layout, panelProfile, panelScale, projection);
   const panel = integratedInstrument ? instrumentBackdrop : publicPanel;
   if (integratedInstrument) {
     if (publicPanel) publicPanel.visible = false;
@@ -8004,13 +8241,12 @@ function applyEntityConstellationLayout(rendered, a, state) {
   setConstellationSlot(parts.injuryAlert, layout.slots.urgent, unitsPerPixel, .005);
   setConstellationSlot(parts.rejection, layout.slots.action, unitsPerPixel, .004); setConstellationSlot(parts.acceptance, layout.slots.action, unitsPerPixel, .004);
   if (parts.courtshipHearts) parts.courtshipHearts.forEach((heart, index) => { const slot = layout.slots.action; if (slot) { const spread = Math.min(13, (sideCells?.outwardCell.width || 52) * .18) * panelScale; heart.position.set((slot.x + (index ? spread : -spread)) * unitsPerPixel, -(slot.y - index * spread) * unitsPerPixel, .004); } });
-  setConstellationSlot(parts.thought, layout.slots.thought, unitsPerPixel, .006);
-  setConstellationSlot(parts.predictionThought, layout.slots.prediction, unitsPerPixel, .007);
+  setConstellationSlot(parts.thought, bubbleSlots.thought, unitsPerPixel, .006);
+  setConstellationSlot(parts.predictionThought, bubbleSlots.prediction, unitsPerPixel, .007);
   if (graphicsSettings.entityPanelExpressionVisible === false && parts.face) parts.face.visible = false;
   if (graphicsSettings.entityPanelPublicCueVisible === false) for (const part of [parts.signal, parts.actionBadge, parts.rejection, parts.acceptance, ...(parts.courtshipHearts || [])]) if (part) part.visible = false;
-  const privateAttachmentsAllowed = Boolean(projection?.instrumentOwner);
-  if (!privateAttachmentsAllowed || graphicsSettings.entityPanelThoughtVisible === false) if (parts.thought) parts.thought.visible = false;
-  if (!privateAttachmentsAllowed || graphicsSettings.entityPanelForecastVisible === false) if (parts.predictionThought) parts.predictionThought.visible = false;
+  if (graphicsSettings.entityPanelThoughtVisible === false) if (parts.thought) parts.thought.visible = false;
+  if (graphicsSettings.entityPanelForecastVisible === false) if (parts.predictionThought) parts.predictionThought.visible = false;
   if (parts.face) parts.face.scale.set(sideCells.expression.width * panelScale * unitsPerPixel, sideCells.expression.height * panelScale * unitsPerPixel, 1);
   if (parts.signal) parts.signal.scale.set(sideCells.outward.width * panelScale * unitsPerPixel, sideCells.outward.height * panelScale * unitsPerPixel, 1);
   if (parts.actionBadge) parts.actionBadge.scale.set(sideCells.action.width * panelScale * unitsPerPixel, sideCells.action.height * panelScale * unitsPerPixel, 1);
@@ -8027,8 +8263,8 @@ function applyEntityConstellationLayout(rendered, a, state) {
     expression: { part: parts.face, slot: layout.slots.expression, channelVisible: layout.slots.expression?.visible, dx: sideCells.expression.width * panelScale * .34, dy: -sideCells.expression.height * panelScale * .34 },
     signal: { part: parts.signal, slot: layout.slots.signal, channelVisible: layout.slots.signal?.visible, dx: sideCells.outward.width * panelScale * .38, dy: -sideCells.outward.height * panelScale * .36 },
     action: { part: [parts.actionBadge, parts.rejection, parts.acceptance, ...(parts.courtshipHearts || [])].find((part) => part?.visible), slot: layout.slots.action, channelVisible: layout.slots.action?.visible, dx: sideCells.action.width * panelScale * .36, dy: -sideCells.action.height * panelScale * .34 },
-    thought: { part: parts.thought, slot: layout.slots.thought, channelVisible: layout.slots.thought?.visible, dx: panelProfile.thought.width * panelScale * .33, dy: -panelProfile.thought.height * panelScale * .33 },
-    prediction: { part: parts.predictionThought, slot: layout.slots.prediction, channelVisible: layout.slots.prediction?.visible, dx: panelProfile.prediction.width * panelScale * .33, dy: -panelProfile.prediction.height * panelScale * .33 },
+    thought: { part: parts.thought, slot: bubbleSlots.thought, channelVisible: bubbleSlots.thought?.visible, dx: panelProfile.thought.width * panelScale * .33, dy: -panelProfile.thought.height * panelScale * .33 },
+    prediction: { part: parts.predictionThought, slot: bubbleSlots.prediction, channelVisible: bubbleSlots.prediction?.visible, dx: panelProfile.prediction.width * panelScale * .33, dy: -panelProfile.prediction.height * panelScale * .33 },
     urgent: { part: parts.injuryAlert, slot: layout.slots.urgent, channelVisible: layout.slots.urgent?.visible, dx: 17 * panelScale, dy: -16 * panelScale }
   };
   for (const [channel, notch] of Object.entries(parts.ownershipNotches || {})) {
@@ -8130,12 +8366,12 @@ function updateEntityIndicators(rendered, a, state, now = performance.now(), cha
   const heldCallout = presentationChannelHolds.snapshot(a.id, "callout").displayed, signalDescriptor = heldCallout?.descriptor || null;
   const alignment = thoughtSignalAlignment(state.priority.key, signalDescriptor);
 
-  // Cinema may hold observable faces and callouts for readability, but it
-  // never inherits the observer's selected-animal private cognition.
-  const privateOwnerSelected = !movieState.active && a.id === selectedId;
+  // Observer presentation may show cognition bubbles without requiring a
+  // selection. Cinema remains bounded to the featured animal, and embodied
+  // self-observation still does not expose private overlays above the avatar.
   const embodiedSelf = a.id === sim?.embodiment?.inhabitedAnimalId && sim?.embodiment?.experience === "embodied";
-  const privateWorldOwner = privateOwnerSelected && !embodiedSelf;
-  const privateCognitionPermitted = privateWorldOwner && state.permittedChannels.includes("thought");
+  const cognitionBubbleOwner = !embodiedSelf && (!movieState.active || movieFeaturedAnimal(a, true));
+  const privateCognitionPermitted = cognitionBubbleOwner;
   let thoughtState = entityThoughtStates.get(a.id);
   if (!thoughtState) { thoughtState = { priority: null, alignmentTone: "private", until: 0, started: now, ordinaryDisplayedKey: null, insightFingerprint: null, insightSourceKey: null, insightUntil: 0, insightStarted: 0, insightLastSeen: 0, predictionDisplayedKey: null, ordinaryMaterialSignature: null, predictionMaterialSignature: null }; entityThoughtStates.set(a.id, thoughtState); }
 
@@ -8189,8 +8425,8 @@ function updateEntityIndicators(rendered, a, state, now = performance.now(), cha
   }
   if (thoughtState.predictionDisplayedKey !== heldForecastSnapshot.semanticKey) { thoughtState.predictionDisplayedKey = heldForecastSnapshot.semanticKey; thoughtState.insightStarted = heldForecastSnapshot.shownAt ?? now; }
   const urgentImpact = hasVisualEvent("attack", a, now) || hasVisualEvent("injury-alert", a, now);
-  const thoughtRule = thoughtPresentation({ selected: privateWorldOwner, urgentImpact });
-  const insightRule = predictionInsightPresentation({ selected: privateWorldOwner, admitted: Boolean(displayedPredictionCue), transitionActive: Boolean(displayedPredictionCue), urgentImpact }), showPredictionInsight = insightRule.visible;
+  const thoughtRule = thoughtPresentation({ selected: cognitionBubbleOwner, urgentImpact });
+  const insightRule = predictionInsightPresentation({ selected: cognitionBubbleOwner, admitted: Boolean(displayedPredictionCue), transitionActive: Boolean(displayedPredictionCue), urgentImpact }), showPredictionInsight = insightRule.visible;
   const ordinaryMaterialSignature = heldThought?.semanticKey || null;
   if (thought && heldThought && thoughtState.ordinaryMaterialSignature !== ordinaryMaterialSignature) {
     const source = heldThought.presentation
@@ -8208,7 +8444,8 @@ function updateEntityIndicators(rendered, a, state, now = performance.now(), cha
   let nameplate = rendered.userData.entityNameplate; const narratedSubject = movieState.active && activeNarrationSubjectIds.has(a.id), showName = !panelFocus.exclusive && !integratedInstrument && (narratedSubject || !movieState.active && Boolean(ui.overlayEntityNames?.checked)) && !ui.overlayOrganismOnly?.checked && (narratedSubject || rendered.userData.presentationTier !== "distant");
   if (!nameplate && showName) { nameplate = new THREE.Sprite(entityNameMaterial(a)); nameplate.renderOrder = 92; rendered.add(nameplate); rendered.userData.entityNameplate = nameplate; rendered.userData.parts.entityNameplate = nameplate; }
   if (nameplate) { nameplate.visible = showName; if (showName) { nameplate.material = entityNameMaterial(a); nameplate.position.set(0, overlayBaseY + .72, 0); nameplate.scale.set(2.5 * diagnosticScale, .5 * diagnosticScale, 1); } }
-  const privateCloudsAllowed = privateCognitionPermitted && showEntitySymbols && showcasePresentationMode === "complete" && !urgentImpact;
+  const showcaseAllowsPrivateClouds = !document.body.classList.contains("showcase-mode") || showcasePresentationMode === "complete";
+  const privateCloudsAllowed = privateCognitionPermitted && showEntitySymbols && showcaseAllowsPrivateClouds && !urgentImpact;
   if (thought) { thought.userData.predictionInsight = false; thought.userData.predictionFingerprint = null; thought.userData.predictionLabel = null; thought.userData.emptyState = Boolean(heldThought?.placeholder); thought.visible = Boolean(privateCloudsAllowed && thoughtRule.visible && heldThought); }
   if (predictionThought) { predictionThought.userData.predictionFingerprint = showPredictionInsight ? displayedPredictionCue?.fingerprint || null : null; predictionThought.userData.predictionLabel = showPredictionInsight ? displayedPredictionCue?.label || null : null; predictionThought.userData.emptyState = Boolean(displayedPredictionCue?.placeholder); predictionThought.visible = Boolean(privateCloudsAllowed && showPredictionInsight && displayedPredictionCue); }
   rendered.userData.presentationChannelHolds = {
@@ -9162,8 +9399,12 @@ function createAnimalConstellation(group) {
   instrumentBackdrop.visible = instrumentMetrics.visible = false;
   root.add(instrumentBackdrop);
   root.add(instrumentMetrics);
+  const bodyIdentityMarking = createAnimalAttachedCanvasSprite(260, 74, "body-identity-marking");
+  const groundHealthBar = createAnimalAttachedCanvasSprite(170, 42, "ground-health-bar");
+  root.add(bodyIdentityMarking);
+  root.add(groundHealthBar);
   const ownershipNotches = Object.fromEntries(["expression", "signal", "action", "thought", "prediction", "urgent"].map((channel) => { const notch = createOwnershipNotch(); root.add(notch); return [channel, notch]; }));
-  return { constellationRoot: root, ownershipTether: tether, ownershipTetherAttribute: tetherAttribute, ownershipTetherRibbon: tetherRibbon, ownershipTetherRibbonPositions: tetherRibbonPositions, ownershipEndpoint: endpoint, ownershipNotches, identityPanel, instrumentBackdrop, instrumentMetrics };
+  return { constellationRoot: root, ownershipTether: tether, ownershipTetherAttribute: tetherAttribute, ownershipTetherRibbon: tetherRibbon, ownershipTetherRibbonPositions: tetherRibbonPositions, ownershipEndpoint: endpoint, ownershipNotches, identityPanel, instrumentBackdrop, instrumentMetrics, bodyIdentityMarking, groundHealthBar };
 }
 function createAnimalTransientParts(group, constellationRoot, a, scale, body) {
   const addUi = (object) => { if (object.isSprite) setEntityOwnedSpriteMaterial(object, object.material); constellationRoot.add(object); return object; };
@@ -12313,18 +12554,17 @@ function entityPredictiveSummaryHtml(animal, { expanded = false, compact = false
   return `<section class="entity-predictive-summary is-${escapeHtml(impact.tone)}" data-entity-predictive data-predictive-surface="${escapeHtml(surface)}">${admittedForecasts}${summaryContent}${flow}<div class="entity-predictive-effect"><span>${escapeHtml(impact.headline)}</span><p>${escapeHtml(impact.detail)}</p></div>${impactRows}${expandedDetail}${!expanded && showOpenButton ? `<button type="button" class="entity-predictive-open" data-open-observer-predictions>Inspect every forecast and effect</button>` : ""}</section>`;
 }
 
+function observerOverviewPhysiologyGroupHtml(title, metrics, tone) {
+  return `<section class="observer-overview-physiology-group is-${escapeHtml(tone)}"><header>${escapeHtml(title)}</header><div>${metrics.map((metric) => `<article role="meter" aria-label="${escapeHtml(metric.label)} ${metric.value} percent" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${metric.value}" title="${escapeHtml(metric.label)}"><span>${escapeHtml(metric.label)}</span><strong>${metric.value}<small>%</small>${metric.detail ? `<em>${escapeHtml(metric.detail)}</em>` : ""}</strong><i><b style="--observer-value:${clamp(metric.value, 0, 100).toFixed(1)}%;--observer-metric-colour:${escapeHtml(metric.colour)}"></b></i></article>`).join("")}</div></section>`;
+}
+
 function observerWholeAnimalOverviewHtml(animal) {
-  const physical = performanceState(animal), expression = visibleExpression(animal, sim.tick), face = facialExpressionSymbol(expression);
-  const activeSignal = activeEmittedSignal(animal, sim.tick), signalSymbol = activeSignal ? emittedSymbol(animal, activeSignal.kind) : null;
-  const facePreview = exactSymbolPreview(emotionFaceMaterial(expression.key, animal.speciesId), face.label, `overview-expression|${animal.speciesId}|${expression.key}`, { decorative: true });
-  const signalResolved = signalSymbol ? resolveSymbolPresentation({ animal, channel: "public-signal", symbol: simplifyAttachedSignal(signalSymbol, Boolean((animal.vocalUntil || 0) > sim.tick)), vocal: Boolean((animal.vocalUntil || 0) > sim.tick) }) : null;
-  const signalPreview = signalResolved ? exactSymbolPreview(semanticBadgeMaterial(signalResolved), signalResolved.explanation, signalResolved.signature, { decorative: true }) : `<span class="observer-symbol-empty" aria-hidden="true">—</span>`;
+  const snapshot = instrumentMetricSnapshot(animal);
   return `<section class="observer-visual-overview" data-observer-overview>
-    <div class="observer-visual-presentation"><article title="${escapeHtml(face.label)}">${facePreview}</article><article title="${escapeHtml(signalSymbol?.label || "No public cue")}">${signalPreview}</article></div>
-    <div class="observer-visual-meter-grid">${observerVisualMeter("Health", animal.health, "♥", animal.health < 45 ? "is-danger" : "")}${observerVisualMeter("Hydration", animal.hydration, "💧", "is-water")}${observerVisualMeter("Accessible fuel", physical.accessibleFuel, "◒")}${observerVisualMeter("Burst capacity", physical.burst, "➶")}${observerVisualMeter("Aerobic headroom", physical.endurance, "◯")}${observerVisualMeter("Recovery burden", physical.recovery, "↻", "is-recovery")}</div>
-    ${observerDecisionChainHtml(animal)}
-    ${observerPrimaryForecastHtml(animal)}
-    <div class="observer-visual-actions">${observerLaboratoryLink("entity", "Open identity in Laboratory")}${observerLaboratoryLink("reference", "? Symbols")}</div>
+    <div class="observer-overview-physiology" aria-label="Metabolic reserves and fuel performance">
+      ${observerOverviewPhysiologyGroupHtml("Metabolic reserves", snapshot.metabolic, "metabolic")}
+      ${observerOverviewPhysiologyGroupHtml("Fuel and performance", snapshot.performance, "performance")}
+    </div>
   </section>`;
 }
 
@@ -12366,6 +12606,10 @@ function observerSocialVisualHtml(animal) {
   const guide = observerSocialVisualGuideHtml(animal), phenotype = biologicalPhenotype(animal);
   const socialMemoryEntries = Object.entries(animal.socialMemory || {});
   const relationships = (Array.isArray(animal.relationships) && animal.relationships.length ? animal.relationships : socialMemoryEntries.map(([targetId, record]) => ({ targetId, ...(record || {}) }))).slice(0, 6), socialMemories = socialMemoryEntries.map(([, record]) => record);
+  const groupMembers = animal.groupId ? sim.animals.filter((candidate) => candidate.alive && candidate.groupId === animal.groupId) : [];
+  const groupName = animal.groupId ? groupDisplayName(sim.groupIdentities, animal.groupId) : "Independent";
+  const socialRole = animal.groupLeaderId === animal.id ? "Leader" : animal.lifeStage === "dependent" ? "Dependent" : animal.groupId ? "Member" : "Independent";
+  const roleSymbol = socialRole === "Leader" ? "♛" : socialRole === "Dependent" ? "◌" : socialRole === "Member" ? "◇" : "•";
   const central = `<span class="observer-network-center" title="Selected animal">${escapeHtml(animal.id)}</span>`;
   const nodes = relationships.map((relation, index) => {
     const id = relation.targetId || relation.partnerId || relation.id || "?", kind = relation.kind || "remembered";
@@ -12375,8 +12619,9 @@ function observerSocialVisualHtml(animal) {
     return `<i class="observer-network-link is-${kindClass}" style="--network-angle:${angle}deg;--network-strength:${strength}" aria-hidden="true"></i><button type="button" data-social-node="${escapeHtml(id)}" class="observer-network-node is-${kindClass}" style="--network-angle:${angle}deg;--network-strength:${strength}" title="${escapeHtml(kind)} · ${escapeHtml(id)}"><span>${symbol}</span></button>`;
   }).join("");
   const relatives = relationships.filter(item => ["parent", "offspring", "sibling", "kinship", "dependency"].includes(item.kind)).length;
-  const recipients = animal.receivedSignals?.length || 0;
-  return `<section class="observer-social-visual" data-observer-social-visual>${guide.visual}<div class="observer-social-network" aria-label="Local remembered social network">${central}${nodes || `<span class="observer-network-empty">◇</span>`}</div><div class="observer-social-counters"><span title="Recognised animals">◎ <strong>${socialMemories.length}</strong></span><span title="Known relatives">♧ <strong>${relatives}</strong></span><span title="Social recognition">◉ <strong>${Math.round((phenotype.cognition.socialRecognition || 0) * 100)}%</strong></span><span title="Current signal recipients">📣 <strong>${recipients}</strong></span></div>${observerLaboratoryLink("society", "Open social history in Laboratory")}</section>`;
+  const messages = animal.receivedSignals?.length || 0, recognition = Math.round((phenotype.cognition.socialRecognition || 0) * 100);
+  const socialContext = `<section class="observer-social-context" aria-label="Current social life"><article class="is-group" title="Current organisation"><i aria-hidden="true">⌘</i><span><small>Group</small><strong>${escapeHtml(groupName)}</strong></span><b>${groupMembers.length || 1}</b></article><article class="is-role" title="Current social role"><i aria-hidden="true">${roleSymbol}</i><span><small>Role</small><strong>${escapeHtml(socialRole)}</strong></span></article><article class="is-recognition" title="Social recognition"><i aria-hidden="true">◉</i><span><small>Recognition</small><strong>${recognition}%</strong></span><em><b style="--observer-social-value:${clamp(recognition, 0, 100)}%"></b></em></article><article class="is-contacts" title="Remembered social contacts"><i aria-hidden="true">◎</i><span><small>Contacts</small><strong>${socialMemories.length}</strong></span></article></section>`;
+  return `<section class="observer-social-visual" data-observer-social-visual>${guide.visual}${socialContext}<div class="observer-social-network" aria-label="Local remembered social network">${central}${nodes || `<span class="observer-network-empty">◇</span>`}</div><div class="observer-social-counters"><span title="Known relatives">♧ <strong>${relatives}</strong></span><span title="Remembered relationships">◇ <strong>${relationships.length}</strong></span><span title="Messages received">↘ <strong>${messages}</strong></span><span title="Animals in current group">⌘ <strong>${groupMembers.length || 1}</strong></span></div>${observerLaboratoryLink("society", "Open social history in Laboratory")}</section>`;
 }
 
 function observerCommitmentVisualHtml(animal) {
@@ -12466,8 +12711,8 @@ function observerOverlayControls() {
   const animal = selectedAnimal();
   const checked = (input) => input.checked ? " checked" : "";
   const option = (key, input, label) => `<label><input type="checkbox" data-observer-overlay="${key}"${checked(input)}> ${label}</label>`;
-  const presentationHidden = graphicsSettings.entityPanelsVisible === false;
-  const presentationOption = `<label><input type="checkbox" data-observer-overlay="presentation"${presentationHidden ? " checked" : ""}> No panel and bubbles</label>`;
+  const presentationHidden = graphicsSettings.entityPublicPanelsVisible === false && graphicsSettings.entitySelectedPresentationVisible === false;
+  const presentationOption = `<label><input type="checkbox" data-observer-overlay="presentation"${presentationHidden ? " checked" : ""}> No identity/status panels</label>`;
   const contacts = animal?.sensoryBuffer || [];
   const calls = contacts.filter(item => item.channel === "hearing" && (item.signalKind || item.communicatedBy)).length + (animal?.receivedSignals?.length || 0);
   const intents = animal?.predatorIntentEstimates?.length || 0;

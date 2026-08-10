@@ -61,7 +61,8 @@ test("dynamic selected-panel typography is remeasured from the complete authored
 
 test("selected organism commitment and Laboratory expose metabolic state", () => {
   assert.match(app, /observerFuelOverviewHtml/);
-  assert.match(app, /function observerWholeAnimalOverviewHtml[\s\S]*observer-visual-meter-grid/);
+  assert.match(app, /function observerWholeAnimalOverviewHtml[\s\S]*observer-overview-physiology/);
+  assert.match(app, /function observerWholeAnimalOverviewHtml[\s\S]*instrumentMetricSnapshot/);
   assert.match(app, /function observerCommitmentVisualHtml[\s\S]*observer-physiology-badges/);
   for (const label of ["Health", "Hydration", "Accessible fuel", "Burst capacity", "Aerobic headroom", "Recovery burden"]) assert.match(app, new RegExp(label));
   assert.match(app, /ui\.selectedEnergy\.textContent/);
@@ -72,7 +73,8 @@ test("selected organism commitment and Laboratory expose metabolic state", () =>
 test("overlay tab reduces entity presentation to three coherent controls", () => {
   for (const label of ["Personal space", "Known world only", "No panel and bubbles"]) assert.match(app, new RegExp(label));
   assert.match(app, /data-observer-overlay="presentation"/);
-  assert.match(app, /entityPanelsVisible: !event\.target\.checked/);
+  assert.match(app, /entityPublicPanelsVisible: visible/);
+  assert.match(app, /entitySelectedPresentationVisible: visible/);
 });
 
 test("entity display guide documents the redesigned physiology overlays", () => {

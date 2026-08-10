@@ -211,7 +211,7 @@ test("density, selection, presentation tier and projected body size all use the 
   for (const id of ["E", "F"]) assert.equal(distant.get(id).detailLevel, "panel");
 });
 
-test("explicit viewport admission hides panels while selection only governs private attachments", () => {
+test("explicit viewport admission hides panels while caller channels govern cognition attachments", () => {
   const records = byId(resolveEntityConstellations([
     projected("offscreen", 100, 100, { viewportAdmitted: false, selected: true }),
     projected("selected", 400, 100, { selected: true, visibleChannels: ["identity", "thought", "prediction"] }),
@@ -221,8 +221,8 @@ test("explicit viewport admission hides panels while selection only governs priv
   assert.equal(records.get("selected").slots.thought.visible, true);
   assert.equal(records.get("selected").slots.prediction.visible, true);
   assert.equal(records.get("unselected").selected, false);
-  assert.equal(records.get("unselected").slots.thought.visible, false);
-  assert.equal(records.get("unselected").slots.prediction.visible, false);
+  assert.equal(records.get("unselected").slots.thought.visible, true);
+  assert.equal(records.get("unselected").slots.prediction.visible, true);
 });
 
 test("panelScale is continuous, deterministic, bounded and scales all panel geometry", () => {
@@ -254,7 +254,7 @@ test("focus metadata keeps related neighbours legible and dims unrelated constel
   assert.equal(records.get("C").dimmed, true);
 });
 
-test("every panel uses one scaled coordinate system with paired selected-only attachments", () => {
+test("every panel uses one scaled coordinate system with paired cognition attachments", () => {
   const records = byId(resolveEntityConstellations([projected("A", 10, 20, { selected: true }), projected("B", 400, 320, { selected: true })]));
   assert.deepEqual(records.get("A").slots, records.get("B").slots);
   const slots = records.get("A").slots;
@@ -300,7 +300,7 @@ test("thought and prediction channels are independently suppressible inside the 
   assert.deepEqual(thoughtOnly.anchorOffset, predictionOnly.anchorOffset);
 });
 
-test("selected private attachment bays remain reserved across channel appearance and disappearance", () => {
+test("cognition attachment bays remain reserved across channel appearance and disappearance", () => {
   const options = {
     viewportBounds: { left: 0, top: 10, right: 800, bottom: 600 },
     isolatedOffsetX: 0,
@@ -331,9 +331,9 @@ test("selected private attachment bays remain reserved across channel appearance
   const unselected = resolveEntityConstellations([
     projected("A", 80, 30, { visibleChannels: ["identity", "thought", "prediction"] })
   ], options)[0];
-  assert.equal(unselected.slots.thought.visible, false);
-  assert.equal(unselected.slots.prediction.visible, false);
-  assert.ok(unselected.footprint.top > neither.footprint.top, "unselected owners do not reserve private attachment space");
+  assert.equal(unselected.slots.thought.visible, true);
+  assert.equal(unselected.slots.prediction.visible, true);
+  assert.deepEqual(unselected.footprint, neither.footprint, "unselected cognition uses the same stable attachment footprint");
 });
 
 test("viewport clamping uses each item's continuously scaled panel footprint", () => {
