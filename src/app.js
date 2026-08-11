@@ -77,7 +77,7 @@ import { feedingAppetite } from "./feeding-appetite.js";
 import { FOG_STATE, fogKnowledgeState, withinLocalFogReveal } from "./knowledge-fog.js";
 import { buildNavMesh, buildNavMeshAsync } from "./navmesh.js";
 import { findNavPath } from "./navmesh-pathfinding.js";
-import { bodySupportedByNavmesh, createLocomotionState, createMovementRequest, LOCOMOTION_PROFILES, runLocomotionMinute } from "./locomotion-system.js";
+import { bodySupportedByNavmesh, createLocomotionState, createMovementRequest, LOCOMOTION_PROFILES, realtimeLocomotionHours, runLocomotionMinute } from "./locomotion-system.js";
 import { nearestSafeUnstuckDestination } from "./entity-unstuck.js";
 import { assessWorldBoundary, DEFAULT_EDGE_MARGIN, DEFAULT_RECOVERY_BUFFER, worldBoundaryClearance } from "./world-boundary.js";
 import { bodyRadius, collisionRadiusFor, interactionRadius, physicalContact } from "./interaction-spacing.js";
@@ -4678,7 +4678,7 @@ function createWorld(seed, setup = worldSetup, embodimentRequest = null, prepare
   const hexWorld = preparedHexWorld || new HexWorld(seed, worldSetup);
   // The shared mesh retains every dry non-tree face. Species-specific slope,
   // rock and current-strength gates are applied by routing and body support.
-  navigationMesh = preparedNavigationMesh || buildNavMesh(hexWorld, { maxSlope: 1, allowRocky: true });
+  navigationMesh = preparedNavigationMesh || buildNavMesh(hexWorld, { maxSlope: 1, maxWaterDepth: Infinity, allowRocky: true });
   terrainProfile = null;
   const occupied = new Set();
   const randomLandHex = (subject = null) => {
@@ -4987,7 +4987,10 @@ function tickWorldMinute() {
       const directPlayerId = directEmbodiedControlActive() ? sim.embodiment?.inhabitedAnimalId : null;
       const locomotionAnimals = directPlayerId ? ordered.filter((animal) => animal.id !== directPlayerId) : ordered;
       profiler.measure("continuous locomotion", () => runLocomotionMinute(locomotionAnimals, navigationMesh, {
-        elapsed: Math.max(0, ecologicalAdvance.minute - ecologicalAdvance.previousMinute),
+        // Locomotion profiles are calibrated in world-units per ecological
+        // hour. Passing the raw minute delta made every animal move 60× too
+        // far whenever the accelerated biological clock advanced.
+        elapsed: Math.max(0, ecologicalAdvance.minute - ecologicalAdvance.previousMinute) / MINUTES_PER_HOUR,
         terrainSpeedAt: (x, z, animal) => terrainTravelEffects(cellAt(x, z), animal).speed,
         neighboursFor: (animal) => nearbyAnimals(animal, 2.5),
         contactTargetFor: (id) => animalById(id) || sim.corpses.find((corpse) => corpse.id === id)
@@ -8794,7 +8797,7 @@ function updateEntityPosture(rendered, a, state, now, visual = a, groundRestProg
     if (!rest) continue;
     part.position.copy(rest.position); part.rotation.copy(rest.rotation); part.scale.copy(rest.scale);
   }
-  const locomotion = locomotionAnimation(a.speciesId, state.movement.stationary ? "idle" : state.action.posture, now, cellAt(a.x, a.z)), stride = Math.sin(now * (state.action.posture === "flee" || state.action.posture === "chase" ? .01 : .0032));
+  const locomotion = locomotionAnimation(a.speciesId, state.movement.stationary ? "idle" : state.action.posture, now, cellAt(a.x, a.z), { speed: state.movement.speed }), stride = Math.sin(now * (state.action.posture === "flee" || state.action.posture === "chase" ? .01 : .0032));
   if (locomotion.active) {
     for (const part of [parts.body, parts.head, parts.tail]) if (part) part.position.y += locomotion.bob;
     parts.body.position.y -= locomotion.bodyLower; parts.body.rotation.x += locomotion.bodyPitch; parts.body.rotation.z += locomotion.bodyRoll; parts.body.rotation.y += locomotion.bodyYaw; parts.body.scale.z *= locomotion.lengthScale;
@@ -8999,7 +9002,8 @@ function syncAnimalVisuals(now) {
     updateAnimalTransientParts(rendered, a, state, now);
     const groundRestProgress = groundedPostureProgress(rendered, a, state.action.posture, now);
     const scale = animalVisualScale(a), standingClearance = animalGroundOffset(scale, "idle"), restingClearance = animalGroundOffset(scale, "rest");
-    poseOnTerrain(rendered, visual, standingClearance + (restingClearance - standingClearance) * groundRestProgress);
+    const movementMedium = terrainMobilityAssessment(a, cellAt(visual.x, visual.z)).medium, flightLift = movementMedium === "flight" && !state.movement.stationary ? scale * 1.35 : 0;
+    poseOnTerrain(rendered, visual, standingClearance + (restingClearance - standingClearance) * groundRestProgress + flightLift);
     if (graphicsSettings.contactShadows && contactShadowCount < 1024) {
       contactShadowDummy.position.set(visual.x, terrainRenderHeight(visual.x, visual.z) + .025, visual.z);
       contactShadowDummy.quaternion.copy(frameScratch.slope);
@@ -9048,7 +9052,8 @@ function applyMove(a, p, actionKey, label, options = {}) {
   const radius = options.interactionRadius ?? (contactTarget ? interactionRadius(a, contactTarget, spacingKind) : .1);
   const requestId = `${actionKey}:${targetId || `${Number(p.x).toFixed(2)},${Number(p.z).toFixed(2)}`}`;
   const desiredPace = options.sprint ? "sprint" : actionKey === "stalk" ? "stalk" : "walk", paceSelection = selectAffordablePace(a, desiredPace), requestedSprint = paceSelection.selected === "sprint" && a.lifeStage !== "dependent";
-  const movementMode = paceSelection.selected === "sustainable-run" || paceSelection.selected === "fast-run" ? "run" : paceSelection.selected === "slow-walk" ? "walk" : paceSelection.selected;
+  if (paceSelection.selected === "stationary") { setBlockedAction(a, paceSelection.reason, { label: `unable to move while ${label}`, target: options.target, intendedOutcome: options.intendedOutcome }); return false; }
+  const movementMode = paceSelection.selected;
   a.movementRequest = createMovementRequest(requestId, p, { destinationSource: options.destinationSource, allowOutsideNavmesh: Boolean(options.allowOutsideNavmesh), perceivedTarget: options.perceivedTarget ? { targetId: options.perceivedTarget.targetId, x: options.perceivedTarget.x, z: options.perceivedTarget.z, vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0, confidence: options.perceivedTarget.confidence ?? 1, velocityConfidence: options.perceivedTarget.velocityConfidence || 0, evidenceId: options.perceivedTarget.evidenceId || options.perceivedTarget.id || null, observedTick: options.perceivedTarget.observedTick ?? sim.tick } : null, observationId: options.perceivedTarget?.evidenceId || options.perceivedTarget?.id || null, observationTick: options.perceivedTarget?.observedTick ?? sim.tick, predictedVelocity: options.perceivedTarget ? { vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0 } : null, velocityConfidence: options.perceivedTarget?.velocityConfidence || 0, interactionRadius: radius, urgency: requestedSprint ? 1 : .5, mode: movementMode, contactTargetId: targetId, contactIntent: options.contactIntent || null });
   if (paceSelection.downgraded) label = `${label}; continuing at ${paceSelection.selected.replaceAll("-", " ")} as burst capacity recovers`;
   setAction(a, actionKey, { label, target: options.target, destination: { x: p.x, z: p.z }, intendedOutcome: options.intendedOutcome, moving: true });
@@ -10219,13 +10224,13 @@ function advanceEmbodiedGameplay(deltaMs, now) {
     const profile = LOCOMOTION_PROFILES[animal.speciesId], horizon = 4.5, enteringDirectControl = animal.movementRequest?.id !== "embodied-camera-relative";
     animal.movementRequest = createMovementRequest("embodied-camera-relative", { x: clamp(animal.x + movement.x * horizon, -HALF + 1, HALF - 1), z: clamp(animal.z + movement.z * horizon, -HALF + 1, HALF - 1) }, { destinationSource: "player-camera-relative", interactionRadius: .08, urgency: frame.sprint ? 1 : .55, mode: frame.sprint && animal.capabilities?.canSprint !== false && animal.lifeStage !== "dependent" ? "sprint" : "walk" });
     animal.locomotion ||= createLocomotionState(animal, profile); if (enteringDirectControl) { Object.assign(animal.locomotion, { x: animal.x, z: animal.z, heading: animal.orientation || 0, vx: 0, vz: 0 }); gameplayCameraState.lastManualAt = now / 1000; } const beforeDistance = animal.locomotion.distanceTravelled || 0, beforeTurning = animal.locomotion.turningEffort || 0;
-    runLocomotionMinute([animal], navigationMesh, { elapsed: dt * 1.75, substeps: 2, alignmentSlowAngle: Math.PI * 1.15, profileFor: () => ({ ...profile, turnRate: Math.max(8, profile.turnRate) }), terrainSpeedAt: (x, z, actor) => terrainTravelEffects(cellAt(x, z), actor).speed, neighboursFor: actor => nearbyAnimals(actor, 2.5), contactTargetFor: id => animalById(id) || sim.corpses.find(corpse => corpse.id === id) });
+    runLocomotionMinute([animal], navigationMesh, { elapsed: realtimeLocomotionHours(dt, 1.75), substeps: 2, alignmentSlowAngle: Math.PI * 1.15, profileFor: () => ({ ...profile, turnRate: Math.max(8, profile.turnRate) }), terrainSpeedAt: (x, z, actor) => terrainTravelEffects(cellAt(x, z), actor).speed, neighboursFor: actor => nearbyAnimals(actor, 2.5), contactTargetFor: id => animalById(id) || sim.corpses.find(corpse => corpse.id === id) });
     animal.playerMotionPending ||= { distance: 0, turning: 0 }; animal.playerMotionPending.distance += Math.max(0, animal.locomotion.distanceTravelled - beforeDistance); animal.playerMotionPending.turning += Math.max(0, animal.locomotion.turningEffort - beforeTurning); animal.visualMove = null;
     if (animal.actionState?.key !== "travel") setAction(animal, "travel", { label: frame.sprint ? "sprinting under direct control" : "moving under direct control", intendedOutcome: "move in the camera-relative direction", moving: true });
   } else if (animal.movementRequest?.id === "embodied-camera-relative") { animal.movementRequest = null; animal.routeState = null; if (animal.locomotion) animal.locomotion.vx = animal.locomotion.vz = 0; }
   else if (running && animal.movementRequest) {
     const profile = LOCOMOTION_PROFILES[animal.speciesId]; animal.locomotion ||= createLocomotionState(animal, profile); const beforeDistance = animal.locomotion.distanceTravelled || 0, beforeTurning = animal.locomotion.turningEffort || 0;
-    runLocomotionMinute([animal], navigationMesh, { elapsed: dt * 1.45, substeps: 2, profileFor: () => profile, terrainSpeedAt: (x, z, actor) => terrainTravelEffects(cellAt(x, z), actor).speed, neighboursFor: actor => nearbyAnimals(actor, 2.5), contactTargetFor: id => animalById(id) || sim.corpses.find(corpse => corpse.id === id) });
+    runLocomotionMinute([animal], navigationMesh, { elapsed: realtimeLocomotionHours(dt, 1.45), substeps: 2, profileFor: () => profile, terrainSpeedAt: (x, z, actor) => terrainTravelEffects(cellAt(x, z), actor).speed, neighboursFor: actor => nearbyAnimals(actor, 2.5), contactTargetFor: id => animalById(id) || sim.corpses.find(corpse => corpse.id === id) });
     animal.playerMotionPending ||= { distance: 0, turning: 0 }; animal.playerMotionPending.distance += Math.max(0, animal.locomotion.distanceTravelled - beforeDistance); animal.playerMotionPending.turning += Math.max(0, animal.locomotion.turningEffort - beforeTurning); animal.visualMove = null;
   }
   const speed = Math.hypot(animal.locomotion?.vx || 0, animal.locomotion?.vz || 0), preferredYaw = speed > .01 ? Math.atan2(animal.locomotion.vx, animal.locomotion.vz) : Math.atan2(Math.sin(Math.PI / 2 - (animal.orientation || 0)), Math.cos(Math.PI / 2 - (animal.orientation || 0)));
@@ -10895,7 +10900,7 @@ async function activateSnapshotAsync(snapshot, label) {
     return true;
   } catch (error) {
     if (worldGenerationController === controller && previous.sim) {
-      setWorldSetup(previous.setup); disposeWorldPresentation(); navigationMesh = buildNavMesh(previous.sim.hexWorld, { maxSlope: 1, allowRocky: true });
+      setWorldSetup(previous.setup); disposeWorldPresentation(); navigationMesh = buildNavMesh(previous.sim.hexWorld, { maxSlope: 1, maxWaterDepth: Infinity, allowRocky: true });
       commitGeneratedWorld(previous.sim, { label: error?.name === "AbortError" ? "World load cancelled" : "World load failed; previous world restored", saveSlotName: previous.slot, shouldRun: previous.running });
     }
     throw error;
@@ -11063,7 +11068,7 @@ async function loadSeedWorldAsync(seed, setup = worldSetup, embodimentRequest = 
     return true;
   } catch (error) {
     if (worldGenerationController === controller && previous.sim) {
-      setWorldSetup(previous.setup); disposeWorldPresentation(); navigationMesh = buildNavMesh(previous.sim.hexWorld, { maxSlope: 1, allowRocky: true });
+      setWorldSetup(previous.setup); disposeWorldPresentation(); navigationMesh = buildNavMesh(previous.sim.hexWorld, { maxSlope: 1, maxWaterDepth: Infinity, allowRocky: true });
       commitGeneratedWorld(previous.sim, { label: error?.name === "AbortError" ? "World generation cancelled" : "World generation failed; previous world restored", saveSlotName: previous.slot, shouldRun: previous.running });
     }
     if (error?.name !== "AbortError") { addEvent(`World generation failed: ${error?.message || "unknown error"}`); updateUI(); }

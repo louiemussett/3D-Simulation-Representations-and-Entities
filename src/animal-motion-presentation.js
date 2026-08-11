@@ -70,14 +70,14 @@ export const SPECIES_LOCOMOTION = Object.freeze({
   "highland-grazer": gait("high-step", "careful high mountain step", .0041, .06, "graze"),
   "armoured-browser": gait("heavy-trot", "weighty rhinoceros walk and trot", .0035, .035, "browse"),
   "pack-breaker": gait("lope", "sloping hyena lope", .0046, .043, "crush-tear"),
-  "carrion-runner": gait("waddle", "grounded vulture waddle", .005, .034, "peck", false),
+  "carrion-runner": gait("flight", "vulture launch and soaring travel", .005, .034, "peck", false),
   "waterline-grazer": gait("low-trot", "low capybara walk and trot", .0048, .045, "graze"),
   "brush-nibbler": gait("bound", "long hare bound", .0064, .135, "nibble", false),
   "waterline-ambusher": gait("belly-crawl", "low crocodilian belly crawl", .003, .018, "swallow"),
   "northern-shaggy-grazer": gait("heavy-plod", "compact musk-ox plod", .0031, .034, "graze"),
   "highland-prowler": gait("stealth-bound", "soft mountain-cat stalk and bound", .0045, .055, "tear"),
   "little-opportunist": gait("shuffle", "dexterous raccoon shuffle", .0053, .043, "mixed-forage"),
-  "cold-country-scavenger": gait("waddle", "grounded bearded-vulture waddle", .0048, .032, "peck", false),
+  "cold-country-scavenger": gait("flight", "bearded-vulture launch and soaring travel", .0048, .032, "peck", false),
   "sunscale-ambusher": gait("serpentine", "serpentine python crawl", .0033, .012, "swallow"),
   "shieldback-colony": gait("shell-plod", "slow tortoise crawl", .0022, .018, "crop", false),
   "wild-boar": gait("rooting-trot", "short forceful boar trot", .0047, .044, "root"),
@@ -89,7 +89,7 @@ export const SPECIES_LOCOMOTION = Object.freeze({
 const genericGait = gait("elastic-walk", "ordinary walk", .0032, .04, "graze");
 export const speciesLocomotionProfile = subject => SPECIES_LOCOMOTION[typeof subject === "string" ? subject : subject?.speciesId] || genericGait;
 
-export function locomotionAnimation(speciesOrPosture = "idle", postureOrNow = 0, possibleNow = 0, terrain = {}) {
+export function locomotionAnimation(speciesOrPosture = "idle", postureOrNow = 0, possibleNow = 0, terrain = {}, movement = {}) {
   // Keep the historical (posture, now) call valid for small presentation tools.
   const legacy = typeof postureOrNow === "number";
   const speciesId = legacy ? null : speciesOrPosture;
@@ -100,11 +100,13 @@ export function locomotionAnimation(speciesOrPosture = "idle", postureOrNow = 0,
   const stalking = posture === "stalk" && profile.stalk;
   const urgent = posture === "flee" || posture === "chase";
   const terrainLoad = terrain?.wetland || terrain?.landCover === "swamp" || terrain?.landCover === "woodedSwamp" ? .82 : terrain?.rocky ? .9 : 1;
-  const frequency = stalking ? .0022 : profile.cadence * (urgent ? 2.05 : 1) * terrainLoad;
+  const speedScale = Math.max(.35, Math.min(2.2, .45 + (Number(movement.speed) || 0) * .7));
+  const frequency = (stalking ? .0022 : profile.cadence * (urgent ? 2.05 : 1) * terrainLoad) * speedScale;
   const wave = Math.sin(nowMs * frequency), counter = Math.cos(nowMs * frequency), positive = Math.max(0, wave);
   const amplitude = profile.amplitude * (urgent ? 1.25 : 1);
   const motion = { active: true, gait: stalking ? "ground-stalk" : profile.family, gaitLabel: stalking ? `lowered ${profile.label}` : profile.label, bob: Math.abs(wave) * amplitude, frequency, bodyPitch: 0, bodyRoll: 0, bodyYaw: 0, headPitch: 0, headYaw: 0, headBob: 0, bodyLower: 0, headLower: 0, headForward: 0, lengthScale: 1 };
-  if (stalking) Object.assign(motion, { bob: Math.abs(wave) * .009, bodyLower: .15, headLower: .12, headForward: .07, bodyPitch: -.055 + wave * .012, headPitch: .035, lengthScale: 1.04 });
+  if (profile.family === "flight") Object.assign(motion, { gait: "soaring-flight", bob: wave * .018, bodyPitch: -.08 + counter * .025, bodyRoll: wave * .12, headPitch: .06, lengthScale: 1.06 });
+  else if (stalking) Object.assign(motion, { bob: Math.abs(wave) * .009, bodyLower: .15, headLower: .12, headForward: .07, bodyPitch: -.055 + wave * .012, headPitch: .035, lengthScale: 1.04 });
   else if (["hop", "bound", "spring-run", "stealth-bound"].includes(profile.family)) Object.assign(motion, { bob: positive ** 1.45 * amplitude, bodyPitch: counter * (profile.family === "bound" ? .16 : .1), headPitch: -counter * .07, lengthScale: 1 + Math.abs(counter) * .035 });
   else if (["heavy-plod", "heavy-trot", "heavy-amble"].includes(profile.family)) Object.assign(motion, { bob: Math.abs(wave) * amplitude, bodyRoll: counter * .035, headBob: -Math.abs(wave) * .018 });
   else if (["waddle", "shuffle", "rolling-pace"].includes(profile.family)) Object.assign(motion, { bodyRoll: wave * (profile.family === "rolling-pace" ? .075 : .095), headYaw: -wave * .06 });

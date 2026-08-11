@@ -5,6 +5,8 @@ import { SPECIES, SPECIES_IDS, eatsMeat } from "./species-registry.js";
 import { biologicalPhenotype } from "./biological-phenotypes.js";
 import { mobilityStrengthIndex, terrainMobilityAssessment } from "./terrain-mobility.js";
 export const LOCOMOTION_SUBSTEPS = 8;
+export const LOCOMOTION_TIME_UNIT = "ecological-hour";
+export const realtimeLocomotionHours = (seconds, scale = 1) => Math.max(0, Number(seconds) || 0) * Math.max(0, Number(scale) || 0);
 const BASE_LOCOMOTION_PROFILES = {
   grazer: { maxSpeed: .92, sprintSpeed: 1.55, acceleration: 2.1, braking: 2.8, turnRate: 2.5, bodyRadius: .27, separationWeight: .85, predictionCap: 1.6 },
   hunter: { maxSpeed: 1.02, sprintSpeed: 1.72, acceleration: 2.35, braking: 3.05, turnRate: 2.8, bodyRadius: .3, separationWeight: .72, predictionCap: 2.1 }
@@ -17,7 +19,20 @@ export const LOCOMOTION_PROFILES = Object.freeze(Object.fromEntries(SPECIES_IDS.
 })));
 export function createLocomotionState(animal, profile = LOCOMOTION_PROFILES[animal.speciesId]) { return { x: animal.x, z: animal.z, vx: 0, vz: 0, heading: animal.orientation || 0, angularVelocity: 0, collisionRadius: collisionRadiusFor(animal, profile.bodyRadius), mode: "idle", activeMode: "idle", completedMode: null, completedRequestId: null, completedContactIntent: null, arrivalState: "idle", distanceTravelled: 0, turningEffort: 0 }; }
 export function createMovementRequest(id, destination, options = {}) { return { id, destination: { x: destination.x, z: destination.z }, destinationSource: options.destinationSource || "world", allowOutsideNavmesh: Boolean(options.allowOutsideNavmesh), perceivedTarget: options.perceivedTarget || null, observationId: options.observationId || options.perceivedTarget?.evidenceId || null, observationTick: options.observationTick ?? options.perceivedTarget?.observedTick ?? null, predictedVelocity: options.predictedVelocity || (options.perceivedTarget ? { vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0 } : null), velocityConfidence: options.velocityConfidence ?? options.perceivedTarget?.velocityConfidence ?? 0, interactionRadius: options.interactionRadius || 0, urgency: options.urgency || 0, mode: options.mode || "walk", completionCondition: options.completionCondition || "arrival", contactTargetId: options.contactTargetId || null, contactIntent: options.contactIntent || null }; }
-function speedForMode(profile, mode) { if (mode === "sprint") return profile.sprintSpeed; if (mode === "run") return Math.min(profile.sprintSpeed * .78, profile.maxSpeed * 1.34); if (mode === "stalk") return profile.maxSpeed * .58; return profile.maxSpeed; }
+function speedForMode(profile, mode) {
+  if (mode === "stationary") return 0;
+  if (mode === "slow-walk") return profile.maxSpeed * .42;
+  if (mode === "stalk") return profile.maxSpeed * .48;
+  if (mode === "sustainable-run" || mode === "run") return Math.min(profile.sprintSpeed * .72, profile.maxSpeed * 1.28);
+  if (mode === "fast-run") return Math.min(profile.sprintSpeed * .9, profile.maxSpeed * 1.52);
+  if (mode === "sprint") return profile.sprintSpeed;
+  return profile.maxSpeed;
+}
+function effectiveProfile(animal, profile) {
+  const speciesSpeed = Math.max(.01, SPECIES[animal.speciesId]?.speed || 1), capability = animal.capabilities || {};
+  const condition = capability.canTravel === false ? 0 : Math.max(0, Math.min(1.35, Number(capability.speed ?? speciesSpeed) / speciesSpeed));
+  return { ...profile, maxSpeed: profile.maxSpeed * condition, sprintSpeed: profile.sprintSpeed * condition, acceleration: profile.acceleration * Math.max(.25, condition), braking: profile.braking * Math.max(.5, Math.sqrt(condition || .01)) };
+}
 export function predictedRequestDestination(request, origin, profile, elapsed = 0) {
   if (!request?.perceivedTarget || request.destinationSource !== "perceived-evidence") return request?.destination || null;
   const evidence = { ...request.perceivedTarget, ...(request.predictedVelocity || {}), velocityConfidence: request.velocityConfidence };
@@ -39,11 +54,14 @@ export function ensureRoute(animal, mesh) {
   return animal.routeState;
 }
 export function runLocomotionMinute(animals, mesh, options = {}) {
-  const alive = animals.filter((a) => a.alive), substeps = options.substeps || LOCOMOTION_SUBSTEPS, elapsed = Math.max(0, options.elapsed == null ? 1 : Number(options.elapsed) || 0), dt = elapsed / substeps;
+  const alive = animals.filter((a) => a.alive), elapsed = Math.max(0, options.elapsed == null ? 1 : Number(options.elapsed) || 0), fastest = alive.reduce((value, animal) => Math.max(value, LOCOMOTION_PROFILES[animal.speciesId]?.sprintSpeed || 0), 0), sweptSteps = Math.ceil(fastest * elapsed / Math.max(.08, mesh.worldRadius * .28)), substeps = Math.min(40, Math.max(options.substeps || LOCOMOTION_SUBSTEPS, sweptSteps)), dt = elapsed / substeps;
+  if (dt <= 0) { for (const animal of alive) { animal.locomotion ||= createLocomotionState(animal); animal.locomotion.vx = animal.locomotion.vz = animal.locomotion.speed = 0; } return; }
   for (let step = 0; step < substeps; step++) for (const animal of alive) {
-    const profile = options.profileFor?.(animal) || LOCOMOTION_PROFILES[animal.speciesId]; animal.locomotion ||= createLocomotionState(animal, profile);
+    const baseProfile = options.profileFor?.(animal) || LOCOMOTION_PROFILES[animal.speciesId], profile = effectiveProfile(animal, baseProfile); animal.locomotion ||= createLocomotionState(animal, profile);
     const request = animal.movementRequest;
-    const neighbours = options.neighboursFor?.(animal) || alive, collisionActor = { ...animal, ...animal.locomotion, bodyRadius: animal.locomotion.collisionRadius }, neighbourStates = neighbours.map((o) => ({ ...o, ...(o.locomotion || {}), bodyRadius: o.locomotion?.collisionRadius ?? LOCOMOTION_PROFILES[o.speciesId]?.bodyRadius }));
+    const collisionActor = { ...animal, ...animal.locomotion, bodyRadius: animal.locomotion.collisionRadius }, external = options.neighboursFor?.(animal) || [], candidateRange = Math.max(mesh.worldRadius * 1.4, profile.bodyRadius * 4 + speedForMode(profile, request?.mode) * dt * 2), neighbours = new Map();
+    for (const other of [...alive, ...external]) { const state = other.locomotion || other; if (other.id !== animal.id && Math.hypot(state.x - animal.locomotion.x, state.z - animal.locomotion.z) <= candidateRange) neighbours.set(other.id, other); }
+    const neighbourStates = [...neighbours.values()].map((o) => ({ ...o, ...(o.locomotion || {}), bodyRadius: o.locomotion?.collisionRadius ?? LOCOMOTION_PROFILES[o.speciesId]?.bodyRadius }));
     if (request) request.destination = predictedRequestDestination(request, animal.locomotion, profile, step * dt) || request.destination;
     const route = ensureRoute(animal, mesh);
     if (!request || !route?.points.length) {

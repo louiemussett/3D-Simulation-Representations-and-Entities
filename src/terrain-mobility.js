@@ -33,6 +33,8 @@ export const TERRAIN_MOBILITY = Object.freeze({
 });
 
 const generic = profile("ordinary slope travel", .2, .5, 1);
+const AERIAL_SPECIES = new Set(["carrion-runner", "cold-country-scavenger"]);
+const WATER_DEPTH_LIMIT = Object.freeze({ "waterline-grazer": 1.4, "waterline-ambusher": Infinity });
 
 export function terrainMobilityFor(subject) {
   const id = typeof subject === "string" ? subject : subject?.speciesId;
@@ -53,17 +55,17 @@ export function mobilityStrengthIndex(subject = {}) {
 }
 
 export function terrainMobilityAssessment(subject, cell = {}) {
-  const mobility = terrainMobilityFor(subject), strength = mobilityStrengthIndex(subject), slope = clamp(cell.slope);
+  const id = typeof subject === "string" ? subject : subject?.speciesId, mobility = terrainMobilityFor(subject), strength = mobilityStrengthIndex(subject), slope = clamp(cell.slope), waterDepth = Math.max(0, Number(cell.waterDepth) || 0), aerial = AERIAL_SPECIES.has(id), waterLimit = WATER_DEPTH_LIMIT[id] ?? .32, swimming = !aerial && waterDepth > .32 && waterDepth <= waterLimit;
   const effectiveMaximum = mobility.comfortableSlope + (mobility.maximumSlope - mobility.comfortableSlope) * strength;
   const beyondComfort = Math.max(0, slope - mobility.comfortableSlope);
   const range = Math.max(.01, mobility.maximumSlope - mobility.comfortableSlope);
   const demand = clamp(beyondComfort / range);
-  const rockBlocked = Boolean(cell.rocky) && !mobility.rockPassable;
-  const allowed = !rockBlocked && slope <= effectiveMaximum + 1e-9;
-  const energyMultiplier = 1 + Math.pow(demand, 1.35) * mobility.strengthDemand * 1.8;
-  const speedMultiplier = clamp(1 / (1 + Math.pow(demand, 1.2) * (1.05 + mobility.strengthDemand * .45)), .24, 1);
-  const reason = rockBlocked ? "species cannot use exposed rock" : slope > effectiveMaximum ? "slope exceeds current strength" : demand > .65 ? "demanding climb" : demand > 0 ? "moderate climb" : "comfortable grade";
-  return Object.freeze({ ...mobility, slope, strength, effectiveMaximum, demand, allowed, energyMultiplier, speedMultiplier, reason });
+  const rockBlocked = !aerial && Boolean(cell.rocky) && !mobility.rockPassable, waterBlocked = !aerial && waterDepth > waterLimit;
+  const allowed = aerial || (!rockBlocked && !waterBlocked && slope <= effectiveMaximum + 1e-9);
+  const energyMultiplier = aerial ? 1.18 : swimming ? 1.38 : 1 + Math.pow(demand, 1.35) * mobility.strengthDemand * 1.8;
+  const speedMultiplier = aerial ? 1.08 : swimming ? (id === "waterline-ambusher" ? .78 : .72) : clamp(1 / (1 + Math.pow(demand, 1.2) * (1.05 + mobility.strengthDemand * .45)), .24, 1);
+  const reason = aerial ? "low flight" : waterBlocked ? "water exceeds this species' swimming depth" : swimming ? "swimming" : rockBlocked ? "species cannot use exposed rock" : slope > effectiveMaximum ? "slope exceeds current strength" : demand > .65 ? "demanding climb" : demand > 0 ? "moderate climb" : "comfortable grade";
+  return Object.freeze({ ...mobility, slope, strength, effectiveMaximum, demand, allowed, energyMultiplier, speedMultiplier, reason, medium: aerial ? "flight" : swimming ? "swim" : "ground", waterDepth, waterLimit });
 }
 
 export function terrainMobilitySummary(subject) {

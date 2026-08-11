@@ -11,6 +11,7 @@ export function predictIntercept(origin, evidence, speed, cap = 2) {
 }
 
 export function steeringStep(state, target, profile, dt, options = {}) {
+  if (!(dt > 0)) return { ...state, vx: 0, vz: 0, speed: 0, angularVelocity: 0, arrived: false, braking: true, alignment: 0 };
   const dx = target.x - state.x, dz = target.z - state.z, distance = Math.hypot(dx, dz);
   const stop = Math.max(0, options.stoppingRadius ?? 0), remaining = Math.max(0, distance - stop);
   const desiredHeading = distance > .00001 ? Math.atan2(dz, dx) : state.heading;

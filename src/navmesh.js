@@ -16,7 +16,7 @@ export function analyticHexPortal(mesh, fromId, toId) {
 export function buildNavMesh(world, options = {}) {
   const polygons = new Map(), cellToPolygon = new Map();
   for (const cell of world.cells) if ((options.traversable || defaultTraversable)(cell, options)) {
-    const polygon = { id: cell.id, cellId: cell.id, center: { x: cell.x, z: cell.z }, neighbours: [], slope: cell.slope || 0, rocky: Boolean(cell.rocky), wetland: Boolean(cell.wetland), landform: cell.landform || null, terrainCost: 1 + (cell.slope || 0) * 1.8 + (cell.wetland ? .5 : 0), clearance: world.radius * .82 };
+    const polygon = { id: cell.id, cellId: cell.id, center: { x: cell.x, z: cell.z }, neighbours: [], slope: cell.slope || 0, rocky: Boolean(cell.rocky), wetland: Boolean(cell.wetland), waterDepth: cell.waterDepth || 0, landform: cell.landform || null, terrainCost: 1 + (cell.slope || 0) * 1.8 + (cell.wetland ? .5 : 0), clearance: world.radius * .82 };
     polygons.set(polygon.id, polygon); cellToPolygon.set(cell.id, polygon.id);
   }
   for (const polygon of polygons.values()) {
@@ -39,7 +39,7 @@ export async function buildNavMeshAsync(world, options = {}, { signal = null, on
   for (let index = 0; index < world.cells.length; index += 1) {
     const cell = world.cells[index];
     if ((options.traversable || defaultTraversable)(cell, options)) {
-      const polygon = { id: cell.id, cellId: cell.id, center: { x: cell.x, z: cell.z }, neighbours: [], slope: cell.slope || 0, rocky: Boolean(cell.rocky), wetland: Boolean(cell.wetland), landform: cell.landform || null, terrainCost: 1 + (cell.slope || 0) * 1.8 + (cell.wetland ? .5 : 0), clearance: world.radius * .82 };
+      const polygon = { id: cell.id, cellId: cell.id, center: { x: cell.x, z: cell.z }, neighbours: [], slope: cell.slope || 0, rocky: Boolean(cell.rocky), wetland: Boolean(cell.wetland), waterDepth: cell.waterDepth || 0, landform: cell.landform || null, terrainCost: 1 + (cell.slope || 0) * 1.8 + (cell.wetland ? .5 : 0), clearance: world.radius * .82 };
       polygons.set(polygon.id, polygon); cellToPolygon.set(cell.id, polygon.id);
     }
     if ((index & 127) === 127) await checkpoint(index + 1);
