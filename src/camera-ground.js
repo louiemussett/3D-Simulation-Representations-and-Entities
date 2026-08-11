@@ -1,8 +1,13 @@
 const distance3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
-export function constrainCameraToTerrain(camera, target, heightAt, { cameraClearance = 2.4, targetClearance = .12 } = {}) {
+export function constrainCameraToTerrain(camera, target, heightAt, { cameraClearance = 2.4, targetClearance = .12, preserveOrbit = true } = {}) {
   const targetGround = heightAt(target.x, target.z);
+  const previousTargetY = Number(target.y) || 0;
   target.y = targetGround + targetClearance;
+  // OrbitControls pans x/z before this terrain correction. Move the camera by
+  // the same vertical delta so crossing a mountain does not collapse the
+  // camera-target vector and make rotation or tilt appear locked.
+  if (preserveOrbit) camera.y += target.y - previousTargetY;
   const cameraGround = heightAt(camera.x, camera.z);
   camera.y = Math.max(camera.y, cameraGround + cameraClearance);
   return { targetGround, cameraGround, clearance: camera.y - cameraGround };

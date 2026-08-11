@@ -27,3 +27,21 @@ test("fine height variation changes local terrain without changing feature count
   assert.equal(granular.features.length, smooth.features.length);
   assert.notEqual(granular.elevationAt(11.25, -8.75), smooth.elevationAt(11.25, -8.75));
 });
+
+test("mountain controls create broad rounded, pyramidal and alpine forms", () => {
+  const settings = { relief: 1, mountains: 1, roundedMountains: 1, pyramidalMountains: 1, alpineRanges: 1, mountainBreadth: 1.4, summitSharpness: 1, mountainRangeLength: 1.4, mountainRangeComplexity: 1, hills: 0, valleys: 0, ridges: 0, plateaus: 0, roughness: 0 };
+  const field = createTerrainRegionField(912, 300, settings), mountains = field.features.filter(feature => feature.kind === "mountain");
+  assert.deepEqual(new Set(mountains.map(feature => feature.profile)), new Set(["rounded-massif", "pyramidal-peak", "alpine-range"]));
+  assert.ok(mountains.every(feature => feature.width >= 30), "mountain bases span at least ten percent of this map");
+  assert.ok(mountains.find(feature => feature.profile === "alpine-range").summits.length >= 3);
+});
+
+test("individual mountain families and breadth remain user-controllable", () => {
+  const base = { relief: 1, mountains: 1, roundedMountains: 0, pyramidalMountains: 0, alpineRanges: 1, hills: 0, valleys: 0, ridges: 0, plateaus: 0, roughness: 0 };
+  const narrow = createTerrainRegionField(88, 220, { ...base, mountainBreadth: .6, summitSharpness: 2, mountainRangeLength: .6, mountainRangeComplexity: .5 });
+  const broad = createTerrainRegionField(88, 220, { ...base, mountainBreadth: 2, summitSharpness: .5, mountainRangeLength: 2, mountainRangeComplexity: 2 });
+  assert.ok(narrow.features.every(feature => feature.profile === "alpine-range"));
+  assert.ok(broad.features[0].width > narrow.features[0].width * 2);
+  assert.ok(broad.features[0].summits.length > narrow.features[0].summits.length);
+  assert.notEqual(broad.elevationAt(broad.features[0].cx + broad.features[0].width, broad.features[0].cz), narrow.elevationAt(narrow.features[0].cx + narrow.features[0].width, narrow.features[0].cz));
+});

@@ -8,6 +8,12 @@ test("camera and orbit target cannot pass through rendered ground", () => {
   assert.equal(camera.y, 6); assert.equal(target.y, 1.1); assert.equal(result.clearance, 2);
 });
 
+test("terrain-following target preserves the orbit tilt across a mountain", () => {
+  const camera = { x: 8, y: 12, z: 8 }, target = { x: 0, y: 2, z: 0 }, before = 10;
+  constrainCameraToTerrain(camera, target, () => 22, { cameraClearance: 2, targetClearance: 0 });
+  assert.equal(camera.y - target.y, before);
+});
+
 test("near-ground camera cannot trigger strategic or distant presentation", () => {
   const metrics = cameraPresentationMetrics({ x: 0, y: 3, z: 300 }, { x: 0, y: 0, z: 0 }, 2);
   assert.equal(metrics.strategic, false); assert.equal(metrics.presentationDistance, 8);
