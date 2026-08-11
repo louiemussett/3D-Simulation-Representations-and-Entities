@@ -36,7 +36,7 @@ import { validateMap } from "./map-validation.js";
 import { experimentRecord, summarizeExperiment } from "./experiment-metrics.js";
 import { DEFAULT_FRAME_TICK_BUDGET_MS, runBudgetedTicks, shouldRefreshPresentation } from "./tick-budget.js";
 import { continuingMotionTarget, traversableNeighbourCells } from "./movement-candidates.js";
-import { indexedFanSurfaceHeight, stableGroundSupport } from "./terrain-surface.js";
+import { indexedFanSurfaceHeight, linearRgbFromSrgbBytes, sharedHexCornerHeight, srgbChannelToLinear, stableGroundSupport } from "./terrain-surface.js";
 import { cameraPresentationMetrics, cinemaPopulationPresentation, constrainCameraToTerrain, followTargetPreservingOrbit, usesAggregateAnimalMarkers } from "./camera-ground.js";
 import { cameraFaultRequiresRecovery, finiteMovieCameraPose, movieCameraWatchdogDecision } from "./movie-camera-watchdog.js";
 import { createGameplayCameraState, updateGameplayCamera } from "./gameplay-camera.js";
@@ -9269,9 +9269,9 @@ function updateTerrainColours(cellIds = null) {
   groundColours.clearUpdateRanges?.();
   for (const id of ids) {
     const cell = sim.cells[id]; if (!cell) continue;
-    const [r, g, b] = visualTerrainColour(cell);
+    const [r, g, b] = linearRgbFromSrgbBytes(visualTerrainColour(cell));
     const firstVertex = id * 7;
-    for (let vertex = 0; vertex < 7; vertex += 1) groundColours.setXYZ(firstVertex + vertex, r / 255, g / 255, b / 255);
+    for (let vertex = 0; vertex < 7; vertex += 1) groundColours.setXYZ(firstVertex + vertex, r, g, b);
   }
   for (let cursor = 0; cursor < ids.length;) {
     const first = ids[cursor]; let last = first; cursor += 1;
@@ -9577,7 +9577,7 @@ function riverRouteMeshFor(world, route) {
   const positions = [], indices = [], colours = [];
   const colourFor = (cell) => {
     const colour = cell.flowRegime === "perennial" ? [0.18, .56, .86] : cell.flowRegime === "ephemeral" ? [.49, .76, .82] : [.31, .68, .9], depth = clamp(cell.riverSizeScore || 0, 0, 1) * .12;
-    return [Math.max(0, colour[0] - depth), Math.max(0, colour[1] - depth * .45), Math.min(1, colour[2] + depth * .25)];
+    return [Math.max(0, colour[0] - depth), Math.max(0, colour[1] - depth * .45), Math.min(1, colour[2] + depth * .25)].map(srgbChannelToLinear);
   };
   const addRibbon = (points, laneOffset, widthFactor) => {
     const left = [], right = [], pointColours = [], miterLimit = world.riverWidthStats?.miterLimit || 2.5;
@@ -9630,13 +9630,13 @@ function buildTerrainWork() {
   const positions = new Float32Array(cellCount * verticesPerCell * 3), uvs = new Float32Array(cellCount * verticesPerCell * 2), colours = new Float32Array(cellCount * verticesPerCell * 3), offsets = new Uint32Array(cellCount);
   const IndexArray = cellCount * verticesPerCell > 65535 ? Uint32Array : Uint16Array, indices = new IndexArray(cellCount * 18);
   for (const c of world.cells) {
-    const baseVertex = c.id * verticesPerCell, basePosition = baseVertex * 3, baseUv = baseVertex * 2, baseIndex = c.id * 18, corners = world.corners(c), [red, green, blue] = habitatColourRgb(c);
+    const baseVertex = c.id * verticesPerCell, basePosition = baseVertex * 3, baseUv = baseVertex * 2, baseIndex = c.id * 18, corners = world.corners(c), [red, green, blue] = linearRgbFromSrgbBytes(habitatColourRgb(c));
     offsets[c.id] = baseVertex;
     positions[basePosition] = c.x; positions[basePosition + 1] = c.elevation; positions[basePosition + 2] = c.z; uvs[baseUv] = c.x / 5; uvs[baseUv + 1] = c.z / 5;
-    for (let vertex = 0; vertex < verticesPerCell; vertex += 1) { const colourOffset = (baseVertex + vertex) * 3; colours[colourOffset] = red / 255; colours[colourOffset + 1] = green / 255; colours[colourOffset + 2] = blue / 255; }
+    for (let vertex = 0; vertex < verticesPerCell; vertex += 1) { const colourOffset = (baseVertex + vertex) * 3; colours[colourOffset] = red; colours[colourOffset + 1] = green; colours[colourOffset + 2] = blue; }
     for (let cornerIndex = 0; cornerIndex < 6; cornerIndex += 1) {
       const corner = corners[cornerIndex], x = clamp(corner.x, -HALF, HALF), z = clamp(corner.z, -HALF, HALF), vertex = baseVertex + cornerIndex + 1, positionOffset = vertex * 3, uvOffset = vertex * 2;
-      positions[positionOffset] = x; positions[positionOffset + 1] = world.lookup(x, z)?.elevation ?? c.elevation; positions[positionOffset + 2] = z; uvs[uvOffset] = x / 5; uvs[uvOffset + 1] = z / 5;
+      positions[positionOffset] = x; positions[positionOffset + 1] = sharedHexCornerHeight(c, corner, world.radius); positions[positionOffset + 2] = z; uvs[uvOffset] = x / 5; uvs[uvOffset + 1] = z / 5;
       const triangleOffset = baseIndex + cornerIndex * 3; indices[triangleOffset] = baseVertex; indices[triangleOffset + 1] = baseVertex + (cornerIndex + 1) % 6 + 1; indices[triangleOffset + 2] = vertex;
     }
   }

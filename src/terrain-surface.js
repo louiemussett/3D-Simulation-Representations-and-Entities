@@ -8,6 +8,36 @@ function triangleHeight(a, b, c, x, z) {
   return wa * a.y + wb * b.y + wc * c.y;
 }
 
+/** Converts an authored sRGB channel to the linear-light value expected by GPU vertex colours. */
+export function srgbChannelToLinear(value) {
+  const channel = Math.max(0, Math.min(1, Number(value) || 0));
+  return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+}
+
+/** Converts an RGB palette entry expressed as screen-space bytes into linear-light RGB. */
+export function linearRgbFromSrgbBytes(rgb = []) {
+  return [0, 1, 2].map(index => srgbChannelToLinear((Number(rgb[index]) || 0) / 255));
+}
+
+/**
+ * Gives every duplicated copy of a pointy-hex corner the same height. A corner
+ * is shared by the owning cell and its two closest neighbours; averaging that
+ * trio closes the otherwise-visible seams between independently indexed fans.
+ */
+export function sharedHexCornerHeight(cell, corner, radius) {
+  if (!cell || !corner) return 0;
+  const fallback = Number(cell.elevation) || 0, maximumDistanceSquared = Math.max(.0001, Number(radius) || 0) ** 2 * 1.0001;
+  let total = 0, count = 0;
+  for (const contributor of [cell, ...(cell.neighbours || [])]) {
+    const elevation = Number(contributor?.elevation);
+    if (!Number.isFinite(elevation)) continue;
+    const dx = contributor.x - corner.x, dz = contributor.z - corner.z;
+    if (dx * dx + dz * dz > maximumDistanceSquared) continue;
+    total += elevation; count += 1;
+  }
+  return count ? total / count : fallback;
+}
+
 export function fanSurfaceHeight(surface, x, z) {
   if (!surface?.corners?.length) return surface?.centre?.y ?? 0;
   const centre = surface.centre;

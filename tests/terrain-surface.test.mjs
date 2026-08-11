@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fanSurfaceHeight, indexedFanSurfaceHeight, stableGroundSupport } from "../src/terrain-surface.js";
+import { fanSurfaceHeight, indexedFanSurfaceHeight, linearRgbFromSrgbBytes, sharedHexCornerHeight, srgbChannelToLinear, stableGroundSupport } from "../src/terrain-surface.js";
 
 const surface = {
   centre: { x: 0, y: 2, z: 0 },
@@ -24,6 +24,25 @@ test("typed terrain fans sample without retaining per-cell point objects", () =>
   const positions = new Float32Array(surface.corners.reduce((values, point) => values.concat(point.x, point.y, point.z), [surface.centre.x, surface.centre.y, surface.centre.z]));
   assert.equal(indexedFanSurfaceHeight(positions, 0, .5, 0), fanSurfaceHeight(surface, .5, 0));
   assert.equal(indexedFanSurfaceHeight(positions, 0, 4, 4), surface.centre.y);
+});
+
+test("screen palette colours are converted before entering a linear vertex buffer", () => {
+  assert.equal(srgbChannelToLinear(0), 0);
+  assert.equal(srgbChannelToLinear(1), 1);
+  const [red, green, blue] = linearRgbFromSrgbBytes([112, 153, 84]);
+  assert.ok(Math.abs(red - .162) < .002);
+  assert.ok(Math.abs(green - .319) < .002);
+  assert.ok(Math.abs(blue - .089) < .002);
+});
+
+test("duplicated hex corners share one averaged height", () => {
+  const corner = { x: 1, z: 0 };
+  const owner = { x: 0, z: 0, elevation: 3, neighbours: [] };
+  const upper = { x: 1, z: 1, elevation: 6, neighbours: [] }, lower = { x: 1, z: -1, elevation: 9, neighbours: [] };
+  owner.neighbours = [upper, lower]; upper.neighbours = [owner, lower]; lower.neighbours = [owner, upper];
+  assert.equal(sharedHexCornerHeight(owner, corner, Math.SQRT2), 6);
+  assert.equal(sharedHexCornerHeight(upper, corner, Math.SQRT2), 6);
+  assert.equal(sharedHexCornerHeight(lower, corner, Math.SQRT2), 6);
 });
 
 test("rough terrain pose is bounded and supported above the footprint", () => {
