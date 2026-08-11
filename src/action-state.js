@@ -106,6 +106,42 @@ export function completedVisibleVelocity(move, now, paused = false) {
   return Math.hypot(move.toX - move.fromX, move.toZ - move.fromZ) / move.duration;
 }
 
+export const MIN_VISUAL_MOVE_DURATION_MS = 80;
+
+export function createRetargetedVisualMove(start, destination, {
+  now,
+  duration,
+  minimumDuration = MIN_VISUAL_MOVE_DURATION_MS,
+  maximumAuthoritativeStep = 3
+} = {}) {
+  if (!start || !destination || !Number.isFinite(now)) return null;
+  const fromX = Number(start.x), fromZ = Number(start.z), toX = Number(destination.x), toZ = Number(destination.z);
+  if (![fromX, fromZ, toX, toZ].every(Number.isFinite)) return null;
+
+  // Screen position may deliberately trail the simulation at accelerated
+  // observation speeds. Only a large authoritative step is a true teleport;
+  // measuring from the trailing screen position incorrectly classifies normal
+  // accumulated locomotion as one and makes the model snap.
+  const authoritativeFromX = Number.isFinite(start.authoritativeX) ? start.authoritativeX : fromX;
+  const authoritativeFromZ = Number.isFinite(start.authoritativeZ) ? start.authoritativeZ : fromZ;
+  const travelledBefore = Number(start.authoritativeDistanceTravelled);
+  const travelledAfter = Number(destination.authoritativeDistanceTravelled);
+  const recordedLocomotion = Number.isFinite(travelledBefore) && Number.isFinite(travelledAfter) ? Math.max(0, travelledAfter - travelledBefore) : 0;
+  const permittedStep = Math.max(maximumAuthoritativeStep, recordedLocomotion + .5);
+  if (Math.hypot(toX - authoritativeFromX, toZ - authoritativeFromZ) > permittedStep) return null;
+
+  return {
+    fromX,
+    fromZ,
+    toX,
+    toZ,
+    fromOrientation: Number.isFinite(start.orientation) ? start.orientation : 0,
+    toOrientation: Number.isFinite(destination.orientation) ? destination.orientation : 0,
+    started: now,
+    duration: Math.max(minimumDuration, Number.isFinite(duration) && duration > 0 ? duration : minimumDuration)
+  };
+}
+
 export function clearFrameMotion(animal) {
   animal.visualMove = null;
   animal.motionTarget = null;

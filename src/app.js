@@ -4,7 +4,7 @@ import { HexWorld } from "./hex-world.js";
 import { cooperativeYield } from "./cooperative-yield.js";
 import { adjacentLakeMouthCell, riverDescription } from "./river-system.js";
 import { authoritativeHash, authoritativeSnapshot, DevelopmentProfiler } from "./diagnostics.js";
-import { ACTION_PRESENTATION, clearFrameMotion, completeActionArrival, completedVisibleVelocity, createActionState, migrateActionState, setAction, setBlockedAction } from "./action-state.js";
+import { ACTION_PRESENTATION, clearFrameMotion, completeActionArrival, completedVisibleVelocity, createActionState, createRetargetedVisualMove, migrateActionState, setAction, setBlockedAction } from "./action-state.js";
 import { alarmObservation, captureDecisionTrace, evidenceCaption, evidenceRef, memoryEvidence, selectDecisionEvidence, tracePrimaryEvidence } from "./decision-trace.js";
 import { adjustCandidatesWithPredictions, createPredictiveDecisionImpact, migratePredictiveCognition, runPredictiveCognition } from "./predictive-cognition.js";
 import { PREDICTION_ABSTENTIONS, PREDICTION_AUTHORITIES, PREDICTION_FRAMEWORKS } from "./prediction-contract.js";
@@ -4936,7 +4936,10 @@ function tickWorldMinute() {
     for (const id of admittedAnimalIds) tickPresentationAnimalIds.add(id);
     if (selectedId) tickPresentationAnimalIds.add(selectedId);
     for (const id of movieState.shot?.ids || []) tickPresentationAnimalIds.add(id);
-    for (const animal of sim.animals) if (animal.alive && tickPresentationAnimalIds.has(animal.id)) presentationStarts.set(animal.id, visualState(animal, presentationStarted));
+    for (const animal of sim.animals) if (animal.alive && tickPresentationAnimalIds.has(animal.id)) {
+      const visual = visualState(animal, presentationStarted);
+      presentationStarts.set(animal.id, { ...visual, authoritativeX: animal.fx ?? animal.x, authoritativeZ: animal.fz ?? animal.z, authoritativeDistanceTravelled: animal.locomotion?.distanceTravelled || 0 });
+    }
   }
   spatialQueryCounters.corpseQueries = 0; spatialQueryCounters.corpseCandidates = 0; perceptionCacheCounters.hits = 0; perceptionCacheCounters.misses = 0; populationSchedulingCounters.environmentScans = 0; populationSchedulingCounters.deferredEnvironmentScans = 0;
   const tickStocksBefore = ecologicalAccounting.enabled ? (ecologicalStockSnapshot || worldStocks(sim)) : null;
@@ -7746,21 +7749,7 @@ function beginAnimalPresentation(starts, now = performance.now()) {
     const start = starts.get(a.id);
     if (!start) { a.visualMove = null; continue; }
     const toX = a.fx ?? a.x, toZ = a.fz ?? a.z;
-    const distance = Math.hypot(toX - start.x, toZ - start.z);
-    // Ordinary locomotion advances less than one world unit per tick. A much
-    // larger change is a load/teleport/correction and must not sweep through
-    // terrain merely to look smooth.
-    if (distance > 3) { a.visualMove = null; continue; }
-    a.visualMove = {
-      fromX: start.x,
-      fromZ: start.z,
-      toX,
-      toZ,
-      fromOrientation: start.orientation,
-      toOrientation: a.orientation || 0,
-      started: now,
-      duration
-    };
+    a.visualMove = createRetargetedVisualMove(start, { x: toX, z: toZ, orientation: a.orientation || 0, authoritativeDistanceTravelled: a.locomotion?.distanceTravelled || 0 }, { now, duration });
   }
 }
 function poseOnTerrain(object, visual, clearance = .015) {
