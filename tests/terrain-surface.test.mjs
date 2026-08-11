@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fanSurfaceHeight, stableGroundSupport } from "../src/terrain-surface.js";
+import { fanSurfaceHeight, indexedFanSurfaceHeight, stableGroundSupport } from "../src/terrain-surface.js";
 
 const surface = {
   centre: { x: 0, y: 2, z: 0 },
@@ -18,6 +18,12 @@ test("entity ground height matches the rendered triangle fan", () => {
 
 test("surface lookup safely falls back to the centre", () => {
   assert.equal(fanSurfaceHeight(surface, 4, 4), 2);
+});
+
+test("typed terrain fans sample without retaining per-cell point objects", () => {
+  const positions = new Float32Array(surface.corners.reduce((values, point) => values.concat(point.x, point.y, point.z), [surface.centre.x, surface.centre.y, surface.centre.z]));
+  assert.equal(indexedFanSurfaceHeight(positions, 0, .5, 0), fanSurfaceHeight(surface, .5, 0));
+  assert.equal(indexedFanSurfaceHeight(positions, 0, 4, 4), surface.centre.y);
 });
 
 test("rough terrain pose is bounded and supported above the footprint", () => {
@@ -40,4 +46,15 @@ test("diagonal hill terrain cannot submerge an animal between cardinal samples",
   const diagonalCrest = (x, z) => x > .45 && z > .45 ? 1.25 : 0;
   const support = stableGroundSupport(0, 0, 0, diagonalCrest, { footprint: 1, maxTilt: Math.PI / 8, maxLift: 1.4 });
   assert.ok(support.height > .8, "radial support detects the raised diagonal terrain triangle");
+});
+
+test("anti-clipping support clears every sampled point on an extreme incline", () => {
+  const steepFace = (x, z) => x * 3.8 + Math.max(0, z) * 1.7;
+  const footprint = 1, heading = .37;
+  const support = stableGroundSupport(0, 0, heading, steepFace, { footprint, maxTilt: Math.PI / 8, avoidClipping: true });
+  for (const radius of [footprint * .55, footprint]) for (let index = 0; index < 16; index += 1) {
+    const angle = heading + index / 16 * Math.PI * 2, localAngle = angle - heading;
+    const planeHeight = support.height - Math.cos(localAngle) * radius * Math.sin(support.pitch) - Math.sin(localAngle) * radius * Math.sin(support.roll);
+    assert.ok(planeHeight + 1e-9 >= steepFace(Math.cos(angle) * radius, Math.sin(angle) * radius));
+  }
 });

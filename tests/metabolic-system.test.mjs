@@ -6,7 +6,7 @@ import { advanceMetabolism, fillMetabolicReserves, ingestNutrients, initializeMe
 const animal = (speciesId = "grazer") => ({ speciesId, sex: "F", lifeStage: "adult", bodyMass: 65, leanMass: 50, fatMass: 15, muscleMass: 30, bodyFatPercent: 23, stomach: 35, health: 100, healthCap: 100, fatigue: 10, pregnant: null, lactation: 0 });
 
 test("all species have explicit metabolic strategies", () => {
-  assert.equal(Object.keys(SPECIES_METABOLIC_TRAITS).length, 22);
+  assert.equal(Object.keys(SPECIES_METABOLIC_TRAITS).length, SPECIES_IDS.length);
   for (const id of SPECIES_IDS) assert.ok(SPECIES_METABOLIC_TRAITS[id], id);
 });
 

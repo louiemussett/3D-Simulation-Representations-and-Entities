@@ -33,8 +33,5 @@ export function lifespanQuality(animal = {}) {
   const lastingShockHours = history.injuriesSustained * 8 + history.emergencyExertions * 18;
   return clamp(1 - (history.weightedBurdenHours + lastingShockHours) / history.observedHours, 0, 1);
 }
-export function lifespanMultiplier(animal = {}) { return 1 + lifespanQuality(animal) * 2; }
-export function projectedMaximumAge(animal, maximumAge) { return Math.max(0, finite(maximumAge)) * lifespanMultiplier(animal); }
-export function projectedSenescenceAge(animal, oldAge, maximumAge) { return Math.min(projectedMaximumAge(animal, maximumAge), Math.max(0, finite(oldAge)) * lifespanMultiplier(animal)); }
 export function recordInjurySustained(animal = {}) { migrateLifeHistory(animal).injuriesSustained += 1; }
 export function recordEmergencyExertion(animal = {}) { migrateLifeHistory(animal).emergencyExertions += 1; }

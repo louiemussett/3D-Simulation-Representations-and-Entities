@@ -31,7 +31,8 @@ export function assignStartingCareFamilies(animals = [], speciesById = {}, place
       mother.offspringMemory[child.id] = { x: child.x, z: child.z, tick: 0, confidence: 1, source: "pre-observation family", lastKnown: { x: child.x, z: child.z }, lastSeenTick: 0, status: child.lifeStage, dependent: child.lifeStage === "dependent" };
       if (child.lifeStage === "dependent") {
         child.dependentUntil = Number(speciesById[speciesId]?.dependency) || child.dependentUntil || child.age;
-        mother.lactation = Math.max(Number(mother.lactation) || 0, Math.max(1, child.dependentUntil - Number(child.age || 0)));
+        const lactationDays = Math.max(0, Number(speciesById[speciesId]?.lactationDays) || 0);
+        mother.lactation = Math.max(Number(mother.lactation) || 0, Math.max(0, lactationDays - Number(child.age || 0)));
       }
       const familyGroup = mother.groupId || `start-family-${speciesId}-${mother.id}`;
       mother.groupId = child.groupId = familyGroup;

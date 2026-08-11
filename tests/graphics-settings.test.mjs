@@ -13,6 +13,13 @@ test("new users begin on the authored custom default profile", () => {
   );
 });
 test("adaptive resolution defaults on and can be disabled", () => { assert.equal(normalizeGraphicsSettings({}).adaptiveResolution, true); assert.equal(normalizeGraphicsSettings({ adaptiveResolution: false }).adaptiveResolution, false); });
+test("large-map performance mode is opt-in and remains a local graphics preference", () => { assert.equal(normalizeGraphicsSettings({}).largeMapPerformanceMode, false); assert.equal(normalizeGraphicsSettings({ largeMapPerformanceMode: true }).largeMapPerformanceMode, true); });
+test("observer zoom and haze preferences default safely and round-trip", () => {
+  assert.deepEqual([normalizeGraphicsSettings({}).observerZoomLevel, normalizeGraphicsSettings({}).observerHazeMode], ["far", "natural"]);
+  const saved = normalizeGraphicsSettings({ observerZoomLevel: "extreme", observerHazeMode: "off" });
+  assert.deepEqual([normalizeGraphicsSettings(saved).observerZoomLevel, normalizeGraphicsSettings(saved).observerHazeMode], ["extreme", "off"]);
+  assert.deepEqual([normalizeGraphicsSettings({ observerZoomLevel: "invalid", observerHazeMode: "invalid" }).observerZoomLevel, normalizeGraphicsSettings({ observerZoomLevel: "invalid", observerHazeMode: "invalid" }).observerHazeMode], ["far", "natural"]);
+});
 test("adaptive thresholds are bounded and lower never exceeds upper", () => { const value = normalizeGraphicsSettings({ preset: "custom", adaptiveMinScale: 1.5, adaptiveMaxScale: .75 }); assert.equal(value.adaptiveMinScale, .75); assert.equal(value.adaptiveMaxScale, .75); });
 test("entity constellations expose one bounded uniform panel scale", () => {
   assert.equal(normalizeGraphicsSettings({}).entityPanelScale, .4);

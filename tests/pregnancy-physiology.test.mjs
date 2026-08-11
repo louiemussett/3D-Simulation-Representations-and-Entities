@@ -2,11 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { chooseOffspringCount, conceptionProbability, maternalConditionScore, migratePregnancyState, pregnancyDailyLossRisk, pregnancyHormonalCycle, pregnancyPhysiology, pregnancyTermMultiplier, prenatalHealthOutcome } from "../src/pregnancy-physiology.js";
 
-test("term pregnancy requirements compound by 1.5 for every carried offspring", () => {
-  assert.equal(pregnancyTermMultiplier(1), 1.5);
-  assert.equal(pregnancyTermMultiplier(2), 2.25);
-  assert.equal(pregnancyTermMultiplier(3), 3.375);
-  assert.equal(pregnancyTermMultiplier(4), 5.0625);
+test("reproductive load grows linearly and remains bounded", () => {
+  assert.equal(pregnancyTermMultiplier(1), 1);
+  assert.equal(pregnancyTermMultiplier(2), 1.18);
+  assert.ok(Math.abs(pregnancyTermMultiplier(3) - 1.36) < 1e-12);
+  assert.equal(pregnancyTermMultiplier(20), 2);
+  assert.equal(pregnancyTermMultiplier(20, "surface-eggs"), 1.6);
 });
 
 test("poor maternal condition makes conception unlikely rather than impossible", () => {
@@ -41,10 +42,16 @@ test("weight and needs rise gradually rather than jumping at conception", () => 
   const middle = pregnancyPhysiology({ age: 50, offspringCount: 2 }, 100);
   const term = pregnancyPhysiology({ age: 100, offspringCount: 2 }, 100);
   assert.equal(start.weightMultiplier, 1);
-  assert.equal(middle.weightMultiplier, 1.625);
-  assert.equal(middle.needMultiplier, 1.625);
-  assert.equal(term.weightMultiplier, 2.25);
+  assert.ok(Math.abs(middle.weightMultiplier - 1.09) < 1e-12);
+  assert.ok(Math.abs(middle.needMultiplier - 1.09) < 1e-12);
+  assert.equal(term.weightMultiplier, 1.18);
   assert.ok(term.bodyLinearScale > 1 && term.bodyLinearScale < term.weightMultiplier);
+});
+
+test("egg formation has bounded load and no mammalian hormone cycle", () => {
+  const eggs = pregnancyPhysiology({ age: 30, offspringCount: 12 }, 60, "surface-eggs");
+  assert.equal(eggs.termMultiplier, 1.6);
+  assert.equal(eggs.hormoneCycle, null);
 });
 
 test("pregnancy uses its own changing hormonal phases", () => {

@@ -1,4 +1,7 @@
 const ENTITY_CONSTELLATION_DEFAULTS = Object.freeze({
+  largeMapPerformanceMode: false,
+  observerZoomLevel: "far",
+  observerHazeMode: "natural",
   entityPanelScale: .4,
   entityPublicPanelScale: .4,
   entitySelectedPanelScale: .4,
@@ -128,6 +131,9 @@ export function normalizeGraphicsSettings(value = {}) {
   const frameCap = requestedFrameCap === 45 ? 30 : requestedFrameCap === 0 ? 60 : [30, 60].includes(requestedFrameCap) ? requestedFrameCap : base.frameCap;
   return {
     preset,
+    largeMapPerformanceMode: value.largeMapPerformanceMode === true,
+    observerZoomLevel: ["map-sized", "far", "very-far", "extreme"].includes(value.observerZoomLevel) ? value.observerZoomLevel : "far",
+    observerHazeMode: ["off", "light", "natural"].includes(value.observerHazeMode) ? value.observerHazeMode : "natural",
     iconTextureQuality,
     documentationPreviewQuality: documentationPreviewQuality(iconTextureQuality),
     renderScale,

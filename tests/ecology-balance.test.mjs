@@ -13,6 +13,6 @@ test("initial stomach ranges are deterministic and species appropriate", () => {
 test("ecology presets expose the agreed experimental horizons", () => {
   assert.deepEqual(ecologyPreset("opening"), { name: "opening", seeds: 20, minutes: 60 });
   assert.equal(ecologyPreset("population").minutes, 43200);
-  assert.equal(ecologyPreset("generational").minutes, 259200);
+  assert.equal(ecologyPreset("generational").minutes, 1051200);
   assert.throws(() => ecologyPreset("unknown"));
 });

@@ -32,6 +32,7 @@ export default defineConfig({
     { name: "smoke", testMatch: /smoke\.spec\.js/ },
     { name: "embodiment", testMatch: /embodiment\.spec\.js/ },
     { name: "movie", testMatch: /movie-mode\.spec\.js/, use: { viewport: { width: 1440, height: 900 } } },
-    { name: "visual", testMatch: /visual\.spec\.js/, use: { viewport: { width: 1920, height: 1080 } } }
+    { name: "visual", testMatch: /visual\.spec\.js/, use: { viewport: { width: 1920, height: 1080 } } },
+    { name: "high-hex", testMatch: /high-hex-benchmark\.spec\.js/, use: { viewport: { width: 1440, height: 900 } } }
   ]
 });

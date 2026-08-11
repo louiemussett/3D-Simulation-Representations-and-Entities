@@ -127,7 +127,10 @@ The interactive rate control is a direct 0–60 minute-ticks-per-second request 
 Time skips still call `tickWorld()` once per minute and yield to the browser only between completed
 minutes. Do not replace this with clock mutation or bulk physiology arithmetic: weather boundaries,
 interactions, births, deaths and random-number order must all observe every intervening tick. The
-ecological calendar defines a month as 30 days and a full four-season year as 120 days.
+ecological calendar provides a neutral 30-day observation interval and a 365-day year: Spring 92 days, Summer 92, Autumn 91 and Winter 90.
+All developmental and reproductive durations are literal ecological days from `src/life-history-registry.js`; never derive them from the real-time observation pace. `src/reproductive-biology.js` owns seasonal, annual, opportunistic, spontaneous/induced-ovulation and brood-limit gates. Live birth and surface eggs must remain separate after conception, and registry validation must fail if any registered species lacks an explicit profile. World-scale presets deliberately vary roster breadth by ecological function instead of requiring a fixed catalogue count. The two generic originals retain their established render branches; every real species uses exactly one head and one body root with subordinate features attached to either root. World schema 5 deliberately rejects older timing-model saves rather than guessing a migration.
+
+`src/senescence.js` owns ageing after the species senescence reference. The registry's `longevityReferenceDays` values are observed record-age calibration points, never death thresholds. Do not add a random age death, a maximum-age comparison or a projected expiry date. Ageing may reduce organ and immune reserve, teeth, feeding, recovery, movement and perception; actual deaths must still resolve to a proximate simulated cause. Nutrition, hydration, safety, rest, stress, injury and social support are legitimate inputs because an animal's circumstances can shorten or prolong survival.
 
 - `npm run test:static` — syntax checks.
 - `npm run test:logic` — deterministic tests without a browser.
@@ -270,7 +273,7 @@ must not override danger or create a permanent pair bond.
 
 ## Pregnancy physiology
 
-`src/pregnancy-physiology.js` is the pure source for gestation progress, litter scaling, hormone phases and save defaulting. Litter size is selected once at conception, so later presentation and physiology never infer it. The authoritative multiplier grows linearly through gestation toward `1.5 ^ offspringCount`; visual body dimensions use its cube root to represent volume without scaling the head or frame-only presentation state. Metabolism, thirst and digestion use the same current need multiplier.
+`src/pregnancy-physiology.js` is the pure source for gestation progress, bounded litter load, hormone phases and save defaulting. Litter size is selected once at conception, so later presentation and physiology never infer it. Live-birth load grows by 0.18 per additional offspring up to 2×; pre-lay egg load grows by 0.06 per additional egg up to 1.6× and never creates mammalian hormones. Visual body dimensions use the current multiplier's cube root to represent volume without scaling the head or frame-only presentation state. Metabolism, thirst and digestion use the same current need multiplier.
 
 The RNG call that formerly chose litter size at birth now occurs at conception. This is an intentional correctness change: the simulation must know how many offspring are carried in order to model gradual pregnancy. Legacy migration never calls RNG.
 
@@ -283,3 +286,15 @@ traces, and current hidden locations are forbidden inputs. Apparent mass, age, a
 coarse exceptions. A remembered companion stores its last observation and must search that location; it
 must never resolve the entity's current hidden coordinates. Shared foraging is sampled coarsely every six
 ticks and histories retain only eight events per partner and twenty-four partners per animal.
+
+## High-hex map performance
+
+Every hex remains authoritative. `HexWorld.createAsync()` runs the same ordered calculations as the synchronous constructor and yields only between deterministic generation or hydrology batches. Its progress callback reports cells, terrain, topology, substrate, climate, drainage, hydrology warm-up, rivers, ecology, and spatial indexing. Navigation has a matching batched builder. Cancellation must reject with `AbortError`; different yield budgets must produce identical fixed-seed state.
+
+Drainage and A* share `src/stable-min-heap.js`. A* edges retain only neighbour ID and cost; exact pointy-hex portals are reconstructed after the polygon route is known. Do not add stored portal points or per-cell terrain-surface objects back to high-resolution worlds.
+
+The ground is one indexed, vertex-coloured mesh with seven vertices and eighteen indices per cell. Daily water/ecology work returns ordered dirty cell, basin, and river IDs. Presentation consumes those deltas, uploads coalesced colour ranges, and rebuilds only affected lake and river meshes. Vegetation is queued in stable batch order and processed within the per-frame presentation budget.
+
+“Large-map performance mode” is a local, presentation-only graphics preference. It never belongs in a world save, never changes simulation cadence or authoritative cells, and must produce the same hashes and serialized world state as normal presentation. It uses a 4 ms vegetation budget, shortens fine/medium vegetation distance, and defers distant off-screen batches; coarse tree visibility is retained.
+
+Run deterministic coverage with `node --test tests/high-hex-optimisation.test.mjs`. Capture the browser matrix with `npm run benchmark:high-hex`; it measures fixed-seed 5k, 10k, 20k, and 40k worlds in paused and running states and attaches JSON to the Playwright result. To compare on the same machine, point `HIGH_HEX_BASELINE` at an earlier JSON capture. Keep browser, viewport, power mode, and background workload unchanged between captures.

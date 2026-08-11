@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ENTITY_CONSTELLATION_PANEL_SCALE, ENTITY_OWNERSHIP_STYLES, assignClusterOwnership, projectedEntityIntersectsViewport, relationalArrow, resolveEntityConstellations, selectEntityConstellationBudget, suppressOverlappingEntityConstellations } from "../src/entity-constellation-layout.js";
+import { ENTITY_CONSTELLATION_PANEL_SCALE, ENTITY_OWNERSHIP_STYLES, assignClusterOwnership, bodyAttachedOverlayGeometry, projectedEntityIntersectsViewport, relationalArrow, resolveEntityConstellations, selectEntityConstellationBudget, suppressOverlappingEntityConstellations } from "../src/entity-constellation-layout.js";
 
 const byId = (records) => new Map(records.map((record) => [record.entityId, record]));
 const projected = (entityId, screenX, screenY, extra = {}) => ({ entityId, screenX, screenY, projectedBodyPx: 64, ...extra });
@@ -88,6 +88,29 @@ test("overlap suppression keeps the most central complete footprint without movi
   assert.equal(suppressed.blockingEntityId, "centre");
   assert.deepEqual([centre, overlap, clear].map((item) => ({ entityId: item.entityId, anchor: { ...item.anchor } })), before, "admission must not lock or reposition a panel");
   assert.ok(Object.isFrozen(forward) && Object.isFrozen(forward.decisions) && Object.isFrozen(forward.decisions[0]));
+});
+
+test("body-attached collision geometry includes the bubbles actually drawn over an animal", () => {
+  const full = bodyAttachedOverlayGeometry({
+    bodyX: 300,
+    bodyY: 400,
+    headX: 312,
+    headY: 340,
+    headRadius: 12,
+    displayScale: .5,
+    bubbleScale: .5,
+    identityVisible: true,
+    healthVisible: true,
+    expressionVisible: true,
+    publicCueVisible: true,
+    thoughtVisible: true,
+    predictionVisible: true
+  });
+  const compact = bodyAttachedOverlayGeometry({ bodyX: 300, bodyY: 400, headX: 312, headY: 340, headRadius: 12, displayScale: .5, identityVisible: true });
+  assert.ok(full.thought.right < full.prediction.left, "paired cognition bubbles keep their authored gap");
+  assert.ok(full.footprint.width > compact.footprint.width, "collision width includes side cues and both bubbles");
+  assert.ok(full.footprint.top < compact.footprint.top, "collision height reaches the cognition bubbles above the head");
+  assert.ok(Object.isFrozen(full) && Object.isFrozen(full.footprint) && Object.isFrozen(full.thought));
 });
 
 test("overlap visibility hysteresis prevents tiny swaps but yields to a clearly more central owner", () => {

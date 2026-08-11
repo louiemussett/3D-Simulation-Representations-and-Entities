@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { coatLifeProgress, developmentalFeedingProfile } from "../src/developmental-nutrition.js";
 
-const species = { dependency: 60, oldAge: 300, maxAge: 400 };
+const species = { dependency: 60, lactationDays: 45, oldAge: 300, longevityReference: 400 };
 test("dependants move gradually from milk to solid food", () => {
   const newborn = developmentalFeedingProfile({ speciesId: "grazer", lifeStage: "dependent", age: 1 }, species);
   const weaning = developmentalFeedingProfile({ speciesId: "grazer", lifeStage: "dependent", age: 45 }, species);

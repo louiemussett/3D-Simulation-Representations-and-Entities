@@ -124,15 +124,17 @@ The install step pins the same Three.js runtime used by production and installs 
 - One clock tick is one simulated minute. Animals sense, decide, act and advance continuous physiology every minute. Rates expressed per hour or day are timestep-scaled rather than applied 60 times at full strength. Expensive landscape, weather, hydrology and corpse maintenance remains on its appropriate hourly or daily cadence. A single slider requests 0–60 minute ticks per real second.
 
 Long jumps are explicit rather than speed multipliers. The time-skip control offers one minute,
-hour, day, 30-day ecological month or 120-day ecological year. It pauses playback, clears pending
+hour, day, neutral 30-day observation interval or 365-day ecological year. It pauses playback, clears pending
 real-time backlog and executes every intervening authoritative minute in order. A progress bar shows
 completed minutes, percentage, elapsed wall time and estimated remaining time; Cancel stops after
 the currently executing minute. Long skips are deterministic but not promised to be instantaneous.
+
+The ecological year contains 365 literal days split into Spring 92, Summer 92, Autumn 91 and Winter 90. Fast, standard and detailed observation still show one ecological year over 1, 3 or 6 real hours. Every species has an explicit life-history profile covering maturity, senescence, an observed longevity reference, reproductive window, ovulation strategy, gestation or egg development, lactation and independence; egg layers use separate pre-lay and incubation phases. Observed longevity is not a lifespan limit. Old animals continue living while organ reserve, immunity, dental function, mobility, perception and recovery change, and they die only from a modeled proximate cause. Reliable food, water, shelter, rest, low stress and social support can slow decline.
 - Click an animal to inspect it. Click empty ground, or the selected animal again, to deselect while keeping the camera position.
 - **Map** deselects, recentres and zooms out.
 - **Lock entity** follows the selected organism without preventing camera movement.
 - **Favourite** saves an entity shortcut for the current world seed. **Save seed** stores the current world seed for later replay.
-- **Reset** creates a new procedural hex world. Saves from the retired square-world format are intentionally incompatible and show a clear message instead of loading incorrectly.
+- **Reset** creates a new procedural hex world. Saves from the retired square-world format or the former 120-day biological calendar remain listed but are intentionally incompatible and show a clear message instead of loading incorrectly.
 
 ## World and ecology
 
@@ -142,6 +144,8 @@ Terrain rules cascade from elevation, slope, drainage, soil depth and weather:
 
 - Seeded elevation first creates massifs, hills and valleys; climate then adds altitude cooling, humidity, windward rain and leeward rain shadow.
 - Rain, snowmelt, infiltration, groundwater, runoff, basin storage and spill outlets create streams and lakes.
+- River width follows accumulated flow and Strahler stream order, producing rills, brooks, creeks, streams and broad river reaches. Groundwater and climate distinguish perennial, intermittent and ephemeral flow; slope and sediment select simplified cascade, straight, meandering, braided or anastomosing channel presentation.
+- River mouths follow the connected drainage hexes to the adjacent lake shoreline. They never connect to a distant basin reference point or draw an airborne shortcut across land or water.
 - Lakes are flat stored water in terrain basins; shallow water is light blue and wadeable, while deep water is dark blue and blocks movement.
 - Rock occurs on steep/high thin-soil ground; sand and mud occur along channels, shores and wet ground.
 - Grass depends on biomass, soil moisture, weather, season and grazing. Woodland needs sustained moisture, deeper soil and gentle ground; it is not grazeable and blocks line of sight.
@@ -151,7 +155,7 @@ Regional weather is a lightweight synoptic approximation: moving low-pressure ra
 
 ## Animals
 
-The current world contains Valley Grazers and Ridge Hunters. Every organism has age, sex, body size, mass, health, energy, hydration, fullness, fatigue, injuries, temperature stress, aggression and individual sensory/memory state.
+Every world retains the generic deer-like Valley Grazer and wolf-like Ridge Hunter. Compact, Medium, Standard and Vast worlds currently select progressively broader 6-, 14-, 20- and 26-species ecosystems; the count follows ecological functions rather than a fixed target. The remaining catalogue entries are simplified real species spanning trophic roles, climates, body scales, social systems and reproductive strategies. Every organism has age, sex, body size, mass, health, energy, hydration, fullness, fatigue, injuries, temperature stress, aggression and individual sensory/memory state.
 
 They can search, drink, graze, hunt, scavenge, flee, rest, digest, communicate, court, reject a mate, conceive, give birth, nurse, follow caregivers, defend young, form groups and die. Occupied cells prevent animals from sharing the same space.
 
@@ -611,9 +615,21 @@ zoom speeds. Presentation LOD uses both orbit distance and height above terrain:
 cannot show strategic or distant icons merely because its orbit target was previously far away.
 
 Animal roots keep a scale-aware clearance above the rendered terrain; lowered stalking, resting and
-birthing postures receive additional clearance so their body meshes do not enter slopes. Ordinary walking
-uses a slow articulated bob shared by body, head and tail, keeping attached eyes aligned with the head.
-Fleeing and chasing retain a faster cadence.
+birthing postures receive additional clearance so their body meshes do not enter slopes. The complete
+head-and-body footprint is sampled against the rendered triangles, and founders are placed only on the
+walkable surface, so steep-slope safety does not depend on choosing a denser hex map. Movement is visibly
+species-specific: rabbits hop, hares bound, snakes undulate, heavy animals roll their mass, grounded birds
+high-step or waddle, and hunting predators lower into a slow stalk before a chase.
+Slope access is species-specific as well. Each species has a comfortable grade, structural maximum and
+rock capability; an individual's muscle, health, fatigue, injury, age and pregnancy determine how much
+of that range it can currently use. Steep permitted climbs are slower and metabolically expensive. Ibex
+and snow leopards can use near-vertical rock, while heavy or low-bodied species refuse much gentler faces.
+
+World creation separates overall relief from mountain, hill, valley, long-ridge, plateau and fine local
+height controls. Every control accepts zero as a true off state. Habitat is then derived from elevation,
+rain, lakes, channels, groundwater, temperature and vegetation rather than painted as a single uniform
+zone. Forests, woodlands, savannas, grasslands, shrublands, swamps, marshes, deserts and cold regions use
+eight density levels, with lighter-to-darker colour transitions for sparse-to-dense vegetation.
 
 Each animal now saves an authoritative `goalPlan` with exact short-, medium-, and long-term keys. The
 short-term goal gives an ordinary selected priority a limited commitment bonus (normally four ticks,
@@ -642,13 +658,12 @@ entity views show body and air temperature separately. Older saves default safel
 
 Each animal stores a compact authoritative lifetime history: equivalent hours of fear, fleeing, active injury,
 extreme exertion, thermal strain and serious food/water deprivation, plus counts of injuries and emergency
-exertions. The history produces a continuously changing life-quality multiplier between 1× and 3× the
-species baseline lifespan and moves the onset of senescence by the same factor. A safe, well-fed, low-stress
-life can approach 3×; sustained hardship moves the projection toward 1×. This models the broad survival
-advantage documented for many zoo mammal populations without treating captivity itself as a magic bonus.
-The selected Laboratory age field displays the current projected maximum and multiplier. Older saves lacked
-the required history, so they migrate deterministically to a neutral 2× estimate and accumulate real history
-from their first post-load tick.
+exertions. That history contributes to senescence onset and rate, but never produces an expiry age. Once
+senescence begins, organ and immune reserves, dental function, mobility, perception and recovery can decline.
+Good food and water, safe rest, social support and low stress slow functional loss; deprivation, thermal strain,
+injury and extreme exertion accelerate it. The selected Laboratory age and health fields show those reserves,
+frailty and care protection alongside the observed longevity calibration reference. Older saves initialise this
+state deterministically and accumulate real experience from their first post-load tick.
 
 Animals cannot read another animal's thought bubble, trace, priority, exact health bar, or detailed injury
 record. Sight can retain only observable body cues such as movement, posture, emitted signals, bruising, or
@@ -694,7 +709,7 @@ species-appropriate sprint and emergency reserves, with no random numbers consum
 
 Animals store authoritative lean mass, fat mass and stomach calories. The former 0–100 stomach field is
 retained as a derived compatibility percentage. Metabolic demand depends primarily on lean mass, with a
-smaller contribution from fat mass, and varies by the fictional species/sex physiology profile. Stomach
+smaller contribution from fat mass, and varies by the simulated species/sex physiology profile. Stomach
 calories are used before stored fat. Sustained surplus calories can continue increasing fat and total body
 mass without an eating-related maximum; only the inherited spawn-frame `sizeTrait` remains capped.
 
@@ -705,7 +720,7 @@ mass without an eating-related maximum; only the inherited spawn-frame `sizeTrai
 | Male Ridge Hunter | 4% | 8–16% | 27% |
 | Female Ridge Hunter | 10% | 14–24% | 34% |
 
-These are explicit parameters for the fictional animals, not human or veterinary reference ranges. Below
+These are explicit simulation parameters, not human or veterinary reference ranges. Below
 critical fat, health declines and restoring fat becomes an urgent priority. A female remaining below her
 critical threshold for the profile's prolonged exposure period receives lasting fertility impairment;
 later weight and health recovery do not automatically remove it. Older saves deterministically derive lean
@@ -727,3 +742,9 @@ preferences may remain nearby as a birth attendant; urgent survival needs still 
 Litter size is established at conception. During gestation, maternal body mass, baseline food demand, thirst and digestion rise gradually from the ordinary female baseline to `1.5 ^ carried offspring` at term (one offspring 1.5×, two 2.25×, three 3.375×, and four 5.0625×). The visible body expands by the corresponding volume scale while the head and eyes retain their normal proportions. Pregnancy suspends the ordinary fertility cycle and records implantation, early, middle, late and pre-labour hormone phases.
 
 Older saves without a carried-offspring count migrate to the species minimum litter size. This migration is deterministic and consumes no random numbers.
+
+### Large maps
+
+Maps from 5,000 through 40,000 hexagons keep every hex authoritative and inspectable. World creation and save loading show phased progress and can be cancelled without leaving a half-loaded world. Terrain, water, navigation, and vegetation presentation update incrementally after generation instead of rebuilding the complete landscape each day.
+
+Graphics settings include an optional **Large-map performance mode**. It spends less frame time on fine and medium vegetation and postpones distant off-screen landscape work while keeping the underlying simulation, saves, seeds, routes, ecology, and coarse tree visibility unchanged. The preference is local to the device and is not stored inside world saves.

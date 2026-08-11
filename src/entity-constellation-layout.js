@@ -49,6 +49,45 @@ const DEFAULT_CHANNELS = freeze(["identity", "expression", "signal", "action", "
 export const ENTITY_CONSTELLATION_PANEL_SCALE = freeze({ minimum: .42, maximum: 1.35, default: 1 });
 
 /**
+ * Screen-space geometry for the current body-attached HUD. The same authored
+ * sizes are used by the renderer; exposing the complete footprint lets the
+ * admission pass hide a lower-priority constellation before two overlays
+ * occupy the same pixels.
+ */
+export function bodyAttachedOverlayGeometry(raw = {}) {
+  const bodyX = finiteNumber(raw.bodyX, 0), bodyY = finiteNumber(raw.bodyY, 0);
+  const headX = finiteNumber(raw.headX, bodyX), headY = finiteNumber(raw.headY, bodyY);
+  const headRadius = positiveNumber(raw.headRadius, 7, 3, 240);
+  const displayScale = positiveNumber(raw.displayScale, 1, .1, 3);
+  const bubbleScale = positiveNumber(raw.bubbleScale, displayScale, .1, 4.5);
+  const rectangles = {};
+  const add = (name, x, y, width, height) => {
+    const rectangle = freeze({ x, y, width, height, left: x - width / 2, right: x + width / 2, top: y - height / 2, bottom: y + height / 2 });
+    rectangles[name] = rectangle;
+    return rectangle;
+  };
+  if (raw.identityVisible) add("identity", bodyX, bodyY + 5 * displayScale, 245 * displayScale, 70 * displayScale);
+  if (raw.healthVisible) add("health", headX, headY + headRadius + 29 * displayScale, 158 * displayScale, 38 * displayScale);
+  if (raw.expressionVisible) {
+    const size = 74 * displayScale;
+    add("expression", headX - headRadius - size * .56 - 5 * displayScale, headY + headRadius * .18, size, size);
+  }
+  if (raw.publicCueVisible) add("publicCue", headX + headRadius + 104 * displayScale * .52 + 5 * displayScale, headY + headRadius * .18, 104 * displayScale, 78 * displayScale);
+  const bubbles = [];
+  if (raw.thoughtVisible) bubbles.push({ name: "thought", width: 228 * bubbleScale, height: 142 * bubbleScale });
+  if (raw.predictionVisible) bubbles.push({ name: "prediction", width: 276 * bubbleScale, height: 142 * bubbleScale });
+  const bubbleGap = 7 * displayScale, totalBubbleWidth = bubbles.reduce((sum, bubble) => sum + bubble.width, 0) + Math.max(0, bubbles.length - 1) * bubbleGap;
+  let bubbleCursor = headX - totalBubbleWidth / 2;
+  for (const bubble of bubbles) {
+    add(bubble.name, bubbleCursor + bubble.width / 2, headY - headRadius - bubble.height / 2 - 8 * displayScale, bubble.width, bubble.height);
+    bubbleCursor += bubble.width + bubbleGap;
+  }
+  const values = Object.values(rectangles);
+  const footprint = values.length ? freeze({ left: Math.min(...values.map(rect => rect.left)), right: Math.max(...values.map(rect => rect.right)), top: Math.min(...values.map(rect => rect.top)), bottom: Math.max(...values.map(rect => rect.bottom)) }) : freeze({ left: bodyX, right: bodyX, top: bodyY, bottom: bodyY });
+  return freeze({ ...rectangles, footprint: freeze({ ...footprint, width: footprint.right - footprint.left, height: footprint.bottom - footprint.top }) });
+}
+
+/**
  * Returns true only while the entity's projected body still intersects the
  * camera viewport. Cards are deliberately culled from the owner's body, not
  * from their own clamped layout rectangle: an off-screen owner must never

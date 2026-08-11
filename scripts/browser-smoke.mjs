@@ -97,7 +97,7 @@ try {
   checkpoint("first Three.js render");
   const defaults = await page.evaluate(() => ({ span: document.querySelector("#world-size").value, herbivores: document.querySelector("#start-herbivores").value, carnivores: document.querySelector("#start-carnivores").value, speed: document.querySelector("#speed").value, speedMaximum: document.querySelector("#speed").max, timeSkip: document.querySelector("#time-skip-period").value }));
   checkpoint("startup defaults read");
-  if (JSON.stringify(defaults) !== JSON.stringify({ span: "1", herbivores: "18", carnivores: "4", speed: "1", speedMaximum: "60", timeSkip: "1" })) throw new Error(`Unexpected startup defaults: ${JSON.stringify(defaults)}`);
+  if (JSON.stringify(defaults) !== JSON.stringify({ span: "1", herbivores: "34", carnivores: "11", speed: "1", speedMaximum: "60", timeSkip: "1" })) throw new Error(`Unexpected startup defaults: ${JSON.stringify(defaults)}`);
   const tickBeforeSkip = await page.evaluate(() => window.rssDiagnostics.tick());
   checkpoint("authoritative tick read");
   await page.evaluate(() => document.querySelector("#time-skip").click());

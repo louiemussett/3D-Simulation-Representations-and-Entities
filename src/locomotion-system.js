@@ -3,6 +3,7 @@ import { bodyRadius, collisionRadiusFor, resolveAnimalBodyCollision, softSeparat
 import { predictIntercept, steeringStep } from "./steering-controller.js";
 import { SPECIES, SPECIES_IDS, eatsMeat } from "./species-registry.js";
 import { biologicalPhenotype } from "./biological-phenotypes.js";
+import { mobilityStrengthIndex, terrainMobilityAssessment } from "./terrain-mobility.js";
 export const LOCOMOTION_SUBSTEPS = 8;
 const BASE_LOCOMOTION_PROFILES = {
   grazer: { maxSpeed: .92, sprintSpeed: 1.55, acceleration: 2.1, braking: 2.8, turnRate: 2.5, bodyRadius: .27, separationWeight: .85, predictionCap: 1.6 },
@@ -27,11 +28,14 @@ export function predictedRequestDestination(request, origin, profile, elapsed = 
 }
 export function ensureRoute(animal, mesh) {
   const request = animal.movementRequest; if (!request) return null;
-  const changed = !animal.routeState || animal.routeState.requestId !== request.id || Math.hypot(request.destination.x - animal.routeState.destination.x, request.destination.z - animal.routeState.destination.z) > Math.max(.2, mesh.worldRadius * .35);
+  const mobilityKey = `${animal.speciesId}:${mobilityStrengthIndex(animal).toFixed(2)}`;
+  const changed = !animal.routeState || animal.routeState.requestId !== request.id || animal.routeState.mobilityKey !== mobilityKey || Math.hypot(request.destination.x - animal.routeState.destination.x, request.destination.z - animal.routeState.destination.z) > Math.max(.2, mesh.worldRadius * .35);
   if (!changed && animal.routeState.waypointIndex < animal.routeState.points.length) return animal.routeState;
   const directLocalSteering = request.destinationSource === "player-camera-relative";
-  const route = request.allowOutsideNavmesh || directLocalSteering ? { polygonIds: [], portals: [], points: [{ ...request.destination }], cost: Math.hypot(request.destination.x - animal.locomotion.x, request.destination.z - animal.locomotion.z) } : findNavPath(mesh, animal.locomotion, request.destination);
-  animal.routeState = route ? { requestId: request.id, destination: { ...request.destination }, corridor: route.polygonIds, points: route.points, waypointIndex: 0, progress: 0, stalledSubsteps: 0, replanReason: changed ? "destination-changed" : "initial" } : { requestId: request.id, destination: { ...request.destination }, corridor: [], points: [], waypointIndex: 0, progress: 0, stalledSubsteps: 0, replanReason: "no-route" };
+  const startId = mesh.polygonAt(animal.locomotion.x, animal.locomotion.z), startPolygon = mesh.polygons?.get(startId), startAssessment = terrainMobilityAssessment(animal, startPolygon || {}), escaping = !startAssessment.allowed;
+  const polygonAllowed = polygon => { const assessment = terrainMobilityAssessment(animal, polygon || {}); return polygon?.id === startId || assessment.allowed || escaping && (!polygon?.rocky || assessment.rockPassable) && assessment.slope < startAssessment.slope; };
+  const route = request.allowOutsideNavmesh || directLocalSteering ? { polygonIds: [], portals: [], points: [{ ...request.destination }], cost: Math.hypot(request.destination.x - animal.locomotion.x, request.destination.z - animal.locomotion.z) } : findNavPath(mesh, animal.locomotion, request.destination, { polygonAllowed, edgeCost: (edge, _from, to) => edge.cost * terrainMobilityAssessment(animal, to).energyMultiplier });
+  animal.routeState = route ? { requestId: request.id, mobilityKey, destination: { ...request.destination }, corridor: route.polygonIds, points: route.points, waypointIndex: 0, progress: 0, stalledSubsteps: 0, replanReason: changed ? "destination-changed" : "initial" } : { requestId: request.id, mobilityKey, destination: { ...request.destination }, corridor: [], points: [], waypointIndex: 0, progress: 0, stalledSubsteps: 0, replanReason: "no-route" };
   return animal.routeState;
 }
 export function runLocomotionMinute(animals, mesh, options = {}) {
@@ -55,23 +59,27 @@ export function runLocomotionMinute(animals, mesh, options = {}) {
     let waypoint = route.points[route.waypointIndex];
     if (Math.hypot(waypoint.x - animal.locomotion.x, waypoint.z - animal.locomotion.z) <= Math.max(.06, mesh.worldRadius * .12) && route.waypointIndex < route.points.length - 1) waypoint = route.points[++route.waypointIndex];
     const separation = softSeparation(collisionActor, neighbourStates, { contactTargetId: request.contactTargetId, range: mesh.worldRadius * .35, weight: profile.separationWeight });
-    const before = animal.locomotion; let next = steeringStep(before, waypoint, profile, dt, { stoppingRadius: route.waypointIndex === route.points.length - 1 ? request.interactionRadius : 0, maxSpeed: speedForMode(profile, request.mode), separation, terrainSpeed: options.terrainSpeedAt?.(animal.locomotion.x, animal.locomotion.z, animal) ?? 1, alignmentSlowAngle: options.alignmentSlowAngle });
+    const before = animal.locomotion, currentPolygon = mesh.polygons?.get(mesh.polygonAt(before.x, before.z)), currentMobility = terrainMobilityAssessment(animal, currentPolygon || {});
+    let next = steeringStep(before, waypoint, profile, dt, { stoppingRadius: route.waypointIndex === route.points.length - 1 ? request.interactionRadius : 0, maxSpeed: speedForMode(profile, request.mode), separation, terrainSpeed: (options.terrainSpeedAt?.(animal.locomotion.x, animal.locomotion.z, animal) ?? 1) * currentMobility.speedMultiplier, alignmentSlowAngle: options.alignmentSlowAngle });
     // The corridor is authoritative. A feeler that would cross into an
     // impassable polygon is rejected and causes deterministic braking/replan.
     const directLocalSteering = request.destinationSource === "player-camera-relative";
-    const currentBodySupported = bodySupportedByNavmesh(mesh, before.x, before.z, bodyRadius(collisionActor));
-    const nextBodySupported = bodySupportedByNavmesh(mesh, next.x, next.z, bodyRadius(collisionActor));
+    const polygonAllowed = polygon => { const assessment = terrainMobilityAssessment(animal, polygon || {}); return assessment.allowed || !currentMobility.allowed && (!polygon?.rocky || assessment.rockPassable) && assessment.slope <= currentMobility.slope; };
+    const currentBodySupported = bodySupportedByNavmesh(mesh, before.x, before.z, bodyRadius(collisionActor), 10, polygonAllowed);
+    const nextBodySupported = bodySupportedByNavmesh(mesh, next.x, next.z, bodyRadius(collisionActor), 10, polygonAllowed);
     // Collision separation can leave the edge of a body's footprint just
     // outside a polygon although its centre is still on valid land. Rejecting
     // every subsequent footprint sample creates an irreversible WASD trap.
     // Direct control may move from that already-unsupported state while its
     // centre remains on the navmesh, allowing the player to steer back inward;
     // a normally supported body still cannot initiate a boundary crossing.
-    const recoveringDirectBody = directLocalSteering && !currentBodySupported && mesh.polygonAt(next.x, next.z) != null;
+    const nextPolygonId = mesh.polygonAt(next.x, next.z), nextPolygon = nextPolygonId == null ? null : mesh.polygons?.get(nextPolygonId) || { id: nextPolygonId, slope: 0, rocky: false };
+    const recoveringDirectBody = directLocalSteering && !currentBodySupported && nextPolygon && polygonAllowed(nextPolygon);
     if (!request.allowOutsideNavmesh && !nextBodySupported && !recoveringDirectBody) { next = { ...before, vx: 0, vz: 0, speed: 0, braking: true, arrived: false, arrivalState: "blocked" }; route.replanReason = "body-clearance"; route.stalledSubsteps += 2; }
     const collisionResolved = resolveAnimalBodyCollision(collisionActor, next, neighbourStates);
     if (collisionResolved.collided) {
-      const supported = request.allowOutsideNavmesh || bodySupportedByNavmesh(mesh, collisionResolved.x, collisionResolved.z, bodyRadius(collisionActor)) || (directLocalSteering && !currentBodySupported && mesh.polygonAt(collisionResolved.x, collisionResolved.z) != null);
+      const collisionPolygonId = mesh.polygonAt(collisionResolved.x, collisionResolved.z), collisionPolygon = collisionPolygonId == null ? null : mesh.polygons?.get(collisionPolygonId) || { id: collisionPolygonId, slope: 0, rocky: false };
+      const supported = request.allowOutsideNavmesh || bodySupportedByNavmesh(mesh, collisionResolved.x, collisionResolved.z, bodyRadius(collisionActor), 10, polygonAllowed) || (directLocalSteering && !currentBodySupported && collisionPolygon && polygonAllowed(collisionPolygon));
       if (supported) next = { ...collisionResolved, vx: (collisionResolved.x - before.x) / dt, vz: (collisionResolved.z - before.z) / dt, speed: Math.hypot(collisionResolved.x - before.x, collisionResolved.z - before.z) / dt, arrived: false, arrivalState: "body-contact" };
       else next = { ...before, vx: 0, vz: 0, speed: 0, braking: true, arrived: false, arrivalState: "body-blocked" };
     }
@@ -90,12 +98,13 @@ export function runLocomotionMinute(animals, mesh, options = {}) {
   }
 }
 
-export function bodySupportedByNavmesh(mesh, x, z, radius, samples = 10) {
-  if (mesh.polygonAt(x, z) == null) return false;
+export function bodySupportedByNavmesh(mesh, x, z, radius, samples = 10, polygonAllowed = null) {
+  const supported = (sampleX, sampleZ) => { const id = mesh.polygonAt(sampleX, sampleZ); if (id == null) return false; return !polygonAllowed || polygonAllowed(mesh.polygons?.get(id) || { id, slope: 0, rocky: false }); };
+  if (!supported(x, z)) return false;
   const footprint = Math.max(.04, radius * .92);
   for (let index = 0; index < samples; index += 1) {
     const angle = index / samples * Math.PI * 2;
-    if (mesh.polygonAt(x + Math.cos(angle) * footprint, z + Math.sin(angle) * footprint) == null) return false;
+    if (!supported(x + Math.cos(angle) * footprint, z + Math.sin(angle) * footprint)) return false;
   }
   return true;
 }

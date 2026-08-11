@@ -86,6 +86,10 @@ export function dehydrationState(animal = {}) {
 export function pregnancyHydrationMultiplier(animal = {}, gestationDays = 0) {
   if (!animal.pregnant || !(gestationDays > 0)) return 1;
   const progress = clamp((Number(animal.pregnant.age) || 0) / gestationDays, 0, 1);
+  if (animal.pregnant.mode === "surface-eggs") {
+    const extraEggs = Math.max(0, (Number(animal.pregnant.offspringCount) || 1) - 1);
+    return 1.02 + progress * .04 + Math.min(.06, extraEggs * .005);
+  }
   const base = progress < .33 ? 1.04 : progress < .67 ? 1.1 : animal.speciesId === "grazer" ? 1.22 : 1.18;
   const extraOffspring = Math.max(0, (Number(animal.pregnant.offspringCount) || 1) - 1);
   return base + Math.min(.08, extraOffspring * .02);

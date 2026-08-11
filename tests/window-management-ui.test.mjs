@@ -54,7 +54,7 @@ test("the startup action identifies the exact world it will open", () => {
   assert.match(app, /if \(!loaded\)[\s\S]*return false;[\s\S]*enterGame\(\);[\s\S]*return true;/);
   assert.match(app, /return true; \} catch \{ addEvent\("Load slot failed"\)/);
   assert.match(app, /saveSlotName: activeSaveSlotName \|\| null/);
-  assert.match(app, /activateSnapshot\(\{ \.\.\.snapshot, saveSlotName: name \}/);
+  assert.match(app, /await activateSnapshotAsync\(\{ \.\.\.snapshot, saveSlotName: name \}/);
 });
 
 test("menu backgrounds can loop through selected images in stable library order", () => {

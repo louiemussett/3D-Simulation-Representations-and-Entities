@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { animalGroundOffset, gradualHeading, isGroundRestPosture, locomotionAnimation, matingPosture, movingTurnTolerance, postureTransitionDuration, requiresTurnInPlace, smoothPostureProgress } from "../src/animal-motion-presentation.js";
+import { SPECIES_LOCOMOTION, animalGroundOffset, feedingAnimation, gradualHeading, isGroundRestPosture, locomotionAnimation, matingPosture, movingTurnTolerance, postureTransitionDuration, requiresTurnInPlace, smoothPostureProgress, speciesLocomotionProfile } from "../src/animal-motion-presentation.js";
+import { SPECIES_IDS } from "../src/species-registry.js";
 
 test("animal roots retain standing clearance while ground rest settles into terrain", () => {
   assert.equal(animalGroundOffset(1, "travel"), .12);
@@ -14,6 +15,41 @@ test("ordinary walking bobs slower than urgent locomotion", () => {
   assert.equal(walking.active, true); assert.equal(chase.active, true);
   assert.ok(walking.frequency < chase.frequency);
   assert.equal(locomotionAnimation("rest", 250).bob, 0);
+});
+
+test("every species has an explicit visible gait", () => {
+  assert.deepEqual(Object.keys(SPECIES_LOCOMOTION).sort(), [...SPECIES_IDS].sort());
+  for (const id of SPECIES_IDS) assert.ok(speciesLocomotionProfile(id).label.length > 5, id);
+});
+
+test("rabbits hop, hares bound, snakes undulate and heavy animals shift mass", () => {
+  const rabbit = locomotionAnimation("meadow-nibbler", "travel", 250);
+  const hare = locomotionAnimation("brush-nibbler", "travel", 250);
+  const python = locomotionAnimation("sunscale-ambusher", "travel", 250);
+  const elephant = locomotionAnimation("african-elephant", "travel", 250);
+  assert.equal(rabbit.gait, "hop");
+  assert.equal(hare.gait, "bound");
+  assert.equal(python.gait, "serpentine");
+  assert.notEqual(python.bodyYaw, 0);
+  assert.equal(elephant.gait, "heavy-amble");
+  assert.notEqual(elephant.bodyRoll, 0);
+});
+
+test("hunting movement visibly lowers predators into a slow ground stalk", () => {
+  const stalk = locomotionAnimation("hunter", "stalk", 500), chase = locomotionAnimation("hunter", "chase", 500);
+  assert.equal(stalk.gait, "ground-stalk");
+  assert.ok(stalk.bodyLower > .1);
+  assert.ok(stalk.headLower > .08);
+  assert.ok(stalk.frequency < chase.frequency);
+});
+
+test("feeding styles produce different head and body poses", () => {
+  const rabbit = feedingAnimation("meadow-nibbler", 350), moose = feedingAnimation("woodland-browser", 350), ostrich = feedingAnimation("common-ostrich", 350);
+  assert.equal(rabbit.style, "nibble");
+  assert.equal(moose.style, "browse");
+  assert.equal(ostrich.style, "peck");
+  assert.notEqual(rabbit.headDrop, moose.headDrop);
+  assert.ok(ostrich.headPitch > rabbit.headPitch);
 });
 
 test("rest, suckling and nursing mothers share one grounded posture family", () => {

@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { HexWorld } from "./hex-world.js";
+import { cooperativeYield } from "./cooperative-yield.js";
+import { adjacentLakeMouthCell, riverDescription } from "./river-system.js";
 import { authoritativeHash, authoritativeSnapshot, DevelopmentProfiler } from "./diagnostics.js";
 import { ACTION_PRESENTATION, clearFrameMotion, completeActionArrival, completedVisibleVelocity, createActionState, migrateActionState, setAction, setBlockedAction } from "./action-state.js";
 import { alarmObservation, captureDecisionTrace, evidenceCaption, evidenceRef, memoryEvidence, selectDecisionEvidence, tracePrimaryEvidence } from "./decision-trace.js";
@@ -21,32 +23,33 @@ import { disposeOwnedTree, markResource, RESOURCE_OWNERSHIP } from "./resource-o
 import { ByteBudgetLRUCache, estimateTextureBytes, presentationResourceMetrics } from "./texture-resource-cache.js";
 import { indexedDBConnectionMetrics, openCachedIndexedDB } from "./persistence.js";
 import { locationWithoutRequestedSaveSlot, requestedSaveSlot } from "./save-launch.js";
-import { mapOverviewFrame } from "./map-overview-camera.js";
+import { mapOverviewFrame, observerCameraEnvelope, terrainBounds } from "./map-overview-camera.js";
 import { deferredJsonStringify, WorkerJsonSerializer } from "./deferred-serialization.js";
 import { MultiEntitySpatialIndex } from "./spatial-index.js";
 import { visitNearbyCells } from "./cell-visitation.js";
 import { CorpseRenderCache } from "./corpse-visual-cache.js";
 import { assignDecisionOrder, rebuildOccupancy, runStableAnimalPhases, StableLivingList } from "./simulation-phases.js";
-import { batchIndicesByMaterial, chunkKeyAt, chunkKeysForVegetationBatches, chunkKeysInRange, DEFAULT_LANDSCAPE_CHUNK_SIZE, LandscapeDirtyState, ReusablePositionBuffer, VEGETATION_BATCH_CHUNKS, vegetationBatchKey, vegetationLod } from "./landscape-chunks.js";
+import { chunkKeyAt, chunkKeysInRange, DEFAULT_LANDSCAPE_CHUNK_SIZE, LandscapeDirtyState, ReusablePositionBuffer, VEGETATION_BATCH_CHUNKS, vegetationBatchKey, vegetationLod } from "./landscape-chunks.js";
 import { MinimapInvalidation, PresentationBudgetAllocator, presentationPartVisibility, resolvePresentationTier, shouldRunBoundedUpdate } from "./presentation-budget.js";
 import { EcologicalAccounting, worldStocks } from "./ecological-accounting.js";
 import { validateMap } from "./map-validation.js";
 import { experimentRecord, summarizeExperiment } from "./experiment-metrics.js";
 import { DEFAULT_FRAME_TICK_BUDGET_MS, runBudgetedTicks, shouldRefreshPresentation } from "./tick-budget.js";
 import { continuingMotionTarget, traversableNeighbourCells } from "./movement-candidates.js";
-import { fanSurfaceHeight, stableGroundSupport } from "./terrain-surface.js";
+import { indexedFanSurfaceHeight, stableGroundSupport } from "./terrain-surface.js";
 import { cameraPresentationMetrics, cinemaPopulationPresentation, constrainCameraToTerrain, followTargetPreservingOrbit, usesAggregateAnimalMarkers } from "./camera-ground.js";
 import { cameraFaultRequiresRecovery, finiteMovieCameraPose, movieCameraWatchdogDecision } from "./movie-camera-watchdog.js";
 import { createGameplayCameraState, updateGameplayCamera } from "./gameplay-camera.js";
 import { cameraRelativeMovement, EmbodiedInput } from "./embodied-movement.js";
-import { advanceEcologicalClock, advanceMinuteClock, ecologicalClockParts, ecologicalHoursPerInteractionTick, ecologicalMinutesPerInteractionTick, formatEcologicalClock, migrateEcologicalClock, migrateMinuteClock, MINUTES_PER_DAY, MINUTES_PER_HOUR } from "./simulation-clock.js";
+import { advanceEcologicalClock, advanceMinuteClock, ecologicalClockParts, ecologicalHoursPerInteractionTick, ecologicalMinutesPerInteractionTick, formatEcologicalClock, migrateEcologicalClock, migrateMinuteClock, MINUTES_PER_DAY, MINUTES_PER_HOUR, seasonForAbsoluteDay, wallMinutesForEcologicalDays } from "./simulation-clock.js";
 import { createGoalPlan, migrateGoalPlan, reproductionReadiness } from "./goal-planning.js";
 import { commitmentPopulationAudit, commitmentStyle, createCommitmentRankingReuse, evaluateRiskReward, expressedCommitmentProfile, forecastSocialCommitment, migrateCommitment, observeCommitment, recordProtocolOutcome, seedStartingCommitment, selectWithCommitment, transmitProtocol } from "./commitment-system.js";
 import { initialBodyTemperature, migrateTemperatureState, terrainThermalEffect, thermalDrive, updateBodyTemperature, updateThermalExposure } from "./thermoregulation.js";
 import { observableBodyCues, visibleInjuryCue } from "./observable-body-cues.js";
 import { activeEmittedSignal, decisionTraceVisible, FACIAL_EXPRESSION_LEGEND, facialExpressionSymbol, visibleBodyCondition, visibleExpression } from "./visual-language.js";
 import { EXPRESSION_LIBRARY_SECTIONS, expressionLibrarySection, visualLanguagePopulationSnapshot } from "./visual-language-laboratory.js";
-import { animalGroundOffset, gradualHeading, isGroundRestPosture, locomotionAnimation, matingPosture, movingTurnTolerance, postureTransitionDuration, requiresTurnInPlace, smoothPostureProgress } from "./animal-motion-presentation.js";
+import { animalGroundOffset, feedingAnimation, gradualHeading, isGroundRestPosture, locomotionAnimation, matingPosture, movingTurnTolerance, postureTransitionDuration, requiresTurnInPlace, smoothPostureProgress, speciesLocomotionProfile } from "./animal-motion-presentation.js";
+import { terrainMobilityAssessment, terrainMobilitySummary } from "./terrain-mobility.js";
 import { alertPauseDuration, applyExertion, enduranceSpeedFactor, exertionMode, exertionProfile, focusMultipliers, hearingRangeForProfile, migrateExertionState, noticesSound, recoverExertion, sensoryAttention, shouldFreeze } from "./alertness-exertion.js";
 import { emergencyReleaseAssessment, recordEmergencyAssessment } from "./emergency-action.js";
 import { BEHAVIOUR_ONTOLOGY, classifySatisfierEffects, contextSnapshot, needStateSnapshot, ontologyIntegrity, SATISFIER_DEFINITIONS } from "./behaviour-ontology.js";
@@ -59,16 +62,21 @@ import { assignStartingCareFamilies } from "./starting-care.js";
 import { laboratoryReferenceHtml, searchLaboratoryReference } from "./laboratory-reference.js";
 import { REPRODUCTION_DURATIONS, birthAttendantEligible, createBirthEvent, createCourtshipEvent, createMatingEvent, migrateReproductionEvents, reproductionStage } from "./reproduction-events.js";
 import { chooseOffspringCount, conceptionProbability, maternalConditionScore, migratePregnancyState, pregnancyDailyLossRisk, pregnancyHormonalCycle, pregnancyPhysiology, prenatalHealthOutcome } from "./pregnancy-physiology.js";
+import { migrateReproductiveState, recordInducedOvulation, recordReproductiveOutcome, reproductiveStatus, reproductiveStatusLabel, updateReproductiveEnvironment } from "./reproductive-biology.js";
+import { advanceSurfaceNestCare, surfaceNestHatchCount } from "./surface-nest.js";
+import { reproductiveIntegrityAudit } from "./reproductive-audit.js";
 import { animalEyePosition, attachedAnimalEyePosition } from "./animal-face-geometry.js";
 import { adaptFemaleMatePreferences, createMaleMatingEpisode, inferredLibido, maleMatingStrategy, maleSocialStrategyNetwork, migrateSocialState, observableMateCompatibility, rateFemaleCandidate, relationshipKind, rememberFemaleMateOutcome, rememberMaleFemaleRating, rememberSocialEvent, shareFemaleMateObservation, shareHighRatedFemale, socialEncounterKind } from "./social-relationships.js";
 import { endurancePresentation } from "./endurance-presentation.js";
-import { lifespanMultiplier, migrateLifeHistory, projectedMaximumAge, projectedSenescenceAge, recordInjurySustained, recordLifeExperience } from "./lifespan-history.js";
+import { lifespanQuality, migrateLifeHistory, recordInjurySustained, recordLifeExperience } from "./lifespan-history.js";
+import { advanceSenescence, migrateSenescence, senescenceModifiers, senescenceSummary, senescentDeathCause } from "./senescence.js";
 import { evaluateVision, visionFov } from "./vision-model.js";
 import { buildGroundVisionSector } from "./vision-overlay.js";
 import { PerformanceBenchmark } from "./performance-benchmark.js";
 import { feedingAppetite } from "./feeding-appetite.js";
 import { FOG_STATE, fogKnowledgeState, withinLocalFogReveal } from "./knowledge-fog.js";
-import { buildNavMesh } from "./navmesh.js";
+import { buildNavMesh, buildNavMeshAsync } from "./navmesh.js";
+import { findNavPath } from "./navmesh-pathfinding.js";
 import { bodySupportedByNavmesh, createLocomotionState, createMovementRequest, LOCOMOTION_PROFILES, runLocomotionMinute } from "./locomotion-system.js";
 import { nearestSafeUnstuckDestination } from "./entity-unstuck.js";
 import { assessWorldBoundary, DEFAULT_EDGE_MARGIN, DEFAULT_RECOVERY_BUFFER, worldBoundaryClearance } from "./world-boundary.js";
@@ -86,7 +94,7 @@ import { NEED_ONTOLOGY, liveNeedGraph, protectedReserves, survivalForecast } fro
 import { abandonNeedPlan, migrateNeedPlanAudit, observeNeedPlan, populationPlanAudit, recordNeedAcquisition, recordNeedTargetFailure } from "./need-plan-audit.js";
 import { entityIndicatorLayout } from "./entity-indicator-layout.js";
 import { physiologyOverlayStackLayout } from "./physiology-overlay-layout.js";
-import { projectedEntityIntersectsViewport, relationalArrow, resolveEntityConstellations, selectEntityConstellationBudget, suppressOverlappingEntityConstellations } from "./entity-constellation-layout.js";
+import { bodyAttachedOverlayGeometry, projectedEntityIntersectsViewport, relationalArrow, resolveEntityConstellations, selectEntityConstellationBudget, suppressOverlappingEntityConstellations } from "./entity-constellation-layout.js";
 import { ENTITY_CONSTELLATION_CARD_GEOMETRY, entityConstellationCardProfile } from "./entity-constellation-card-layout.js";
 import { resolveEntityPanelScaleSnapshot } from "./entity-panel-distance-scale.js";
 import { actionBadgePresentation, entityIdentityPresentation, lifeStageCode, publicSignalPresentation, simplifyAttachedSignal, thoughtPresentation, thoughtSignalAlignment, undecidedThoughtPresentation } from "./entity-symbol-presentation.js";
@@ -100,12 +108,14 @@ import { coatLifeProgress, developmentalFeedingProfile } from "./developmental-n
 import { documentationPreviewQuality, graphicsPreset, normalizeGraphicsSettings } from "./graphics-settings.js";
 import * as documentaryNarration from "./documentary-narration.js";
 import { vegetationPresentationState, VegetationPresentationInvalidator } from "./vegetation-presentation.js";
+import { HABITAT_DENSITY_BANDS, applyHabitatProfile, habitatColourRgb, habitatProfile, habitatSummary } from "./habitat-system.js";
 import { AdaptiveResolutionController } from "./adaptive-resolution.js";
 import { BENCHMARK_POPULATIONS, populationBenchmarkSetup, populationSweepReport } from "./population-benchmark.js";
 import { actionSymbol, BADGED_BEHAVIOURS, completeSymbolLegendSections, composeLegendExample, dominantWorldCue, emittedSymbol, LEGEND_COMPOSER_MEANINGS, PUBLIC_SIGNAL_AVAILABILITY, PUBLIC_SIGNAL_CONTRACT_LEGEND, PUBLIC_SIGNAL_LEGEND_SECTIONS, RARE_SYMBOL_KEY_SECTIONS, reproductivelyMature, resolveSymbolPresentation, signalAllowed, SYMBOL_KEY_SECTIONS, thoughtSymbol } from "./symbol-registry.js";
 import { physiologySymbolSvg } from "./physiology-symbols.js";
 import { abandonDependent, assessGroupMembership, beginGroupDeparture, canJoinGroup, caregiverConflict, dependentMistreatment, migrateGroupDisposition, recordGroupConflict } from "./group-dynamics.js";
 import { closeKinForMating, descendantDepth, generationLabel, kinshipBetween, livingAncestorCandidates, migrateKinship, registerBirthKinship, storeLineage } from "./kinship.js";
+import { unifiedSocialGraph } from "./social-graph.js";
 import { drinkingContactState, waterContactPoint } from "./water-contact.js";
 import { assessPersonalSpace, migratePersonalSpace, personalSpaceRadius } from "./personal-space.js";
 import { semanticIconLayout } from "./semantic-icon-layout.js";
@@ -113,7 +123,7 @@ import { confirmResourceMemory, failResourceMemory, migrateResourceAcquisition, 
 import { applyOffspringTraitArchitecture, offspringTraitArchitecture } from "./trait-variation.js";
 import { activeBereavement, ageBereavement, bereavementDisposition, createBereavementEpisode, migrateBereavement, recordBereavement } from "./bereavement.js";
 import { captureGenerationalAudit, compareGenerationalAudit } from "./generational-audit.js";
-import { ECOLOGY_POPULATION_LEVELS, ECOLOGY_PRESETS, ECOLOGY_PRESET_POPULATIONS, SPECIES as species, SPECIES_IDS, canHunt as speciesCanHunt, canScavenge as speciesCanScavenge, carcassPreference, eatsMeat, eatsPlants, ecologyPresetCounts, ecologyWarnings, enabledSpeciesCounts, foodPreferenceSummary, guildOf, isCarnivore, isHerbivore, isOmnivore, isSustainableForage, needsPregnantPredatorFounder, plantPreference, preyCompatible, spatialEcology, speciesCategoryTotals, speciesProfile } from "./species-registry.js";
+import { ECOLOGY_POPULATION_LEVELS, ECOLOGY_PRESETS, ECOLOGY_PRESET_POPULATIONS, SPECIES as species, SPECIES_IDS, canHunt as speciesCanHunt, canScavenge as speciesCanScavenge, carcassPreference, eatsMeat, eatsPlants, ecologyPresetCounts, ecologyPresetForWorldScale, ecologyWarnings, enabledSpeciesCounts, foodPreferenceSummary, guildOf, habitatPreferenceSummary, habitatSuitability, isCarnivore, isHerbivore, isOmnivore, isSustainableForage, needsPregnantPredatorFounder, plantPreference, preyCompatible, selectHabitatWeighted, spatialEcology, speciesCategoryTotals, speciesProfile } from "./species-registry.js";
 import { biologicalPhenotype, digestiveEfficiency, phenotypeSummary, sensoryPhenotype, thermalPerformance } from "./biological-phenotypes.js";
 import { advanceMetabolism, fillMetabolicReserves, ingestNutrients, initializeMetabolism, metabolicJourneyBudget, metabolicPresentation, predictiveHunger, spendMetabolicEnergy, syncLegacyEnergy } from "./metabolic-system.js";
 import { difficultyProfile, resolveEmbodimentCapabilities } from "./embodiment-capabilities.js";
@@ -164,8 +174,8 @@ function recordNutrientIntake(animal, nutrients) {
 const TEST_MODE = new URLSearchParams(window.location.search).get("test") === "1";
 let WORLD = TEST_MODE ? 48 : 90;
 let HALF = Math.floor(WORLD / 2);
-let worldSetup = { size: WORLD, span: 1, customSpan: null, hexDetail: TEST_MODE ? 400 : 5000, startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, ecologyPreset: "ridge-hunter-web", ecologyPopulationScale: 100, speciesCounts: ecologyPresetCounts("ridge-hunter-web"), herbivores: 149, carnivores: 1, relief: .15, mountains: 1, hills: 1, valleys: 1, rivers: 1.25, lakes: 1.25, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1.2, climate: 1, temperatureVariation: 1, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36 };
-const WORLD_SCHEMA = 4;
+let worldSetup = { size: WORLD, span: 1, customSpan: null, hexDetail: TEST_MODE ? 400 : 5000, startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, ecologyPreset: "compact", ecologyPopulationScale: 100, speciesCounts: ecologyPresetCounts("compact"), ...speciesCategoryTotals(ecologyPresetCounts("compact")), relief: .15, mountains: 1, hills: 1, valleys: 1, ridges: .55, plateaus: .35, roughness: .3, rivers: 1.25, riverWidthVariation: 1, riverPatternDiversity: 1, lakes: 1.25, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1.2, climate: 1, temperatureVariation: 1, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36 };
+const WORLD_SCHEMA = 5;
 const SAVE_KEY = "persistent-ecosystem-simulation-v1";
 const AUTOSAVE_DB = "rss-living-laboratory-progress-v1";
 const AUTOSAVE_STORE = "snapshots";
@@ -176,7 +186,7 @@ const MOUNTAIN_STEP = 2.1;
 let terrainProfile = null;
 
 const ui = {
-  viewport: document.querySelector("#viewport"), inspector: document.querySelector(".inspector"), hudMode: document.querySelector("#hud-mode"), hudDay: document.querySelector("#hud-day"), hudPlay: document.querySelector("#hud-play"), hudMap: document.querySelector("#hud-map"), hudReality: document.querySelector("#hud-reality"), realityPanel: document.querySelector("#reality-panel"), realityClose: document.querySelector("#reality-close"), realityTerrain: document.querySelector("#reality-terrain"), realityPopulation: document.querySelector("#reality-population"), realityGroups: document.querySelector("#reality-groups"), labToggle: document.querySelector("#lab-toggle"), hudSpeed: document.querySelector("#hud-speed"), hudSpeedValue: document.querySelector("#hud-speed-value"), hudEvent: document.querySelector("#hud-event"), hudSelection: document.querySelector("#observer-selection"), hudSelectedName: document.querySelector("#hud-selected-name"), hudSelectedAction: document.querySelector("#hud-selected-action"), hudEnergy: document.querySelector("#hud-energy"), hudHealth: document.querySelector("#hud-health"), hudWater: document.querySelector("#hud-water"), hudDrive: document.querySelector("#hud-drive"), hudLock: document.querySelector("#hud-lock"), hudFavourite: document.querySelector("#hud-favourite"), runState: document.querySelector("#run-state"), viewMode: document.querySelector("#view-mode"), minimap: document.querySelector("#minimap"), minimapMode: document.querySelector("#minimap-mode"), eventFilter: document.querySelector("#event-filter"), eventLimit: document.querySelector("#event-limit"), playPause: document.querySelector("#play-pause"), step: document.querySelector("#step"), mapView: document.querySelector("#map-view"), reset: document.querySelector("#reset"), save: document.querySelector("#save"), load: document.querySelector("#load"), saveSlot: document.querySelector("#save-slot"), loadSlot: document.querySelector("#load-slot"), saveSlotList: document.querySelector("#save-slot-list"), exportSave: document.querySelector("#export-save"), importSave: document.querySelector("#import-save"), importSaveFile: document.querySelector("#import-save-file"), worldSize: document.querySelector("#world-size"), startHerbivores: document.querySelector("#start-herbivores"), startCarnivores: document.querySelector("#start-carnivores"), terrainRelief: document.querySelector("#terrain-relief"), mountainAmount: document.querySelector("#mountain-amount"), hillAmount: document.querySelector("#hill-amount"), valleyAmount: document.querySelector("#valley-amount"), riverAmount: document.querySelector("#river-amount"), lakeAmount: document.querySelector("#lake-amount"), woodlandAmount: document.querySelector("#woodland-amount"), treeDensity: document.querySelector("#tree-density"), bushDensity: document.querySelector("#bush-density"), longGrass: document.querySelector("#long-grass"), rainfallAmount: document.querySelector("#rainfall-amount"), climateAmount: document.querySelector("#climate-amount"), lockEntity: document.querySelector("#lock-entity"), favouriteEntity: document.querySelector("#favourite-entity"), saveSeed: document.querySelector("#save-seed"), favouriteList: document.querySelector("#favourite-list"), seedList: document.querySelector("#seed-list"), speed: document.querySelector("#speed"), speedValue: document.querySelector("#speed-value"), speedMultiplier: document.querySelector("#speed-multiplier"), feedbackMode: document.querySelector("#feedback-mode"), day: document.querySelector("#day"), season: document.querySelector("#season"), weather: document.querySelector("#weather"), plants: document.querySelector("#plants"), herbivores: document.querySelector("#herbivores"), carnivores: document.querySelector("#carnivores"), births: document.querySelector("#births"), deaths: document.querySelector("#deaths"), selectedName: document.querySelector("#selected-name"), selectedKind: document.querySelector("#selected-kind"), selectedSex: document.querySelector("#selected-sex"), selectedAge: document.querySelector("#selected-age"), selectedStage: document.querySelector("#selected-stage"), selectedSize: document.querySelector("#selected-size"), selectedPregnancy: document.querySelector("#selected-pregnancy"), selectedClimate: document.querySelector("#selected-climate"), selectedAction: document.querySelector("#selected-action"), selectedEnergy: document.querySelector("#selected-energy"), selectedHealth: document.querySelector("#selected-health"), selectedHydration: document.querySelector("#selected-hydration"), selectedInjuries: document.querySelector("#selected-injuries"), selectedFeeding: document.querySelector("#selected-feeding"), selectedDrive: document.querySelector("#selected-drive"), selectedExpression: document.querySelector("#selected-expression"), selectedRelation: document.querySelector("#selected-relation"), selectedMemory: document.querySelector("#selected-memory"), selectedTarget: document.querySelector("#selected-target"), selectedAwareness: document.querySelector("#selected-awareness"), priorityList: document.querySelector("#priority-list"), overlayVision: document.querySelector("#overlay-vision"), overlaySmell: document.querySelector("#overlay-smell"), overlaySound: document.querySelector("#overlay-sound"), overlayMemory: document.querySelector("#overlay-memory"), overlayEntityFocus: document.querySelector("#overlay-entity-focus"), overlayBiomass: document.querySelector("#overlay-biomass"), overlayWater: document.querySelector("#overlay-water"), overlayPheromone: document.querySelector("#overlay-pheromone"), events: document.querySelector("#events"), rssTrace: document.querySelector("#rss-trace"), entityIndicator: document.querySelector("#entity-indicator"), physicalViability: document.querySelector("#physicalViability"), mismatch: document.querySelector("#mismatch"), feedbackStatus: document.querySelector("#feedback-status"), driftStatus: document.querySelector("#drift-status"), performance: document.querySelector("#performance")
+viewport: document.querySelector("#viewport"), inspector: document.querySelector(".inspector"), hudMode: document.querySelector("#hud-mode"), hudDay: document.querySelector("#hud-day"), hudPlay: document.querySelector("#hud-play"), hudMap: document.querySelector("#hud-map"), hudReality: document.querySelector("#hud-reality"), realityPanel: document.querySelector("#reality-panel"), realityClose: document.querySelector("#reality-close"), realityTerrain: document.querySelector("#reality-terrain"), realityPopulation: document.querySelector("#reality-population"), realityGroups: document.querySelector("#reality-groups"), labToggle: document.querySelector("#lab-toggle"), hudSpeed: document.querySelector("#hud-speed"), hudSpeedValue: document.querySelector("#hud-speed-value"), hudEvent: document.querySelector("#hud-event"), hudSelection: document.querySelector("#observer-selection"), hudSelectedName: document.querySelector("#hud-selected-name"), hudSelectedAction: document.querySelector("#hud-selected-action"), hudEnergy: document.querySelector("#hud-energy"), hudHealth: document.querySelector("#hud-health"), hudWater: document.querySelector("#hud-water"), hudDrive: document.querySelector("#hud-drive"), hudLock: document.querySelector("#hud-lock"), hudFavourite: document.querySelector("#hud-favourite"), runState: document.querySelector("#run-state"), viewMode: document.querySelector("#view-mode"), minimap: document.querySelector("#minimap"), minimapMode: document.querySelector("#minimap-mode"), eventFilter: document.querySelector("#event-filter"), eventLimit: document.querySelector("#event-limit"), playPause: document.querySelector("#play-pause"), step: document.querySelector("#step"), mapView: document.querySelector("#map-view"), reset: document.querySelector("#reset"), save: document.querySelector("#save"), load: document.querySelector("#load"), saveSlot: document.querySelector("#save-slot"), loadSlot: document.querySelector("#load-slot"), saveSlotList: document.querySelector("#save-slot-list"), exportSave: document.querySelector("#export-save"), importSave: document.querySelector("#import-save"), importSaveFile: document.querySelector("#import-save-file"), worldSize: document.querySelector("#world-size"), startHerbivores: document.querySelector("#start-herbivores"), startCarnivores: document.querySelector("#start-carnivores"), terrainRelief: document.querySelector("#terrain-relief"), mountainAmount: document.querySelector("#mountain-amount"), hillAmount: document.querySelector("#hill-amount"), valleyAmount: document.querySelector("#valley-amount"), ridgeAmount: document.querySelector("#ridge-amount"), plateauAmount: document.querySelector("#plateau-amount"), roughnessAmount: document.querySelector("#roughness-amount"), riverAmount: document.querySelector("#river-amount"), riverWidthVariation: document.querySelector("#river-width-variation"), riverPatternDiversity: document.querySelector("#river-pattern-diversity"), lakeAmount: document.querySelector("#lake-amount"), woodlandAmount: document.querySelector("#woodland-amount"), treeDensity: document.querySelector("#tree-density"), bushDensity: document.querySelector("#bush-density"), longGrass: document.querySelector("#long-grass"), rainfallAmount: document.querySelector("#rainfall-amount"), climateAmount: document.querySelector("#climate-amount"), lockEntity: document.querySelector("#lock-entity"), favouriteEntity: document.querySelector("#favourite-entity"), saveSeed: document.querySelector("#save-seed"), favouriteList: document.querySelector("#favourite-list"), seedList: document.querySelector("#seed-list"), speed: document.querySelector("#speed"), speedValue: document.querySelector("#speed-value"), speedMultiplier: document.querySelector("#speed-multiplier"), feedbackMode: document.querySelector("#feedback-mode"), day: document.querySelector("#day"), season: document.querySelector("#season"), weather: document.querySelector("#weather"), plants: document.querySelector("#plants"), herbivores: document.querySelector("#herbivores"), carnivores: document.querySelector("#carnivores"), births: document.querySelector("#births"), deaths: document.querySelector("#deaths"), selectedName: document.querySelector("#selected-name"), selectedKind: document.querySelector("#selected-kind"), selectedSex: document.querySelector("#selected-sex"), selectedAge: document.querySelector("#selected-age"), selectedStage: document.querySelector("#selected-stage"), selectedSize: document.querySelector("#selected-size"), selectedPregnancy: document.querySelector("#selected-pregnancy"), selectedClimate: document.querySelector("#selected-climate"), selectedAction: document.querySelector("#selected-action"), selectedEnergy: document.querySelector("#selected-energy"), selectedHealth: document.querySelector("#selected-health"), selectedHydration: document.querySelector("#selected-hydration"), selectedInjuries: document.querySelector("#selected-injuries"), selectedFeeding: document.querySelector("#selected-feeding"), selectedDrive: document.querySelector("#selected-drive"), selectedExpression: document.querySelector("#selected-expression"), selectedRelation: document.querySelector("#selected-relation"), selectedMemory: document.querySelector("#selected-memory"), selectedTarget: document.querySelector("#selected-target"), selectedAwareness: document.querySelector("#selected-awareness"), priorityList: document.querySelector("#priority-list"), overlayVision: document.querySelector("#overlay-vision"), overlaySmell: document.querySelector("#overlay-smell"), overlaySound: document.querySelector("#overlay-sound"), overlayMemory: document.querySelector("#overlay-memory"), overlayEntityFocus: document.querySelector("#overlay-entity-focus"), overlayBiomass: document.querySelector("#overlay-biomass"), overlayWater: document.querySelector("#overlay-water"), overlayPheromone: document.querySelector("#overlay-pheromone"), events: document.querySelector("#events"), rssTrace: document.querySelector("#rss-trace"), entityIndicator: document.querySelector("#entity-indicator"), physicalViability: document.querySelector("#physicalViability"), mismatch: document.querySelector("#mismatch"), feedbackStatus: document.querySelector("#feedback-status"), driftStatus: document.querySelector("#drift-status"), performance: document.querySelector("#performance")
 };
 ui.overlayCalls = document.querySelector("#overlay-calls");
 ui.overlayPersonalSpace = document.querySelector("#overlay-personal-space");
@@ -205,7 +215,7 @@ ui.benchmarkStart = document.querySelector("#benchmark-start");
 ui.benchmarkCopy = document.querySelector("#benchmark-copy");
 ui.benchmarkStatus = document.querySelector("#benchmark-status");
 ui.benchmarkLive = document.querySelector("#benchmark-live");
-ui.graphicsOpen = document.querySelector("#graphics-open"); ui.graphicsPanel = document.querySelector("#graphics-panel"); ui.graphicsClose = document.querySelector("#graphics-close"); ui.graphicsPreset = document.querySelector("#graphics-preset"); ui.graphicsResolution = document.querySelector("#graphics-resolution"); ui.graphicsVegetation = document.querySelector("#graphics-vegetation"); ui.graphicsAnimals = document.querySelector("#graphics-animals"); ui.graphicsFrameCap = document.querySelector("#graphics-frame-cap"); ui.graphicsEffects = document.querySelector("#graphics-effects"); ui.graphicsShadows = document.querySelector("#graphics-shadows"); ui.graphicsAdaptiveResolution = document.querySelector("#graphics-adaptive-resolution"); ui.graphicsAdaptiveMin = document.querySelector("#graphics-adaptive-min"); ui.graphicsAdaptiveMax = document.querySelector("#graphics-adaptive-max"); ui.graphicsSummary = document.querySelector("#graphics-summary");
+ui.graphicsOpen = document.querySelector("#graphics-open"); ui.graphicsPanel = document.querySelector("#graphics-panel"); ui.graphicsClose = document.querySelector("#graphics-close"); ui.graphicsPreset = document.querySelector("#graphics-preset"); ui.graphicsResolution = document.querySelector("#graphics-resolution"); ui.graphicsVegetation = document.querySelector("#graphics-vegetation"); ui.graphicsAnimals = document.querySelector("#graphics-animals"); ui.graphicsLargeMapPerformance = document.querySelector("#graphics-large-map-performance"); ui.graphicsObserverZoom = document.querySelector("#graphics-observer-zoom"); ui.graphicsObserverHaze = document.querySelector("#graphics-observer-haze"); ui.graphicsFrameCap = document.querySelector("#graphics-frame-cap"); ui.graphicsEffects = document.querySelector("#graphics-effects"); ui.graphicsShadows = document.querySelector("#graphics-shadows"); ui.graphicsAdaptiveResolution = document.querySelector("#graphics-adaptive-resolution"); ui.graphicsAdaptiveMin = document.querySelector("#graphics-adaptive-min"); ui.graphicsAdaptiveMax = document.querySelector("#graphics-adaptive-max"); ui.graphicsSummary = document.querySelector("#graphics-summary");
 ui.graphicsIconQuality = document.querySelector("#graphics-icon-quality");
 ui.graphicsUnstuckEntity = document.querySelector("#graphics-unstuck-entity"); ui.entityUnstuckStatus = document.querySelector("#entity-unstuck-status");
 const displayScaleFieldset = ui.graphicsResolution?.closest("fieldset");
@@ -266,13 +276,14 @@ hydratePhysiologySymbolSlots(document);
 ui.symbolKeySearch = document.querySelector("#symbol-key-search");
 ui.hudSelectionToggle = document.querySelector("#observer-selection-toggle");
 ui.observerTabs = [...document.querySelectorAll("[data-observer-tab]")];
-ui.newWorldOpen = document.querySelector("#new-world-open"); ui.newWorldPanel = document.querySelector("#new-world-panel"); ui.newWorldClose = document.querySelector("#new-world-close"); ui.newWorldCancel = document.querySelector("#new-world-cancel"); ui.newWorldGenerate = document.querySelector("#new-world-generate"); ui.newWorldSettings = document.querySelector("#new-world-settings");
+ui.newWorldOpen = document.querySelector("#new-world-open"); ui.newWorldPanel = document.querySelector("#new-world-panel"); ui.newWorldClose = document.querySelector("#new-world-close"); ui.newWorldCancel = document.querySelector("#new-world-cancel"); ui.newWorldGenerate = document.querySelector("#new-world-generate"); ui.newWorldSettings = document.querySelector("#new-world-settings"); ui.newWorldSeed = document.querySelector("#new-world-seed"); ui.newWorldDay = document.querySelector("#new-world-day"); ui.newWorldSeedDateReview = document.querySelector("#new-world-seed-date-review");
+ui.worldGenerationProgress = document.querySelector("#world-generation-progress"); ui.worldGenerationPhase = document.querySelector("#world-generation-phase"); ui.worldGenerationDetail = document.querySelector("#world-generation-detail"); ui.worldGenerationBar = document.querySelector("#world-generation-bar"); ui.worldGenerationCancel = document.querySelector("#world-generation-cancel");
 ui.embodimentExperience = document.querySelector("#embodiment-experience"); ui.embodimentDifficulty = document.querySelector("#embodiment-difficulty"); ui.embodimentRole = document.querySelector("#embodiment-role"); ui.embodimentSpecies = document.querySelector("#embodiment-species"); ui.embodimentSex = document.querySelector("#embodiment-sex"); ui.embodimentStage = document.querySelector("#embodiment-stage"); ui.embodimentAge = document.querySelector("#embodiment-age"); ui.embodimentHunger = document.querySelector("#embodiment-hunger"); ui.embodimentThirst = document.querySelector("#embodiment-thirst"); ui.embodimentHealth = document.querySelector("#embodiment-health"); ui.embodimentPregnancy = document.querySelector("#embodiment-pregnancy"); ui.embodimentReview = document.querySelector("#embodiment-review");
 let observerDetailTab = "details";
 
 const plantTypes = { grass: { nutrition: 1, growth: 0.055, max: 1 }, shrub: { nutrition: 1.4, growth: 0.028, max: 1.4 }, tree: { nutrition: 0.35, growth: 0.012, max: 2 } };
 const seasons = ["Spring", "Summer", "Autumn", "Winter"];
-const seasonMods = { Spring: { growth: 1.45, temp: 14, rain: 0.42, breed: 1 }, Summer: { growth: 1.08, temp: 24, rain: 0.25, breed: 0.8 }, Autumn: { growth: 0.82, temp: 11, rain: 0.38, breed: 0.35 }, Winter: { growth: 0.22, temp: 1, rain: 0.22, breed: 0 } };
+const seasonMods = { Spring: { growth: 1.45, temp: 14, rain: 0.42 }, Summer: { growth: 1.08, temp: 24, rain: 0.25 }, Autumn: { growth: 0.82, temp: 11, rain: 0.38 }, Winter: { growth: 0.22, temp: 1, rain: 0.22 } };
 
 // v2 intentionally retires pre-adaptive custom values so this release starts
 // from the known Balanced baseline. New changes continue to persist normally.
@@ -287,7 +298,7 @@ renderer.setClearColor(0x18201c);
 ui.viewport.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x0f1210, 330, 900);
+scene.fog = new THREE.Fog(0x18201c, 330, 900);
 const camera = new THREE.PerspectiveCamera(46, ui.viewport.clientWidth / ui.viewport.clientHeight, 0.1, 1200);
 camera.position.set(175, 230, 190);
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -321,12 +332,12 @@ mats.trunk = new THREE.MeshLambertMaterial({ color: 0x5a3a22 });
 mats.bareTree = new THREE.MeshLambertMaterial({ color: 0x76523a });
 mats.shallowWater = new THREE.MeshStandardMaterial({ color: 0x67bdf0, roughness: 0.25, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
 mats.deepWater = new THREE.MeshStandardMaterial({ color: 0x1b619d, roughness: 0.2, transparent: true, opacity: 0.94, side: THREE.DoubleSide });
+mats.riverWater = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.22, transparent: true, opacity: 0.92, side: THREE.DoubleSide });
 mats.lily = new THREE.MeshLambertMaterial({ color: 0x5ea94e });
 // Material-classed hex regions replace the old cell-colour texture.  Adjacent
 // hexes share terrain vertices, while their visible land classes stay crisp.
 mats.groundBase.vertexColors = false;
 mats.groundBase.color.set(0xffffff);
-const hexTerrainMaterials = [mats.grassPatch, mats.longGrassPatch, mats.forestPatch, mats.dirtPatch, mats.sandPatch, mats.mudPatch, mats.wetlandPatch, mats.rockPatch, mats.snowPatch, mats.water, mats.dryGrassPatch, mats.scrubPatch];
 function createGroundPatternTexture() {
   const canvas = document.createElement("canvas"); canvas.width = canvas.height = 64;
   const context = canvas.getContext("2d"); context.fillStyle = "#ffffff"; context.fillRect(0, 0, 64, 64);
@@ -337,14 +348,14 @@ function createGroundPatternTexture() {
   const texture = new THREE.CanvasTexture(canvas); texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.colorSpace = THREE.SRGBColorSpace; return texture;
 }
 const groundPatternTexture = createGroundPatternTexture();
-const hexGroundMaterials = hexTerrainMaterials.map((material, index) => {
-  if (index === 9) return material;
-  const groundMaterial = material.clone(); groundMaterial.map = groundPatternTexture; return groundMaterial;
-});
+const groundLandMaterial = mats.groundBase.clone();
+groundLandMaterial.map = groundPatternTexture; groundLandMaterial.color.set(0xffffff); groundLandMaterial.vertexColors = true; groundLandMaterial.roughness = .92;
 let groundMesh = null;
 let groundColours = null;
 let worldEdgeLine = null;
-const terrainSurfaceCache = new Map();
+let terrainSurfaceTable = null;
+const lakeRenderMeshes = new Map();
+const riverRenderMeshes = new Map();
 
 const flatTerrainTile = new THREE.PlaneGeometry(1, 1);
 flatTerrainTile.rotateX(-Math.PI / 2);
@@ -352,6 +363,12 @@ const memoryArrowShape = new THREE.Shape();
 memoryArrowShape.moveTo(-0.42, -0.09); memoryArrowShape.lineTo(0.08, -0.09); memoryArrowShape.lineTo(0.08, -0.23); memoryArrowShape.lineTo(0.48, 0); memoryArrowShape.lineTo(0.08, 0.23); memoryArrowShape.lineTo(0.08, 0.09); memoryArrowShape.lineTo(-0.42, 0.09); memoryArrowShape.closePath();
 const geos = { terrainTile: flatTerrainTile, water: new THREE.BoxGeometry(0.98, 0.05, 0.98), herbivore: new THREE.SphereGeometry(0.42, 24, 16), carnivore: new THREE.ConeGeometry(0.46, 1, 5), marker: new THREE.SphereGeometry(0.11, 12, 8), horn: new THREE.ConeGeometry(0.08, 0.26, 8), ring: new THREE.RingGeometry(0.98, 1.03, 80), memoryArrow: new THREE.ShapeGeometry(memoryArrowShape), corpse: new THREE.BoxGeometry(0.7, 0.18, 0.42), bone: new THREE.BoxGeometry(0.78, 0.07, 0.09), bush: new THREE.SphereGeometry(0.46, 8, 6), tree: new THREE.ConeGeometry(0.5, 1.8, 7), trunk: new THREE.CylinderGeometry(0.09, 0.13, 0.82, 6), fallenTree: new THREE.CylinderGeometry(0.14, 0.22, 1.9, 7) };
 geos.eye = new THREE.SphereGeometry(0.05, 10, 8);
+geos.animalBlock = new THREE.BoxGeometry(.7, .58, .76, 2, 2, 2);
+geos.animalWedge = new THREE.ConeGeometry(.42, .78, 5);
+geos.animalCoil = new THREE.TorusGeometry(.3, .14, 10, 24);
+geos.animalDome = new THREE.SphereGeometry(.44, 16, 10, 0, Math.PI * 2, 0, Math.PI * .62);
+geos.featureWing = new THREE.SphereGeometry(.32, 10, 6);
+geos.featureBeak = new THREE.ConeGeometry(.1, .32, 5);
 geos.contactShadow = new THREE.CircleGeometry(.55, 20); geos.contactShadow.rotateX(-Math.PI / 2);
 const pregnancyMat = new THREE.MeshBasicMaterial({ color: 0xff6fae, transparent: true, opacity: 0.9 });
 const attackRingMat = new THREE.MeshBasicMaterial({ color: 0xff4d4d, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
@@ -381,7 +398,7 @@ const iconMaterials = {
   pregnantGrazer: badgeMaterial("P", "#e6bc52"), pregnantHunter: badgeMaterial("P", "#d96cff"),
   infantGrazer: badgeMaterial("B", "#f3d990"), infantHunter: badgeMaterial("B", "#e2a5ff")
 };
-for (const resource of [...Object.values(geos), ...Object.values(mats), groundPatternTexture, ...hexGroundMaterials, pregnancyMat, attackRingMat, woundRingMat, mateLinkMat, communicationMat, contactShadowMat, bruiseMat, ...Object.values(climateMats), ...Object.values(scentMats), ...Object.values(fogMats), ...Object.values(senseMats), ...Object.values(personalSpaceMats), ...Object.values(iconMaterials)]) markResource(resource, RESOURCE_OWNERSHIP.shared);
+for (const resource of [...Object.values(geos), ...Object.values(mats), groundPatternTexture, groundLandMaterial, pregnancyMat, attackRingMat, woundRingMat, mateLinkMat, communicationMat, contactShadowMat, bruiseMat, ...Object.values(climateMats), ...Object.values(scentMats), ...Object.values(fogMats), ...Object.values(senseMats), ...Object.values(personalSpaceMats), ...Object.values(iconMaterials)]) markResource(resource, RESOURCE_OWNERSHIP.shared);
 
 // Diagnostic overlays are rebuilt frequently while the selected animal moves.
 // Keep their GPU buffers and Three.js objects alive between refreshes: only the
@@ -729,7 +746,7 @@ function clearOwnershipPanelSpritePool() {
 }
 function ownershipPregnancySummary(animal) {
   if (!animal?.pregnant) return "";
-  const profile = species?.[animal.speciesId] || {}, gestation = Number(profile.gestation), physiology = pregnancyPhysiology(animal.pregnant, gestation);
+  const profile = species?.[animal.speciesId] || {}, gestation = Number(profile.gestation), physiology = pregnancyPhysiology(animal.pregnant, gestation, profile.reproduction?.mode);
   const age = Number(animal.pregnant.age), progress = Number.isFinite(age) && Number.isFinite(gestation) && gestation > 0 ? physiology.progress : null;
   const count = Math.max(1, Math.floor(Number(animal.pregnant.offspringCount) || physiology.offspringCount || 1));
   return `PREGNANT${progress == null ? "" : ` · ${Math.round(progress * 100)}%`} · ${count} CARRIED`;
@@ -1486,6 +1503,7 @@ const cellVisionCaches = new Map();
 const landscapeDirtyState = new LandscapeDirtyState();
 const landscapeChunkCells = new Map();
 const vegetationChunkRoots = new Map();
+const vegetationRebuildQueue = new Map();
 const vegetationInstanceDummy = new THREE.Object3D();
 let vegetationSampleCache = { source: null, stride: 0, chunks: new Map() };
 const vegetationPresentationInvalidator = new VegetationPresentationInvalidator(30);
@@ -1514,6 +1532,7 @@ let activePopulationForScheduling = 0;
 let tickPerceptionElapsed = 0;
 let diagnosticBatch = false;
 let timeSkipSession = null;
+let seedDateLoadSession = null;
 let ecologyAuditSession = null;
 const entityThoughtStates = new Map();
 const expressionTransientStates = new Map();
@@ -1558,6 +1577,29 @@ let minimapDisplayMode = MINIMAP_MODES.has(savedMinimapMode) ? savedMinimapMode 
 if (ui.minimapMode) ui.minimapMode.value = minimapDisplayMode;
 let lastAutosaveTick = -Infinity;
 let sim = null;
+let worldGenerationController = null;
+let worldGenerationInProgress = false;
+let lastWorldGenerationMetrics = { terrainMs: 0, completeMs: 0 };
+let worldGenerationFallback = null;
+let worldGenerationStage = "idle";
+function traceWorldGeneration(stage) { worldGenerationStage = stage; }
+const WORLD_GENERATION_PHASE_LABELS = { cells: "Creating hexagons", terrain: "Shaping terrain", topology: "Connecting cells", substrate: "Forming soils", climate: "Calculating climate", drainage: "Solving drainage", "hydrology warm-up": "Warming up hydrology", rivers: "Classifying rivers", ecology: "Growing habitats", "spatial index": "Indexing the map", navigation: "Building navigation", history: "Simulating seed history", presentation: "Preparing the landscape" };
+function showWorldGenerationProgress(progress = { phase: "cells", percent: 0 }) {
+  if (!ui.worldGenerationProgress) return;
+  const percent = clamp(Number(progress.percent) || 0, 0, 1), phase = WORLD_GENERATION_PHASE_LABELS[progress.phase] || progress.phase || "Preparing world";
+  ui.worldGenerationProgress.hidden = false;
+  ui.worldGenerationProgress.setAttribute("aria-busy", "true");
+  ui.worldGenerationPhase.textContent = phase;
+  ui.worldGenerationDetail.textContent = `${Math.round(percent * 100)}%${Number(progress.total) > 1 ? ` · ${Number(progress.completed).toLocaleString()} of ${Number(progress.total).toLocaleString()}` : ""}${progress.stageDetail ? ` · ${progress.stageDetail}` : ""}`;
+  ui.worldGenerationBar.value = percent;
+  ui.worldGenerationBar.textContent = `${Math.round(percent * 100)}%`;
+}
+function hideWorldGenerationProgress() {
+  if (!ui.worldGenerationProgress) return;
+  ui.worldGenerationProgress.hidden = true;
+  ui.worldGenerationProgress.setAttribute("aria-busy", "false");
+}
+ui.worldGenerationCancel?.addEventListener("click", () => worldGenerationController?.abort());
 let ecologicalStockSnapshot = null;
 let indexedResourceCellsSource = null;
 const indexedDrinkableCells = [];
@@ -1664,7 +1706,7 @@ function profilerResources({ force = false } = {}) {
   const now = performance.now();
   const refreshIntervalMs = laboratoryBenchmark.running ? 250 : 1000;
   if (!force && profilerResourceSnapshot && now - profilerResourceSnapshotAt < refreshIntervalMs) return profilerResourceSnapshot;
-  const cameraGround = terrainSurfaceCache.size ? terrainRenderHeight(clamp(camera.position.x, -HALF, HALF), clamp(camera.position.z, -HALF, HALF)) : 0;
+  const cameraGround = terrainSurfaceTable ? terrainRenderHeight(clamp(camera.position.x, -HALF, HALF), clamp(camera.position.z, -HALF, HALF)) : 0;
   const cameraMetrics = cameraPresentationMetrics(camera.position, controls.target, cameraGround);
   const canvases = [];
   const animalEyeAttachment = { total: 0, attached: 0 };
@@ -1892,6 +1934,34 @@ window.rssDiagnostics = Object.freeze({
   clear: () => profiler.clear(),
   stopAnimationLoop: () => renderer.setAnimationLoop(null),
   report: () => profiler.report(profilerResources()),
+  asyncWorldLoad: async (seed = 1337, overrides = {}) => {
+    if (!TEST_MODE) return null;
+    const loaded = await loadSeedWorldAsync(Number(seed), { ...worldSetup, size: 48, span: 1, customSpan: 48, hexDetail: 500, ...overrides });
+    return { loaded, seed: sim.seed, cells: sim.hexWorld.cells.length, hash: authoritativeHash(sim), loadingVisible: !ui.worldGenerationProgress.hidden, resources: profilerResources() };
+  },
+  worldGenerationState: () => ({ active: worldGenerationInProgress, stage: worldGenerationStage, phase: ui.worldGenerationPhase?.textContent || null, detail: ui.worldGenerationDetail?.textContent || null, percent: Number(ui.worldGenerationBar?.value || 0) }),
+  highHexBenchmark: async (hexDetail = 5000, { runningState = false, performanceMode = false, frameSamples = 90 } = {}) => {
+    const detail = clamp(Math.round(Number(hexDetail) || 5000), 5000, 40000), priorMode = graphicsSettings.largeMapPerformanceMode;
+    graphicsSettings.largeMapPerformanceMode = Boolean(performanceMode);
+    const setup = { ...worldSetup, size: 300, span: 4, customSpan: 300, hexDetail: detail }, constructionStarted = performance.now();
+    const loaded = await loadSeedWorldAsync(1337, setup); if (!loaded) return { cancelled: true, hexDetail: detail };
+    const completeLoadMs = performance.now() - constructionStarted;
+    running = Boolean(runningState); ui.runState.textContent = running ? "Running" : "Paused";
+    const polygons = [...navigationMesh.polygons.values()], routeDurations = [];
+    for (let index = 0; index < 12 && polygons.length > 1; index += 1) {
+      const from = polygons[Math.floor(index / 12 * (polygons.length - 1))], to = polygons[Math.floor((11 - index) / 12 * (polygons.length - 1))], started = performance.now();
+      findNavPath(navigationMesh, from.center, to.center); routeDurations.push(performance.now() - started);
+    }
+    const dailyStarted = performance.now(); beginWaterCycle(); const dailyUpdateMs = performance.now() - dailyStarted, frameDurations = [];
+    let previous = performance.now();
+    for (let index = 0; index < Math.max(1, Math.min(240, frameSamples)); index += 1) await new Promise(resolve => requestAnimationFrame(now => { frameDurations.push(now - previous); previous = now; resolve(); }));
+    const p95 = values => [...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(values.length * .95))] || 0, resources = profilerResources(), result = {
+      hexDetail: detail, cells: sim.hexWorld.cells.length, constructionMs: lastWorldGenerationMetrics.terrainMs, completeLoadMs, dailyUpdateMs, routeP95Ms: p95(routeDurations), frameP95Ms: p95(frameDurations), authoritativeHash: authoritativeHash(sim), vegetationTasksRemaining: vegetationRebuildQueue.size,
+      heapBytes: performance.memory?.usedJSHeapSize || null, renderer: { geometries: resources["renderer.info.memory.geometries"], textures: resources["renderer.info.memory.textures"], calls: resources["renderer.info.render.calls"], triangles: resources["renderer.info.render.triangles"] }
+    };
+    graphicsSettings.largeMapPerformanceMode = priorMode;
+    return result;
+  },
   presentationBudgets: () => ({ ...presentationBudgets.budgets }),
   entityConstellationState: () => [...entityConstellationLayouts.values()].map((layout) => {
     const animal = animalById(layout.entityId), rendered = animalRenderCache.get(layout.entityId), parts = rendered?.userData.parts, integrated = layout.detailLevel === "instrument", publicPanel = parts?.identityPanel, instrumentBackdrop = parts?.instrumentBackdrop, instrumentMetrics = parts?.instrumentMetrics, panel = integrated ? instrumentBackdrop : publicPanel, cue = rendered?.userData.constellationCue, projection = rendered?.userData.constellationProjection || {};
@@ -2025,7 +2095,7 @@ window.rssDiagnostics = Object.freeze({
     return { name, seed: sim.seed, tick: sim.tick, selectedId, visibleAnimals: renderedAnimalCount };
   },
   clearEntitySelection: () => { selectedId = null; selectedGroupId = null; selectedTerrain = null; entityLocked = false; renderAll(); updateUI(); return true; },
-  loadShowcase: (scenario = "overview") => { if (!TEST_MODE) return null; loadScreenshotShowcaseWorld(scenario, "balanced"); return { scenario, selectedId, visibleIds: [...(showcaseVisibleIds || [])] }; }
+  loadShowcase: async (scenario = "overview") => { if (!TEST_MODE) return null; await loadScreenshotShowcaseWorld(scenario, "balanced"); return { scenario, selectedId, visibleIds: [...(showcaseVisibleIds || [])] }; }
 });
 
 function startEcologyAudit(seed, minutes, setup, observationMinutes = 180) {
@@ -2085,14 +2155,15 @@ function ecologyAuditResult(session) {
   const acquisitionSubjects = [...sim.animals, ...archivedAnimals.filter((archived) => !sim.animals.some((animal) => animal.id === archived.id))];
   const resourceAcquisitionByAnimal = acquisitionSubjects.map((animal) => ({ id: animal.id, speciesId: animal.speciesId, lifeStage: animal.lifeStage, alive: animal.alive, x: animal.x, z: animal.z, action: animal.actionState?.key || animal.action, hydration: animal.hydration, stomach: animal.stomach, fatigue: animal.fatigue, water: { ...migrateResourceAcquisition(animal).resourceAcquisition.water }, food: { ...migrateResourceAcquisition(animal).resourceAcquisition.food } }));
   const actualElapsed = sim.ecologicalMinute - session.startingEcologicalMinute;
-  return { seed: session.seed, requestedEcologicalMinutes: session.requestedMinutes, completedEcologicalMinutes: actualElapsed, interactionTicks: session.interactionTicks, ecologicalMinutesPerFullInteractionTick: ecologicalMinutesPerInteractionTick(session.observationMinutes), observationMinutes: session.observationMinutes, setup: { ...sim.worldSetup }, initialPopulation: session.initialPopulation, population: populationCounts(sim.animals), births: sim.births, deaths: sim.deaths, deathsByCause, deathsBySpecies, mortality, metrics: { ...session.metrics, huntToKillSuccess: session.metrics.huntsInitiated ? session.metrics.kills / session.metrics.huntsInitiated : 0, contactToKillSuccess: session.metrics.contacts ? session.metrics.kills / session.metrics.contacts : 0, killIntervals }, resourceAcquisition: resourceAcquisitionTotals(acquisitionSubjects), resourceAcquisitionByAnimal, carcass, extinction: { herbivores: !sim.animals.some((animal) => animal.alive && isHerbivore(animal)), carnivores: !sim.animals.some((animal) => animal.alive && speciesCanHunt(animal)) }, authoritativeHash: ecologyAuthoritativeHash(), accounting: ecologicalAccounting.report(), elapsedMs: performance.now() - session.startedAt, timings: profiler.report().timings };
+  return { seed: session.seed, requestedEcologicalMinutes: session.requestedMinutes, completedEcologicalMinutes: actualElapsed, interactionTicks: session.interactionTicks, ecologicalMinutesPerFullInteractionTick: ecologicalMinutesPerInteractionTick(session.observationMinutes), observationMinutes: session.observationMinutes, setup: { ...sim.worldSetup }, initialPopulation: session.initialPopulation, population: populationCounts(sim.animals), births: sim.births, deaths: sim.deaths, deathsByCause, deathsBySpecies, mortality, reproductiveIntegrity: reproductiveIntegrityAudit(sim, { initialPopulation: session.initialPopulation }), metrics: { ...session.metrics, huntToKillSuccess: session.metrics.huntsInitiated ? session.metrics.kills / session.metrics.huntsInitiated : 0, contactToKillSuccess: session.metrics.contacts ? session.metrics.kills / session.metrics.contacts : 0, killIntervals }, resourceAcquisition: resourceAcquisitionTotals(acquisitionSubjects), resourceAcquisitionByAnimal, carcass, extinction: { herbivores: !sim.animals.some((animal) => animal.alive && isHerbivore(animal)), carnivores: !sim.animals.some((animal) => animal.alive && speciesCanHunt(animal)) }, authoritativeHash: ecologyAuthoritativeHash(), accounting: ecologicalAccounting.report(), elapsedMs: performance.now() - session.startedAt, timings: profiler.report().timings };
 }
 
 function ecologyAuthoritativeHash() {
   const cells = (sim.cells || []).map((cell) => [cell.id ?? `${cell.x},${cell.z}`, cell.biomass, cell.moisture, cell.fertility, cell.waterLevel, cell.surfaceWater, cell.snowPack, cell.plantType, cell.plantStage]);
-  const animals = sim.animals.map((animal) => [animal.id, animal.alive, animal.x, animal.z, animal.velocityX, animal.velocityZ, animal.orientation, animal.health, animal.energy, animal.hydration, animal.stomach, animal.fatigue, animal.fear, animal.bodyMass, animal.lifeStage, animal.actionState?.key, animal.actionTarget, animal.predation?.phase, animal.predation?.targetId, animal.predation?.lastKillTick, animal.predation?.huntSuppressedUntil, animal.pregnant?.dueTick]);
+  const animals = sim.animals.map((animal) => [animal.id, animal.alive, animal.x, animal.z, animal.velocityX, animal.velocityZ, animal.orientation, animal.health, animal.energy, animal.hydration, animal.stomach, animal.fatigue, animal.fear, animal.bodyMass, animal.lifeStage, animal.actionState?.key, animal.actionTarget, animal.predation?.phase, animal.predation?.targetId, animal.predation?.lastKillTick, animal.predation?.huntSuppressedUntil, animal.pregnant?.age, animal.pregnant?.phase, animal.pregnant?.fatherId, animal.pregnant?.offspringCount, animal.reproductiveState]);
   const corpses = sim.corpses.map((corpse) => [corpse.id, corpse.ownerId, corpse.x, corpse.z, corpse.biomass, corpse.age, corpse.cause]);
-  return authoritativeHash({ worldSchema: sim.worldSchema, seed: sim.seed, worldSetup: sim.worldSetup, rngState: sim.rngState, tick: sim.tick, day: sim.day, season: sim.season, weather: sim.weather, weatherSystems: sim.weatherSystems, cells, animals, corpses, births: sim.births, deaths: sim.deaths, nextId: sim.nextId, nextDecisionOrder: sim.nextDecisionOrder });
+  const nests = (sim.nests || []).map((nest) => [nest.id, nest.speciesId, nest.count, nest.status, nest.viability, nest.unattendedDays, nest.laidMinute, nest.hatchMinute, nest.motherId, nest.fatherId]);
+  return authoritativeHash({ worldSchema: sim.worldSchema, seed: sim.seed, worldSetup: sim.worldSetup, rngState: sim.rngState, tick: sim.tick, day: sim.day, season: sim.season, weather: sim.weather, weatherSystems: sim.weatherSystems, cells, animals, corpses, nests, births: sim.births, deaths: sim.deaths, nextId: sim.nextId, nextDecisionOrder: sim.nextDecisionOrder });
 }
 
 sim = migrateEcologicalClock(migrateMinuteClock(createWorld(1337)));
@@ -2232,7 +2303,7 @@ async function refreshGameMenuPrimaryAction() {
   try {
     let snapshot = await readSnapshot("resume"); if (!snapshot) { const legacy = localStorage.getItem(SAVE_KEY); if (legacy) snapshot = JSON.parse(legacy); }
     if (probe !== gameMenuWorldProbe) return;
-    if (snapshot?.animals && Number.isFinite(snapshot.seed)) { const saveName = String(snapshot.saveSlotName || "").trim(); return presentGameMenuWorld({ mode: "saved", source: saveName ? `Selected save · ${saveName}` : "Most recent quick save", action: saveName ? `Continue “${saveName}”` : "Resume previous world", world: snapshot, savedAt: snapshot.savedAt, explanation: saveName ? `Loads the named save “${saveName}” shown above.` : "Loads the latest quick or automatic save shown above. Use Saved worlds to choose a named save instead." }); }
+    if (snapshot?.animals && Number.isFinite(snapshot.seed)) { const saveName = String(snapshot.saveSlotName || "").trim(); if (snapshot.worldSchema !== WORLD_SCHEMA) return presentGameMenuWorld({ mode: "incompatible", source: saveName ? `Incompatible save · ${saveName}` : "Incompatible previous world", action: "Create a new world", world: snapshot, savedAt: snapshot.savedAt, explanation: "This save predates the 365-day calendar and species-specific reproductive model. It remains stored, but a new world is required." }); return presentGameMenuWorld({ mode: "saved", source: saveName ? `Selected save · ${saveName}` : "Most recent quick save", action: saveName ? `Continue “${saveName}”` : "Resume previous world", world: snapshot, savedAt: snapshot.savedAt, explanation: saveName ? `Loads the named save “${saveName}” shown above.` : "Loads the latest quick or automatic save shown above. Use Saved worlds to choose a named save instead." }); }
   } catch {}
   if (probe !== gameMenuWorldProbe) return;
   presentGameMenuWorld({ mode: "new", source: "New unsaved world", action: "Begin observing this world", world: sim, explanation: "Opens the generated ecosystem behind this menu. Use New world to change its setup first." });
@@ -2647,10 +2718,10 @@ function renderEcologyLaboratory(a = selectedAnimal(), corpse = selectedCorpse()
   if (entityRoot && laboratorySurfaceVisible(entityRoot)) {
     let detail = `<p class="need-plan-empty">Select a living animal or carcass to inspect its complete food and spatial ecology.</p>`;
     if (a) {
-      const profile = speciesProfile(a), food = foodPreferenceSummary(a), spatial = spatialEcology(a);
+      const profile = speciesProfile(a), food = foodPreferenceSummary(a), habitatNeeds = habitatPreferenceSummary(a), movement = speciesLocomotionProfile(a), spatial = spatialEcology(a), localHabitatCell = cellAt(a.x, a.z), localHabitat = habitatProfile(localHabitatCell), climbing = terrainMobilityAssessment(a, localHabitatCell);
       const claim = Object.values(sim.territoryClaims || {}).find(row => row.ownerId === a.id || (a.groupId && row.ownerId === a.groupId));
       const disputes = (sim.territoryDisputes || []).filter(row => row.owners?.includes(claim?.ownerId));
-      detail = `<div class="society-summary-grid"><article><h3>Species ecology</h3><p>${escapeHtml(profile?.label || a.speciesId)} · ${escapeHtml(guildOf(a))} · ${escapeHtml(profile?.feeding || "unknown feeding")} · ${escapeHtml(profile?.habitat || "unknown habitat")}</p></article><article><h3>Preferred vegetation</h3><p>${ecologyList(food.preferredPlants, "no strongly preferred plant")}</p></article><article><h3>Avoided vegetation</h3><p>${ecologyList(food.avoidedPlants)}</p></article><article><h3>Preferred carcass sources</h3><p>${ecologyList(food.preferredCarrion, eatsMeat(a) ? "no specialist preference" : "does not eat carrion")}</p></article><article><h3>Avoided carcass sources</h3><p>${ecologyList(food.avoidedCarrion, eatsMeat(a) ? "none recorded" : "all carrion")}</p></article><article><h3>Tree browsing</h3><p>${isSustainableForage(a, "tree") ? "Can consume reachable foliage; a fully browsed crown remains standing and regenerates later." : "Tree foliage is not a sustainable food for this species."}</p></article><article><h3>Spatial system</h3><p>${escapeHtml(spatial.mode.replaceAll("-", " "))} · territoriality ${Math.round(spatial.territoriality * 100)}% · typical radius ${spatial.radius} m</p></article><article><h3>Current defended claim</h3><p>${claim ? `${claim.established ? "Established" : "Establishing"} · radius ${claim.radius.toFixed(1)} m · strength ${Math.round(claim.strength * 100)}% · stable occupancy ${claim.stableTicks} updates` : spatial.territoriality < .35 ? "Non-exclusive home range; no territory is expected." : "No stable claim. Remaining locally is required before establishment."}</p></article><article><h3>Territory conflict</h3><p>${disputes.length ? disputes.map(row => `${row.owners.map(escapeHtml).join(" ↔ ")} · ${Math.round(row.intensity * 100)}%`).join("; ") : "No established overlap dispute."}</p></article><article><h3>Current feeding context</h3><p>${escapeHtml(feedingState(a))} · cell ${escapeHtml(cellAt(a.x, a.z)?.plantType || "no vegetation")} · action ${escapeHtml(a.actionState?.label || a.actionState?.key || "none")}</p></article></div>`;
+      detail = `<div class="society-summary-grid"><article><h3>Species ecology</h3><p>${escapeHtml(profile?.label || a.speciesId)} · ${escapeHtml(guildOf(a))} · ${escapeHtml(profile?.feeding || "unknown feeding")}</p></article><article><h3>Habitat requirements</h3><p>Prefers ${ecologyList(habitatNeeds.preferred)}; tolerates ${ecologyList(habitatNeeds.tolerated)}. Moisture ${Math.round(habitatNeeds.moisture[0] * 100)}–${Math.round(habitatNeeds.moisture[1] * 100)}%; temperature ${habitatNeeds.temperature[0]}–${habitatNeeds.temperature[1]}°C.</p></article><article><h3>Current habitat</h3><p>${escapeHtml(habitatSummary(localHabitatCell))}; suitability ${Math.round(habitatSuitability(a, localHabitatCell) * 100)}%.</p></article><article><h3>Visible movement</h3><p>${escapeHtml(movement.label)} · ${escapeHtml(movement.feedingStyle.replaceAll("-", " "))} feeding motion${movement.stalk ? " · lowers into a ground stalk while hunting" : ""}.</p></article><article><h3>Climbing</h3><p>${escapeHtml(terrainMobilitySummary(a))}. Current strength ${Math.round(climbing.strength * 100)}%; usable maximum ${Math.round(climbing.effectiveMaximum * 100)}%; local slope ${Math.round(climbing.slope * 100)}% — ${escapeHtml(climbing.reason)}.</p></article><article><h3>Preferred vegetation</h3><p>${ecologyList(food.preferredPlants, "no strongly preferred plant")}</p></article><article><h3>Avoided vegetation</h3><p>${ecologyList(food.avoidedPlants)}</p></article><article><h3>Preferred carcass sources</h3><p>${ecologyList(food.preferredCarrion, eatsMeat(a) ? "no specialist preference" : "does not eat carrion")}</p></article><article><h3>Avoided carcass sources</h3><p>${ecologyList(food.avoidedCarrion, eatsMeat(a) ? "none recorded" : "all carrion")}</p></article><article><h3>Tree browsing</h3><p>${isSustainableForage(a, "tree") ? "Can consume reachable foliage; a fully browsed crown remains standing and regenerates later." : "Tree foliage is not a sustainable food for this species."}</p></article><article><h3>Spatial system</h3><p>${escapeHtml(spatial.mode.replaceAll("-", " "))} · territoriality ${Math.round(spatial.territoriality * 100)}% · typical radius ${spatial.radius} m</p></article><article><h3>Current defended claim</h3><p>${claim ? `${claim.established ? "Established" : "Establishing"} · radius ${claim.radius.toFixed(1)} m · strength ${Math.round(claim.strength * 100)}% · stable occupancy ${claim.stableTicks} updates` : spatial.territoriality < .35 ? "Non-exclusive home range; no territory is expected." : "No stable claim. Remaining locally is required before establishment."}</p></article><article><h3>Territory conflict</h3><p>${disputes.length ? disputes.map(row => `${row.owners.map(escapeHtml).join(" ↔ ")} · ${Math.round(row.intensity * 100)}%`).join("; ") : "No established overlap dispute."}</p></article><article><h3>Current feeding context</h3><p>${escapeHtml(feedingState(a))} · ${escapeHtml(localHabitat.plantCommunity.replaceAll("-", " "))} · action ${escapeHtml(a.actionState?.label || a.actionState?.key || "none")}</p></article></div>`;
     } else if (corpse) {
       const source = speciesProfile(corpse), preferred = SPECIES_IDS.filter(id => carcassPreference(id, corpse) >= 1), avoided = SPECIES_IDS.filter(id => eatsMeat(id) && carcassPreference(id, corpse) < .2);
       detail = `<div class="society-summary-grid"><article><h3>Carcass provenance</h3><p>${escapeHtml(source?.label || corpse.speciesId || "unknown species")} · ${escapeHtml(corpse.sex || "unknown sex")} · ${escapeHtml(corpse.lifeStage || "unknown life stage")}</p></article><article><h3>Remaining resource</h3><p>${Number(corpse.biomass || 0).toFixed(1)} of ${Number(corpse.initialBiomass || 0).toFixed(1)} food · age ${Number(corpse.age || 0).toFixed(0)} h · ${corpse.eaten ? "skeleton" : "available carcass"}</p></article><article><h3>Preferred consumers</h3><p>${ecologyList(preferred.map(id => species[id].label), "no specialist consumer")}</p></article><article><h3>Avoiding consumers</h3><p>${ecologyList(avoided.map(id => species[id].label))}</p></article><article><h3>Current use</h3><p>Claimed by ${escapeHtml(corpse.ownerId || "none")} · ${Math.round(corpse.feedingMinutes || 0)} feeding minutes · ${Number(corpse.biomassConsumed || 0).toFixed(1)} consumed</p></article></div>`;
@@ -3006,13 +3077,13 @@ function buildSpeciesSetupControls() {
   for (const id of SPECIES_IDS) {
     const profile = species[id], label = document.createElement("label"); label.className = "world-setting number-setting species-population-setting";
     const title = document.createElement("span"); title.textContent = `${profile.label} · ${profile.guild} · ${profile.sizeClass}`;
-    const input = document.createElement("input"); input.id = `start-species-${id}`; input.type = "number"; input.min = "0"; input.step = "1"; input.value = String(ecologyPresetCounts("ridge-hunter-web")[id] || 0);
+    const input = document.createElement("input"); input.id = `start-species-${id}`; input.type = "number"; input.min = "0"; input.step = "1"; input.value = String(ecologyPresetCounts("compact")[id] || 0);
     const output = document.createElement("output"); output.textContent = `${profile.feeding} · ${profile.habitat}`;
     label.append(title, input, output); anchor.before(label); ui.startSpecies[id] = input;
   }
 }
 buildSpeciesSetupControls();
-for (const id of SPECIES_IDS) ui.startSpecies[id].value = String(ecologyPresetCounts("ridge-hunter-web")[id] || 0); if (ui.ecologyPreset) ui.ecologyPreset.value = "ridge-hunter-web";
+for (const id of SPECIES_IDS) ui.startSpecies[id].value = String(ecologyPresetCounts("compact")[id] || 0); if (ui.ecologyPreset) ui.ecologyPreset.value = "compact";
 configureLaboratoryLayout();
 const worldSymbolDisclosure = ui.symbolKeyContent?.closest("details.world-symbol-key");
 worldSymbolDisclosure?.addEventListener("toggle", () => { if (worldSymbolDisclosure.open) renderWorldSymbolKey(); });
@@ -3325,13 +3396,32 @@ function syncEmbodimentSetup() {
   if (ui.embodimentReview) ui.embodimentReview.textContent = embodied ? `${capabilities.entitySetup === "full" ? "Configured" : "Random valid"} organism · ${role} role. This organism uses one existing population slot.` : "Observer Laboratory keeps the current autonomous simulation experience.";
   for (const [input, output] of [[ui.embodimentHunger, "#embodiment-hunger-value"], [ui.embodimentThirst, "#embodiment-thirst-value"], [ui.embodimentHealth, "#embodiment-health-value"]]) { const node = document.querySelector(output); if (node) node.textContent = `${input?.value || 0}%`; }
 }
+function randomWorldSeed() { try { return crypto.getRandomValues(new Uint32Array(1))[0]; } catch { return Math.floor(Math.random() * 0x100000000); } }
+function requestedNewWorldSeedDate() {
+  const seedText = ui.newWorldSeed?.value.trim() || "", dayText = ui.newWorldDay?.value.trim() || "1";
+  const seed = seedText === "" ? randomWorldSeed() : Number(seedText), day = Number(dayText);
+  if (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffffffff) { ui.newWorldSeed.setCustomValidity("Enter a whole-number seed from 0 to 4,294,967,295."); ui.newWorldSeed.reportValidity(); return null; }
+  ui.newWorldSeed.setCustomValidity("");
+  if (!Number.isSafeInteger(day) || day < 1 || (day - 1) * MINUTES_PER_DAY > Number.MAX_SAFE_INTEGER) { ui.newWorldDay.setCustomValidity("Enter a whole-number absolute day of 1 or later."); ui.newWorldDay.reportValidity(); return null; }
+  ui.newWorldDay.setCustomValidity("");
+  return { seed, day };
+}
+function syncNewWorldSeedDateReview() {
+  if (!ui.newWorldSeedDateReview) return;
+  const day = Math.max(1, Math.floor(Number(ui.newWorldDay?.value) || 1)), date = seasonForAbsoluteDay(day, ui.startSeason?.value || "Spring"), seed = ui.newWorldSeed?.value.trim();
+  ui.newWorldSeedDateReview.textContent = `${seed ? `Seed ${seed}` : "A random seed"} · absolute day ${day.toLocaleString()} · year ${date.year}, day ${date.dayOfYear} · ${date.season}, day ${date.dayOfSeason}.${day > 1 ? ` The preceding ${(day - 1).toLocaleString()} days will be simulated before the world opens.` : ""}`;
+}
 for (const control of [ui.embodimentExperience, ui.embodimentDifficulty, ui.embodimentRole, ui.embodimentSpecies, ui.embodimentSex, ui.embodimentStage, ui.embodimentAge, ui.embodimentHunger, ui.embodimentThirst, ui.embodimentHealth, ui.embodimentPregnancy]) control?.addEventListener("input", syncEmbodimentSetup);
-ui.newWorldOpen.addEventListener("click", () => { ui.newWorldPanel.hidden = false; ui.graphicsPanel.hidden = true; ui.realityPanel.hidden = true; syncEmbodimentSetup(); updateWorldSetupLabels(); });
+for (const control of [ui.newWorldSeed, ui.newWorldDay, ui.startSeason]) control?.addEventListener("input", syncNewWorldSeedDateReview);
+ui.newWorldOpen.addEventListener("click", () => { ui.newWorldPanel.hidden = false; ui.graphicsPanel.hidden = true; ui.realityPanel.hidden = true; syncEmbodimentSetup(); updateWorldSetupLabels(); syncNewWorldSeedDateReview(); });
 ui.newWorldClose.addEventListener("click", () => { closeNewWorldPanel(); if (returnToGameMenuAfterModal) showGameMenu(); else document.body.classList.remove("menu-modal-open"); returnToGameMenuAfterModal = false; }); ui.newWorldCancel.addEventListener("click", () => { closeNewWorldPanel(); if (returnToGameMenuAfterModal) showGameMenu(); else document.body.classList.remove("menu-modal-open"); returnToGameMenuAfterModal = false; });
-ui.newWorldGenerate.addEventListener("click", () => { const request = selectedEmbodimentRequest(), setup = selectedWorldSetup(), capabilities = difficultyProfile(request.difficulty); if (request.experience === "embodied") { const result = validateEmbodiedSetup({ role: request.role, ...request.setupRequest }, setup, capabilities, species); if (!result.valid) { ui.embodimentReview.textContent = result.errors.join(" "); ui.embodimentReview.classList.add("has-warning"); return; } } pendingEmbodiment = request; closeNewWorldPanel(); loadSeedWorld(1337 + Math.floor(Math.random() * 9999), setup, request); returnToGameMenuAfterModal = false; enterGame(); });
+ui.newWorldGenerate.addEventListener("click", async () => { const seedDate = requestedNewWorldSeedDate(); if (!seedDate) return; const request = selectedEmbodimentRequest(), setup = selectedWorldSetup(), capabilities = difficultyProfile(request.difficulty); if (request.experience === "embodied") { const result = validateEmbodiedSetup({ role: request.role, ...request.setupRequest }, setup, capabilities, species); if (!result.valid) { ui.embodimentReview.textContent = result.errors.join(" "); ui.embodimentReview.classList.add("has-warning"); return; } } pendingEmbodiment = request; closeNewWorldPanel(); const loaded = await loadSeedWorldAsync(seedDate.seed, setup, request, { targetDay: seedDate.day }); returnToGameMenuAfterModal = false; if (loaded) enterGame(); });
 function syncGraphicsControls() {
   ui.graphicsPreset.value = graphicsSettings.preset; ui.graphicsIconQuality.value = String(graphicsSettings.iconTextureQuality); ui.graphicsResolution.value = String(graphicsSettings.renderScale); ui.graphicsVegetation.value = String(graphicsSettings.vegetationStride); ui.graphicsAnimals.value = String(graphicsSettings.animalDetail); ui.graphicsEntityPublicPanel.value = String(graphicsSettings.entityPublicPanelScale); ui.graphicsEntitySelectedPanel.value = String(graphicsSettings.entitySelectedPanelScale); ui.graphicsEntityPanelText.value = String(graphicsSettings.entityPanelTextScale); ui.interfaceScale.value = String(graphicsSettings.interfaceScale); ui.fontScale.value = String(graphicsSettings.fontScale); ui.fontSmallScale.value = String(graphicsSettings.smallTextScale); ui.fontBodyScale.value = String(graphicsSettings.bodyTextScale); ui.fontControlScale.value = String(graphicsSettings.controlTextScale); ui.fontHeadingScale.value = String(graphicsSettings.headingTextScale); ui.fontTitleScale.value = String(graphicsSettings.titleTextScale); ui.graphicsFrameCap.value = String(graphicsSettings.frameCap); ui.graphicsEffects.checked = graphicsSettings.effects; ui.graphicsShadows.checked = graphicsSettings.contactShadows; ui.graphicsAdaptiveResolution.checked = graphicsSettings.adaptiveResolution; ui.graphicsAdaptiveMin.value = String(graphicsSettings.adaptiveMinScale); ui.graphicsAdaptiveMax.value = String(graphicsSettings.adaptiveMaxScale);
   if (ui.graphicsEntityPublicPanelsVisible) ui.graphicsEntityPublicPanelsVisible.checked = graphicsSettings.entityPublicPanelsVisible !== false;
+  if (ui.graphicsLargeMapPerformance) ui.graphicsLargeMapPerformance.checked = graphicsSettings.largeMapPerformanceMode === true;
+  if (ui.graphicsObserverZoom) ui.graphicsObserverZoom.value = graphicsSettings.observerZoomLevel;
+  if (ui.graphicsObserverHaze) ui.graphicsObserverHaze.value = graphicsSettings.observerHazeMode;
   if (ui.graphicsEntityBubbleScale) ui.graphicsEntityBubbleScale.value = String(graphicsSettings.entityBubbleScale);
   const moduleValues = { identity: graphicsSettings.entityPanelIdentityVisible, expression: graphicsSettings.entityPanelExpressionVisible, "public-cue": graphicsSettings.entityPanelPublicCueVisible, health: graphicsSettings.entityPanelHealthVisible, concern: graphicsSettings.entityPanelConcernVisible, "forecast-effect": graphicsSettings.entityPanelForecastEffectVisible, metabolic: graphicsSettings.entityPanelMetabolicVisible, performance: graphicsSettings.entityPanelPerformanceVisible, thought: graphicsSettings.entityPanelThoughtVisible, forecast: graphicsSettings.entityPanelForecastVisible };
   for (const [id, control] of Object.entries(ui.graphicsEntityPanelModules || {})) if (control) control.checked = moduleValues[id] !== false;
@@ -3353,7 +3443,8 @@ function syncGraphicsControls() {
   const publicSummary = publicPanelsHidden ? "identity/status panels hidden" : `identity/status panels ${Math.round(graphicsSettings.entityPublicPanelScale * 100)}%`;
   const selectedSummary = selectedPresentationHidden ? "selected status panel hidden" : `selected status panel ${Math.round(graphicsSettings.entitySelectedPanelScale * 100)}%`;
   const panelSummary = `${publicSummary} · ${selectedSummary} · text ${Math.round(graphicsSettings.entityPanelTextScale * 100)}%`;
-  ui.graphicsSummary.textContent = `${adaptive} · icon textures ${graphicsSettings.iconTextureQuality}× · ${panelSummary} · ${graphicsSettings.frameCap} FPS`;
+  const zoomLabel = { "map-sized": "map-sized zoom", far: "far zoom", "very-far": "very-far zoom", extreme: "extreme zoom" }[graphicsSettings.observerZoomLevel];
+  ui.graphicsSummary.textContent = `${adaptive} · icon textures ${graphicsSettings.iconTextureQuality}× · ${graphicsSettings.largeMapPerformanceMode ? "large-map presentation budget" : "normal landscape presentation"} · ${zoomLabel} · ${graphicsSettings.observerHazeMode} haze · ${panelSummary} · ${graphicsSettings.frameCap} FPS`;
 }
 // Presentation scaling belongs to the running simulation and its diagnostic
 // surfaces.  The front menu is a fixed composition: keeping it out of this
@@ -3443,15 +3534,17 @@ function applyGraphicsSettings(next, rebuild = true) {
   effectiveRenderScale = adaptiveResolution.reset(graphicsSettings.adaptiveResolution ? graphicsSettings.adaptiveMaxScale : graphicsSettings.renderScale, graphicsSettings.adaptiveMinScale); renderer.setPixelRatio(TEST_MODE ? 1 : Math.min(2, window.devicePixelRatio * effectiveRenderScale)); renderer.setSize(ui.viewport.clientWidth, ui.viewport.clientHeight, false);
   if (previousStride !== graphicsSettings.vegetationStride) { lastTerrainDetail = -1; landscapeDirty = true; }
   if (previousIconQuality !== graphicsSettings.iconTextureQuality) { clearEntityPresentation(); resetIconTextureCaches(); renderWorldSymbolKey(); }
+  applyObserverCameraEnvelope();
   syncGraphicsControls(); applyInterfacePresentation(); if (rebuild) { renderAll(); updateUI(); applyInterfacePresentation(); }
 }
-function readCustomGraphicsControls() { const modules = ui.graphicsEntityPanelModules || {}, entityAttachedPanelsVisible = ui.graphicsEntityPublicPanelsVisible?.checked === true, entityPublicPanelsVisible = entityAttachedPanelsVisible, entitySelectedPresentationVisible = entityAttachedPanelsVisible; return { preset: "custom", iconTextureQuality: Number(ui.graphicsIconQuality.value), renderScale: Number(ui.graphicsResolution.value), adaptiveMinScale: Number(ui.graphicsAdaptiveMin.value), adaptiveMaxScale: Number(ui.graphicsAdaptiveMax.value), vegetationStride: Number(ui.graphicsVegetation.value), animalDetail: Number(ui.graphicsAnimals.value), entityPanelsVisible: entityAttachedPanelsVisible, entityAttachedPanelsVisible, entityPublicPanelsVisible, entitySelectedPresentationVisible, entityPublicPanelScale: Number(ui.graphicsEntityPublicPanel.value), entitySelectedPanelScale: Number(ui.graphicsEntitySelectedPanel.value), entityPanelTextScale: Number(ui.graphicsEntityPanelText.value), entityBubbleScale: Number(ui.graphicsEntityBubbleScale?.value || 1), entityPanelIdentityVisible: modules.identity?.checked !== false, entityPanelExpressionVisible: modules.expression?.checked !== false, entityPanelPublicCueVisible: modules["public-cue"]?.checked !== false, entityPanelHealthVisible: modules.health?.checked !== false, entityPanelConcernVisible: graphicsSettings.entityPanelConcernVisible, entityPanelForecastEffectVisible: graphicsSettings.entityPanelForecastEffectVisible, entityPanelMetabolicVisible: graphicsSettings.entityPanelMetabolicVisible, entityPanelPerformanceVisible: graphicsSettings.entityPanelPerformanceVisible, entityPanelThoughtVisible: modules.thought?.checked !== false, entityPanelForecastVisible: modules.forecast?.checked !== false, entityExpressionScale: graphicsSettings.entityExpressionScale, entityIdentityScale: graphicsSettings.entityIdentityScale, entityIconScale: graphicsSettings.entityIconScale, thoughtScale: graphicsSettings.thoughtScale, predictionScale: graphicsSettings.predictionScale, diagnosticScale: graphicsSettings.diagnosticScale, diagnosticTextScale: graphicsSettings.diagnosticTextScale, interfaceScale: Number(ui.interfaceScale.value), fontScale: Number(ui.fontScale.value), smallTextScale: Number(ui.fontSmallScale.value), bodyTextScale: Number(ui.fontBodyScale.value), controlTextScale: Number(ui.fontControlScale.value), headingTextScale: Number(ui.fontHeadingScale.value), titleTextScale: Number(ui.fontTitleScale.value), frameCap: Number(ui.graphicsFrameCap.value), effects: ui.graphicsEffects.checked, contactShadows: ui.graphicsShadows.checked, adaptiveResolution: ui.graphicsAdaptiveResolution.checked }; }
+function readCustomGraphicsControls() { const modules = ui.graphicsEntityPanelModules || {}, entityAttachedPanelsVisible = ui.graphicsEntityPublicPanelsVisible?.checked === true, entityPublicPanelsVisible = entityAttachedPanelsVisible, entitySelectedPresentationVisible = entityAttachedPanelsVisible; return { preset: "custom", largeMapPerformanceMode: ui.graphicsLargeMapPerformance?.checked === true, observerZoomLevel: ui.graphicsObserverZoom?.value || graphicsSettings.observerZoomLevel, observerHazeMode: ui.graphicsObserverHaze?.value || graphicsSettings.observerHazeMode, iconTextureQuality: Number(ui.graphicsIconQuality.value), renderScale: Number(ui.graphicsResolution.value), adaptiveMinScale: Number(ui.graphicsAdaptiveMin.value), adaptiveMaxScale: Number(ui.graphicsAdaptiveMax.value), vegetationStride: Number(ui.graphicsVegetation.value), animalDetail: Number(ui.graphicsAnimals.value), entityPanelsVisible: entityAttachedPanelsVisible, entityAttachedPanelsVisible, entityPublicPanelsVisible, entitySelectedPresentationVisible, entityPublicPanelScale: Number(ui.graphicsEntityPublicPanel.value), entitySelectedPanelScale: Number(ui.graphicsEntitySelectedPanel.value), entityPanelTextScale: Number(ui.graphicsEntityPanelText.value), entityBubbleScale: Number(ui.graphicsEntityBubbleScale?.value || 1), entityPanelIdentityVisible: modules.identity?.checked !== false, entityPanelExpressionVisible: modules.expression?.checked !== false, entityPanelPublicCueVisible: modules["public-cue"]?.checked !== false, entityPanelHealthVisible: modules.health?.checked !== false, entityPanelConcernVisible: graphicsSettings.entityPanelConcernVisible, entityPanelForecastEffectVisible: graphicsSettings.entityPanelForecastEffectVisible, entityPanelMetabolicVisible: graphicsSettings.entityPanelMetabolicVisible, entityPanelPerformanceVisible: graphicsSettings.entityPanelPerformanceVisible, entityPanelThoughtVisible: modules.thought?.checked !== false, entityPanelForecastVisible: modules.forecast?.checked !== false, entityExpressionScale: graphicsSettings.entityExpressionScale, entityIdentityScale: graphicsSettings.entityIdentityScale, entityIconScale: graphicsSettings.entityIconScale, thoughtScale: graphicsSettings.thoughtScale, predictionScale: graphicsSettings.predictionScale, diagnosticScale: graphicsSettings.diagnosticScale, diagnosticTextScale: graphicsSettings.diagnosticTextScale, interfaceScale: Number(ui.interfaceScale.value), fontScale: Number(ui.fontScale.value), smallTextScale: Number(ui.fontSmallScale.value), bodyTextScale: Number(ui.fontBodyScale.value), controlTextScale: Number(ui.fontControlScale.value), headingTextScale: Number(ui.fontHeadingScale.value), titleTextScale: Number(ui.fontTitleScale.value), frameCap: Number(ui.graphicsFrameCap.value), effects: ui.graphicsEffects.checked, contactShadows: ui.graphicsShadows.checked, adaptiveResolution: ui.graphicsAdaptiveResolution.checked }; }
 ui.graphicsOpen.addEventListener("click", () => { ui.graphicsPanel.hidden = false; ui.realityPanel.hidden = true; ui.newWorldPanel.hidden = true; syncGraphicsControls(); void discoverMenuBackgrounds(); });
 ui.graphicsClose.addEventListener("click", () => { ui.graphicsPanel.hidden = true; if (returnToGameMenuAfterModal) showGameMenu(); else document.body.classList.remove("menu-modal-open"); returnToGameMenuAfterModal = false; });
 const currentTypographySettings = () => ({ entityPanelTextScale: graphicsSettings.entityPanelTextScale, interfaceScale: graphicsSettings.interfaceScale, fontScale: graphicsSettings.fontScale, smallTextScale: graphicsSettings.smallTextScale, bodyTextScale: graphicsSettings.bodyTextScale, controlTextScale: graphicsSettings.controlTextScale, headingTextScale: graphicsSettings.headingTextScale, titleTextScale: graphicsSettings.titleTextScale });
-ui.graphicsPreset.addEventListener("change", () => { if (ui.graphicsPreset.value !== "custom") applyGraphicsSettings({ ...graphicsPreset(ui.graphicsPreset.value), ...currentTypographySettings() }); });
+const currentObserverPresentationSettings = () => ({ largeMapPerformanceMode: graphicsSettings.largeMapPerformanceMode, observerZoomLevel: graphicsSettings.observerZoomLevel, observerHazeMode: graphicsSettings.observerHazeMode });
+ui.graphicsPreset.addEventListener("change", () => { if (ui.graphicsPreset.value !== "custom") applyGraphicsSettings({ ...graphicsPreset(ui.graphicsPreset.value), ...currentTypographySettings(), ...currentObserverPresentationSettings() }); });
 for (const control of Object.values(ui.graphicsEntityPanelModules || {})) control?.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
-for (const control of [ui.graphicsIconQuality, ui.graphicsResolution, ui.graphicsVegetation, ui.graphicsAnimals, ui.graphicsEntityPublicPanelsVisible, ui.graphicsEntityPublicPanel, ui.graphicsEntitySelectedPanel, ui.graphicsEntityPanelText, ui.graphicsEntityBubbleScale, ui.interfaceScale, ui.fontScale, ui.fontSmallScale, ui.fontBodyScale, ui.fontControlScale, ui.fontHeadingScale, ui.fontTitleScale, ui.graphicsFrameCap, ui.graphicsEffects, ui.graphicsShadows, ui.graphicsAdaptiveResolution, ui.graphicsAdaptiveMin, ui.graphicsAdaptiveMax].filter(Boolean)) control.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
+for (const control of [ui.graphicsIconQuality, ui.graphicsResolution, ui.graphicsVegetation, ui.graphicsAnimals, ui.graphicsLargeMapPerformance, ui.graphicsObserverZoom, ui.graphicsObserverHaze, ui.graphicsEntityPublicPanelsVisible, ui.graphicsEntityPublicPanel, ui.graphicsEntitySelectedPanel, ui.graphicsEntityPanelText, ui.graphicsEntityBubbleScale, ui.interfaceScale, ui.fontScale, ui.fontSmallScale, ui.fontBodyScale, ui.fontControlScale, ui.fontHeadingScale, ui.fontTitleScale, ui.graphicsFrameCap, ui.graphicsEffects, ui.graphicsShadows, ui.graphicsAdaptiveResolution, ui.graphicsAdaptiveMin, ui.graphicsAdaptiveMax].filter(Boolean)) control.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
 ui.fontScalesReset?.addEventListener("click", () => applyGraphicsSettings({ ...graphicsSettings, preset: "custom", fontScale: 1, smallTextScale: 1, bodyTextScale: 1, controlTextScale: 1, headingTextScale: 1, titleTextScale: 1 }));
 syncGraphicsControls(); applyInterfacePresentation();
 const pendingTypographyRoots = new Set();
@@ -3700,6 +3793,7 @@ window.addEventListener("keydown", (event) => {
 }, true);
 syncCinematicHudControls();
 ui.menuContinue?.addEventListener("click", async () => {
+  if (ui.menuContinue.dataset.worldMode === "incompatible") { returnToGameMenuAfterModal = true; document.body.classList.add("menu-modal-open"); ui.newWorldOpen.click(); return; }
   if (ui.menuContinue.dataset.worldMode === "saved" && !await restoreAutosavedProgress(true)) { gameSessionStarted = false; await refreshGameMenuPrimaryAction(); return; }
   enterGame();
 });
@@ -3979,22 +4073,52 @@ function focusSocialNetworkNode(event) {
 }
 ui.hudSpeed.addEventListener("input", () => { ui.speed.value = ui.hudSpeed.value; updateSpeedLabel(); });
 ui.step.addEventListener("click", () => { running = false; ui.playPause.textContent = "Play"; ui.runState.textContent = "Paused"; tickWorld(); });
+const SCENE_HAZE_COLOUR = 0x18201c;
+let observerBoundsWorld = null;
+let observerBoundsCache = null;
+function currentWorldCameraBounds() {
+  const world = sim?.hexWorld || null;
+  if (world !== observerBoundsWorld || !observerBoundsCache) {
+    observerBoundsWorld = world;
+    observerBoundsCache = terrainBounds(world?.cells || sim?.cells || [], { horizontalMargin: world?.radius || 0, verticalMargin: .5 });
+  }
+  return observerBoundsCache;
+}
+function applyObserverCameraEnvelope({ cinema = movieState.active } = {}) {
+  if (!camera || !controls) return null;
+  const embodied = sim?.embodiment?.experience === "embodied";
+  const envelope = observerCameraEnvelope(currentWorldCameraBounds(), {
+    cameraPosition: camera.position,
+    fovDegrees: camera.fov,
+    aspect: camera.aspect,
+    zoomLevel: graphicsSettings.observerZoomLevel,
+    hazeMode: embodied ? "natural" : graphicsSettings.observerHazeMode,
+    hazeColour: SCENE_HAZE_COLOUR,
+    cinema: cinema || embodied
+  });
+  if (!cinema && !embodied) controls.maxDistance = envelope.zoomLimitDistance;
+  if (Math.abs(camera.far - envelope.cameraFarPlane) > .5) { camera.far = envelope.cameraFarPlane; camera.updateProjectionMatrix(); }
+  if (envelope.fogNear === null) scene.fog = null;
+  else if (scene.fog instanceof THREE.Fog) { scene.fog.color.setHex(envelope.hazeColour); scene.fog.near = envelope.fogNear; scene.fog.far = envelope.fogFar; }
+  else scene.fog = new THREE.Fog(envelope.hazeColour, envelope.fogNear, envelope.fogFar);
+  return envelope;
+}
 function openMapOverview() {
   const capabilities = embodimentCapabilities();
   if (capabilities && !capabilities.abstractMap) { addEvent("Map overview is unavailable in this embodiment difficulty"); updateUI(); return false; }
   selectedId = null; selectedGroupId = null; selectedTerrain = null; entityLocked = false;
   resetCamera();
-  const frame = mapOverviewFrame(sim.cells, { fovDegrees: camera.fov });
+  const frame = mapOverviewFrame(currentWorldCameraBounds(), { fovDegrees: camera.fov, aspect: camera.aspect });
   controls.target.set(frame.target.x, frame.target.y, frame.target.z);
   camera.position.set(frame.position.x, frame.position.y, frame.position.z);
-  controls.maxDistance = Math.max(520, frame.distance * 1.35);
+  applyObserverCameraEnvelope({ cinema: false });
   controls.update();
   addEvent("Map overview: whole world framed");
   renderAll(); updateUI();
   return true;
 }
 ui.mapView.addEventListener("click", openMapOverview);
-ui.reset.addEventListener("click", () => loadSeedWorld(1337 + Math.floor(Math.random() * 9999), selectedWorldSetup()));
+ui.reset.addEventListener("click", () => { void loadSeedWorldAsync(1337 + Math.floor(Math.random() * 9999), selectedWorldSetup()); });
 ui.save.addEventListener("click", () => saveProgress(false));
 ui.load.addEventListener("click", async () => { if (await restoreAutosavedProgress(true) && !ui.gameMenu?.hidden) enterGame(); });
 ui.saveSlot.addEventListener("click", () => saveNamedSlot());
@@ -4069,7 +4193,7 @@ async function openEntityBookmark(item) {
   if (currentKey !== saveKey || Number(sim.seed) !== Number(item.seed)) {
     const snapshot = await readSnapshot(saveKey);
     if (!snapshot) { addEvent(`The save belonging to ${item.id} no longer exists`); updateUI(); return false; }
-    activateSnapshot(snapshot, `Opened ${item.saveLabel || "saved world"} without rewinding to the entity bookmark time`);
+    await activateSnapshotAsync(snapshot, `Opened ${item.saveLabel || "saved world"} without rewinding to the entity bookmark time`);
   }
   const target = entityBookmarkTarget(item.id);
   if (!target) { addEvent(`${item.id}, its remains, and its recorded close lineage are no longer present in this save`); updateUI(); return false; }
@@ -4085,18 +4209,18 @@ ui.favouriteEntity.addEventListener("click", async () => {
 });
 ui.saveSeed.addEventListener("click", () => { const items = readLocalList(SEEDS_KEY); if (!items.includes(sim.seed)) { items.unshift(sim.seed); writeLocalList(SEEDS_KEY, items.slice(0, 18)); addEvent(`Saved world seed ${sim.seed}`); } updateUI(); });
 ui.favouriteList.addEventListener("click", (event) => { const button = event.target.closest("button"), key = button?.dataset.bookmarkKey; if (!key) return; const items = readEntityBookmarks(), item = items.find(entry => entityBookmarkKey(entry) === key); if (!item) return; if (button.dataset.deleteFavourite != null) { writeLocalList(FAVOURITES_KEY, items.filter(entry => entityBookmarkKey(entry) !== key)); addEvent(`Removed saved entity ${item.id}`); return updateUI(); } if (button.dataset.favourite != null) void openEntityBookmark(item); });
-ui.seedList.addEventListener("click", (event) => { const button = event.target.closest("button"), remove = Number(button?.dataset.deleteSeed); if (Number.isFinite(remove)) { writeLocalList(SEEDS_KEY, readLocalList(SEEDS_KEY).filter((seed) => seed !== remove)); addEvent(`Removed saved seed ${remove}`); return updateUI(); } const seed = Number(button?.dataset.seed); if (Number.isFinite(seed)) loadSeedWorld(seed); });
+ui.seedList.addEventListener("click", (event) => { const button = event.target.closest("button"), remove = Number(button?.dataset.deleteSeed); if (Number.isFinite(remove)) { writeLocalList(SEEDS_KEY, readLocalList(SEEDS_KEY).filter((seed) => seed !== remove)); addEvent(`Removed saved seed ${remove}`); return updateUI(); } const seed = Number(button?.dataset.seed); if (Number.isFinite(seed)) void loadSeedWorldAsync(seed); });
 const worldPresets = {
-  mixed: { startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, relief: .15, mountains: 1, hills: 1, valleys: 1, rivers: 1.25, lakes: 1.25, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1.2, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36, temperatureVariation: 1, climate: 1 },
-  arid: { startSeason: "Summer", windDirection: "west", windStrength: 1.75, stormIntensity: .35, rainShadow: 1.9, sedimentTransport: 2.1, relief: .55, mountains: .35, hills: .35, valleys: .75, rivers: .25, lakes: .7, woodland: .05, trees: .05, bushes: .75, longGrass: .18, rainfall: .22, northTemperature: 14, southTemperature: 38, coldestTemperature: 1, hottestTemperature: 48, temperatureVariation: 1.5, climate: 1.35 },
-  alpine: { startSeason: "Winter", windDirection: "west", windStrength: 1.35, stormIntensity: 1.65, rainShadow: 1.55, sedimentTransport: .5, relief: 1.65, mountains: 1.8, hills: .8, valleys: 1.25, rivers: 1.65, lakes: 1.1, woodland: .45, trees: .55, bushes: .45, longGrass: .3, rainfall: 1.55, northTemperature: -10, southTemperature: 8, coldestTemperature: -30, hottestTemperature: 20, temperatureVariation: 1.5, climate: 1.55 },
-  maritime: { startSeason: "Spring", windDirection: "southwest", windStrength: 1.25, stormIntensity: 1.35, rainShadow: .65, sedimentTransport: .45, relief: .75, mountains: .35, hills: 1.4, valleys: .75, rivers: 1.2, lakes: .75, woodland: .8, trees: .85, bushes: 1.35, longGrass: 1.05, rainfall: 1.35, northTemperature: 7, southTemperature: 17, coldestTemperature: -6, hottestTemperature: 25, temperatureVariation: .55, climate: .65 },
-  boreal: { startSeason: "Spring", windDirection: "west", windStrength: .85, stormIntensity: .9, rainShadow: 1.1, sedimentTransport: .35, relief: 1.1, mountains: .85, hills: .7, valleys: 1.2, rivers: 1.4, lakes: 1.9, woodland: 1.2, trees: 1.45, bushes: .55, longGrass: .7, rainfall: 1.6, northTemperature: -4, southTemperature: 14, coldestTemperature: -20, hottestTemperature: 25, temperatureVariation: .9, climate: 1.05 }
+  mixed: { startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, relief: .15, mountains: 1, hills: 1, valleys: 1, ridges: .55, plateaus: .35, roughness: .3, rivers: 1.25, riverWidthVariation: 1, riverPatternDiversity: 1, lakes: 1.25, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1.2, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36, temperatureVariation: 1, climate: 1 },
+  arid: { startSeason: "Summer", windDirection: "west", windStrength: 1.75, stormIntensity: .35, rainShadow: 1.9, sedimentTransport: 2.1, relief: .55, mountains: .35, hills: .35, valleys: .75, ridges: .85, plateaus: 1.25, roughness: .4, rivers: .25, riverWidthVariation: 1.25, riverPatternDiversity: 1.15, lakes: .7, woodland: .05, trees: .05, bushes: .75, longGrass: .18, rainfall: .22, northTemperature: 14, southTemperature: 38, coldestTemperature: 1, hottestTemperature: 48, temperatureVariation: 1.5, climate: 1.35 },
+  alpine: { startSeason: "Winter", windDirection: "west", windStrength: 1.35, stormIntensity: 1.65, rainShadow: 1.55, sedimentTransport: .5, relief: 1.65, mountains: 1.8, hills: .8, valleys: 1.25, ridges: 1.65, plateaus: .55, roughness: 1.15, rivers: 1.65, riverWidthVariation: .85, riverPatternDiversity: .8, lakes: 1.1, woodland: .45, trees: .55, bushes: .45, longGrass: .3, rainfall: 1.55, northTemperature: -10, southTemperature: 8, coldestTemperature: -30, hottestTemperature: 20, temperatureVariation: 1.5, climate: 1.55 },
+  maritime: { startSeason: "Spring", windDirection: "southwest", windStrength: 1.25, stormIntensity: 1.35, rainShadow: .65, sedimentTransport: .45, relief: .75, mountains: .35, hills: 1.4, valleys: .75, ridges: .25, plateaus: .15, roughness: .55, rivers: 1.2, riverWidthVariation: 1.15, riverPatternDiversity: 1.25, lakes: .75, woodland: .8, trees: .85, bushes: 1.35, longGrass: 1.05, rainfall: 1.35, northTemperature: 7, southTemperature: 17, coldestTemperature: -6, hottestTemperature: 25, temperatureVariation: .55, climate: .65 },
+  boreal: { startSeason: "Spring", windDirection: "west", windStrength: .85, stormIntensity: .9, rainShadow: 1.1, sedimentTransport: .35, relief: 1.1, mountains: .85, hills: .7, valleys: 1.2, ridges: .65, plateaus: .8, roughness: .45, rivers: 1.4, riverWidthVariation: 1, riverPatternDiversity: 1, lakes: 1.9, woodland: 1.2, trees: 1.45, bushes: .55, longGrass: .7, rainfall: 1.6, northTemperature: -4, southTemperature: 14, coldestTemperature: -20, hottestTemperature: 25, temperatureVariation: .9, climate: 1.05 }
 };
 const applyWorldPreset = (name) => {
   const preset = worldPresets[name] || worldPresets.mixed;
   for (const [field, value] of Object.entries(preset)) {
-    const control = ({ startSeason: ui.startSeason, windDirection: ui.windDirection, windStrength: ui.windStrength, stormIntensity: ui.stormIntensity, rainShadow: ui.rainShadow, sedimentTransport: ui.sedimentTransport, relief: ui.terrainRelief, mountains: ui.mountainAmount, hills: ui.hillAmount, valleys: ui.valleyAmount, rivers: ui.riverAmount, lakes: ui.lakeAmount, woodland: ui.woodlandAmount, trees: ui.treeDensity, bushes: ui.bushDensity, longGrass: ui.longGrass, rainfall: ui.rainfallAmount, northTemperature: ui.northTemperature, southTemperature: ui.southTemperature, coldestTemperature: ui.coldestTemperature, hottestTemperature: ui.hottestTemperature, temperatureVariation: ui.temperatureVariation, climate: ui.climateAmount })[field];
+    const control = ({ startSeason: ui.startSeason, windDirection: ui.windDirection, windStrength: ui.windStrength, stormIntensity: ui.stormIntensity, rainShadow: ui.rainShadow, sedimentTransport: ui.sedimentTransport, relief: ui.terrainRelief, mountains: ui.mountainAmount, hills: ui.hillAmount, valleys: ui.valleyAmount, ridges: ui.ridgeAmount, plateaus: ui.plateauAmount, roughness: ui.roughnessAmount, rivers: ui.riverAmount, riverWidthVariation: ui.riverWidthVariation, riverPatternDiversity: ui.riverPatternDiversity, lakes: ui.lakeAmount, woodland: ui.woodlandAmount, trees: ui.treeDensity, bushes: ui.bushDensity, longGrass: ui.longGrass, rainfall: ui.rainfallAmount, northTemperature: ui.northTemperature, southTemperature: ui.southTemperature, coldestTemperature: ui.coldestTemperature, hottestTemperature: ui.hottestTemperature, temperatureVariation: ui.temperatureVariation, climate: ui.climateAmount })[field];
     if (control) control.value = value;
   }
   const description = { mixed: "Balanced grassland, woodland and water", arid: "Hot, dry ground with sandy basins and seasonal water", alpine: "Cold highlands with snow, headwaters and rocky slopes", maritime: "Cool wet hills, grassland, scrub and woodland", boreal: "Cold forest, many lakes and long winters" }[name] || "Choose a preset, then Reset";
@@ -4143,13 +4267,20 @@ function redistributeGuildTotal(guild, requested) {
   updateEcologySetupSummary(); updateWorldSetupLabels();
 }
 ui.ecologyPreset?.addEventListener("change", () => applyEcologyPreset(ui.ecologyPreset.value));
+const SCALE_ADAPTIVE_ECOLOGY_PRESETS = new Set(["compact", "balanced", "expanded", "full"]);
+ui.worldSize?.addEventListener("change", () => {
+  if (!SCALE_ADAPTIVE_ECOLOGY_PRESETS.has(ui.ecologyPreset?.value)) return;
+  const preset = ecologyPresetForWorldScale(ui.worldSize.value);
+  ui.ecologyPreset.value = preset;
+  applyEcologyPreset(preset);
+});
 ui.ecologyPopulationLevel?.addEventListener("change", () => { if (ui.ecologyPopulationLevel.value !== "custom") applyEcologyPopulationScale(ui.ecologyPopulationLevel.value); });
 ui.ecologyPopulationScale?.addEventListener("input", () => applyEcologyPopulationScale(ui.ecologyPopulationScale.value));
 for (const input of Object.values(ui.startSpecies || {})) input.addEventListener("input", () => { if (ui.ecologyPreset) ui.ecologyPreset.value = "custom"; updateEcologySetupSummary(); updateWorldSetupLabels(); });
 ui.startHerbivores?.addEventListener("change", () => redistributeGuildTotal("herbivore", ui.startHerbivores.value));
 ui.startCarnivores?.addEventListener("change", () => redistributeGuildTotal("carnivore", ui.startCarnivores.value));
 updateEcologySetupSummary();
-[ui.worldSize, ui.customWorldSize, ui.hexDetail, ui.startSeason, ui.windDirection, ui.startHerbivores, ui.startCarnivores, ui.terrainRelief, ui.mountainAmount, ui.hillAmount, ui.valleyAmount, ui.riverAmount, ui.lakeAmount, ui.woodlandAmount, ui.treeDensity, ui.bushDensity, ui.longGrass, ui.rainfallAmount, ui.windStrength, ui.stormIntensity, ui.rainShadow, ui.sedimentTransport, ui.northTemperature, ui.southTemperature, ui.coldestTemperature, ui.hottestTemperature, ui.temperatureVariation, ui.climateAmount].forEach((input) => input?.addEventListener("input", updateWorldSetupLabels));
+[ui.worldSize, ui.customWorldSize, ui.hexDetail, ui.startSeason, ui.windDirection, ui.startHerbivores, ui.startCarnivores, ui.terrainRelief, ui.mountainAmount, ui.hillAmount, ui.valleyAmount, ui.ridgeAmount, ui.plateauAmount, ui.roughnessAmount, ui.riverAmount, ui.riverWidthVariation, ui.riverPatternDiversity, ui.lakeAmount, ui.woodlandAmount, ui.treeDensity, ui.bushDensity, ui.longGrass, ui.rainfallAmount, ui.windStrength, ui.stormIntensity, ui.rainShadow, ui.sedimentTransport, ui.northTemperature, ui.southTemperature, ui.coldestTemperature, ui.hottestTemperature, ui.temperatureVariation, ui.climateAmount].forEach((input) => input?.addEventListener("input", updateWorldSetupLabels));
 ui.minimapMode?.addEventListener("change", () => {
   minimapDisplayMode = MINIMAP_MODES.has(ui.minimapMode.value) ? ui.minimapMode.value : "combined";
   ui.minimapMode.value = minimapDisplayMode;
@@ -4182,6 +4313,7 @@ function updateSpeedLabel() { const value = `${requestedTicksPerSecond()} minute
 ui.speed.addEventListener("input", updateSpeedLabel);
 function observationSessionMinutes() { return Math.max(60, Number(ui.observationPace?.value) || 180); }
 function ecologicalMinutesThisTick() {
+  if (seedDateLoadSession) return Math.max(0, Math.min(seedDateLoadSession.stepMinutes, seedDateLoadSession.targetMinute - (sim.ecologicalMinute || 0)));
   if (timeSkipSession) return 1;
   const normal = ecologicalMinutesPerInteractionTick(observationSessionMinutes());
   // Audit the requested ecological interval exactly. The final interaction may
@@ -4193,11 +4325,11 @@ function ecologicalMinutesThisTick() {
   }
   return normal;
 }
-function ecologicalHoursThisTick() { return timeSkipSession ? 1 / MINUTES_PER_HOUR : ecologicalHoursPerInteractionTick(observationSessionMinutes()); }
+function ecologicalHoursThisTick() { return Math.max(0, ecologicalAdvance.minute - ecologicalAdvance.previousMinute) / MINUTES_PER_HOUR; }
 function updateObservationPaceLabel() {
   if (!ui.observationPaceValue) return;
   const session = observationSessionMinutes(), ecologicalMinutes = ecologicalMinutesPerInteractionTick(session);
-  ui.observationPaceValue.textContent = `1 ecological year per ${session} real minutes at normal speed · ${ecologicalMinutes.toFixed(0)} ecological minutes per interaction tick. Interaction durations are unchanged.`;
+  ui.observationPaceValue.textContent = `1 ecological year (365 days) per ${session} real minutes at normal speed · ${ecologicalMinutes.toFixed(0)} ecological minutes per interaction tick. Long-lived species may need several observed years for generational change.`;
 }
 ui.observationPace?.addEventListener("change", updateObservationPaceLabel);
 function formattedWallDuration(milliseconds) {
@@ -4304,6 +4436,10 @@ function loop(now) {
   const delta = Math.min(80, now - last || 16);
   last = now;
   completedTicksLastFrame = 0;
+  if (worldGenerationInProgress) {
+    renderer.render(scene, camera);
+    return;
+  }
   if (running) {
     accumulator += delta * requestedTicksPerSecond() / 1000;
     const result = runBudgetedTicks(accumulator, tickWorld, { budgetMs: DEFAULT_FRAME_TICK_BUDGET_MS });
@@ -4331,6 +4467,7 @@ function loop(now) {
       if (!embodiedCameraActive) constrainCameraToTerrain(camera.position, controls.target, (x, z) => terrainRenderHeight(clamp(x, -HALF, HALF), clamp(z, -HALF, HALF)));
     }
   });
+  applyObserverCameraEnvelope({ cinema: movieState.active });
   // A full camera-driven refresh can create or re-admit animal roots with
   // their UI hidden by default. Perform it before the per-frame projection so
   // those roots receive their layout in this same rendered frame, avoiding a
@@ -4379,11 +4516,11 @@ function selectedWorldSetup() {
   const span = clamp(Math.round(Number(ui.worldSize?.value) || 3), 1, 4), spans = { 1: 90, 2: 150, 3: 220, 4: 300 }, enteredSpan = Math.floor(Number(ui.customWorldSize?.value)), customSpan = Number.isFinite(enteredSpan) && enteredSpan > 0 ? enteredSpan : null;
   const northTemperature = clamp(Number(ui.northTemperature?.value ?? 8), -12, 18), southTemperature = clamp(Number(ui.southTemperature?.value ?? 24), 8, 38), coldestTemperature = clamp(Number(ui.coldestTemperature?.value ?? -12), -30, 5), hottestTemperature = clamp(Number(ui.hottestTemperature?.value ?? 36), 18, 50);
   const speciesCounts = enabledSpeciesCounts(Object.fromEntries(SPECIES_IDS.map(id => [id, Number(ui.startSpecies?.[id]?.value) || 0]))), totals = speciesCategoryTotals(speciesCounts);
-  return { size: customSpan || spans[span], span, customSpan, hexDetail: clamp(Number(ui.hexDetail?.value) || 5000, 5000, 40000), startSeason: seasons.includes(ui.startSeason?.value) ? ui.startSeason.value : "Spring", windDirection: ["west", "southwest", "south", "southeast", "east"].includes(ui.windDirection?.value) ? ui.windDirection.value : "west", windStrength: slider(ui.windStrength, 1, 3), stormIntensity: slider(ui.stormIntensity, 1, 3), rainShadow: slider(ui.rainShadow, 1, 3), sedimentTransport: slider(ui.sedimentTransport, 1, 3), ecologyPreset: ui.ecologyPreset?.value || "custom", ecologyPopulationScale: ecologyPopulationScalePercent(), speciesCounts, ...totals, relief: slider(ui.terrainRelief), mountains: slider(ui.mountainAmount), hills: slider(ui.hillAmount), valleys: slider(ui.valleyAmount), rivers: slider(ui.riverAmount, 1, 3), lakes: slider(ui.lakeAmount, 1, 3), woodland: slider(ui.woodlandAmount), trees: slider(ui.treeDensity, 1, 3), bushes: slider(ui.bushDensity, 1, 3), longGrass: slider(ui.longGrass, 1, 3), rainfall: slider(ui.rainfallAmount, 1, 3), northTemperature: Math.min(northTemperature, southTemperature), southTemperature: Math.max(northTemperature, southTemperature), coldestTemperature: Math.min(coldestTemperature, hottestTemperature - 1), hottestTemperature: Math.max(hottestTemperature, coldestTemperature + 1), temperatureVariation: slider(ui.temperatureVariation, 1, 3), climate: slider(ui.climateAmount) };
+  return { size: customSpan || spans[span], span, customSpan, hexDetail: clamp(Number(ui.hexDetail?.value) || 5000, 5000, 40000), startSeason: seasons.includes(ui.startSeason?.value) ? ui.startSeason.value : "Spring", windDirection: ["west", "southwest", "south", "southeast", "east"].includes(ui.windDirection?.value) ? ui.windDirection.value : "west", windStrength: slider(ui.windStrength, 1, 3), stormIntensity: slider(ui.stormIntensity, 1, 3), rainShadow: slider(ui.rainShadow, 1, 3), sedimentTransport: slider(ui.sedimentTransport, 1, 3), ecologyPreset: ui.ecologyPreset?.value || "custom", ecologyPopulationScale: ecologyPopulationScalePercent(), speciesCounts, ...totals, relief: slider(ui.terrainRelief), mountains: slider(ui.mountainAmount), hills: slider(ui.hillAmount), valleys: slider(ui.valleyAmount), ridges: slider(ui.ridgeAmount), plateaus: slider(ui.plateauAmount), roughness: slider(ui.roughnessAmount), rivers: slider(ui.riverAmount, 1, 3), riverWidthVariation: slider(ui.riverWidthVariation, 1, 2), riverPatternDiversity: slider(ui.riverPatternDiversity, 1, 2), lakes: slider(ui.lakeAmount, 1, 3), woodland: slider(ui.woodlandAmount), trees: slider(ui.treeDensity, 1, 3), bushes: slider(ui.bushDensity, 1, 3), longGrass: slider(ui.longGrass, 1, 3), rainfall: slider(ui.rainfallAmount, 1, 3), northTemperature: Math.min(northTemperature, southTemperature), southTemperature: Math.max(northTemperature, southTemperature), coldestTemperature: Math.min(coldestTemperature, hottestTemperature - 1), hottestTemperature: Math.max(hottestTemperature, coldestTemperature + 1), temperatureVariation: slider(ui.temperatureVariation, 1, 3), climate: slider(ui.climateAmount) };
 }
 function setWorldSetup(setup = worldSetup) { const legacyCounts = !setup.speciesCounts ? { grazer: setup.herbivores ?? worldSetup.herbivores ?? 18, hunter: setup.carnivores ?? worldSetup.carnivores ?? 4 } : setup.speciesCounts; const speciesCounts = enabledSpeciesCounts(legacyCounts), totals = speciesCategoryTotals(speciesCounts); worldSetup = { ...worldSetup, ...setup, ecologyPopulationScale: clamp(Number(setup.ecologyPopulationScale ?? worldSetup.ecologyPopulationScale) || 100, 20, 200), speciesCounts, ...totals }; WORLD = worldSetup.size; HALF = WORLD / 2; }
-function updateWorldSetupLabels() { const setup = selectedWorldSetup(); const set = (id, value) => { const el = document.querySelector(id); if (el) el.textContent = value; }; const amount = (v) => v === 0 ? "None · 0.00×" : `${v < 0.75 ? "Low" : v > 1.25 ? "High" : "Normal"} · ${v.toFixed(2)}×`; const contrast = setup.temperatureVariation === 0 ? "Uniform · temperate" : setup.temperatureVariation < .75 ? "Subtle · mixed regions" : setup.temperatureVariation > 1.6 ? "Strong · hot/cold regions" : "Normal · mixed regions"; const spanName = ["", "Compact", "Medium", "Standard", "Vast"][setup.span], presetSpan = { 1: 90, 2: 150, 3: 220, 4: 300 }[setup.span]; set("#world-size-value", setup.customSpan ? `Custom · ${setup.size} world units (overrides ${spanName} · ${presetSpan})` : `${spanName} · ${setup.size} world units`); if (ui.hexDetailValue) ui.hexDetailValue.textContent = `${setup.hexDetail.toLocaleString()} connected hexes`; set("#start-herbivores-value", String(setup.herbivores)); set("#start-carnivores-value", String(setup.carnivores)); set("#terrain-relief-value", setup.relief === 0 ? "Flat · 0.00×" : amount(setup.relief)); set("#mountain-amount-value", amount(setup.mountains)); set("#hill-amount-value", amount(setup.hills)); set("#valley-amount-value", amount(setup.valleys)); set("#river-amount-value", amount(setup.rivers)); set("#lake-amount-value", amount(setup.lakes)); set("#woodland-amount-value", amount(setup.woodland)); set("#tree-density-value", amount(setup.trees)); set("#bush-density-value", amount(setup.bushes)); set("#long-grass-value", amount(setup.longGrass)); set("#rainfall-amount-value", amount(setup.rainfall)); set("#wind-strength-value", amount(setup.windStrength)); set("#storm-intensity-value", amount(setup.stormIntensity)); set("#rain-shadow-value", amount(setup.rainShadow)); set("#sediment-transport-value", amount(setup.sedimentTransport)); set("#north-temperature-value", `${setup.northTemperature <= 4 ? "Cold" : "Cool"} · ${setup.northTemperature}°C`); set("#south-temperature-value", `${setup.southTemperature >= 28 ? "Hot" : "Warm"} · ${setup.southTemperature}°C`); set("#coldest-temperature-value", `${setup.coldestTemperature}°C`); set("#hottest-temperature-value", `${setup.hottestTemperature}°C`); set("#temperature-variation-value", contrast); set("#climate-amount-value", amount(setup.climate)); }
-function syncWorldSetupInputs() { if (ui.ecologyPreset) ui.ecologyPreset.value = ECOLOGY_PRESETS[worldSetup.ecologyPreset] ? worldSetup.ecologyPreset : "custom"; syncEcologyPopulationScaleControls(worldSetup.ecologyPopulationScale ?? 100); for (const id of SPECIES_IDS) if (ui.startSpecies?.[id]) ui.startSpecies[id].value = String(worldSetup.speciesCounts?.[id] || 0); if (ui.worldSize) ui.worldSize.value = worldSetup.span ?? 3; if (ui.hexDetail) ui.hexDetail.value = worldSetup.hexDetail ?? 5000; if (ui.startSeason) ui.startSeason.value = seasons.includes(worldSetup.startSeason) ? worldSetup.startSeason : "Spring"; if (ui.windDirection) ui.windDirection.value = worldSetup.windDirection ?? "west"; if (ui.windStrength) ui.windStrength.value = worldSetup.windStrength ?? 1; if (ui.stormIntensity) ui.stormIntensity.value = worldSetup.stormIntensity ?? 1; if (ui.rainShadow) ui.rainShadow.value = worldSetup.rainShadow ?? 1; if (ui.sedimentTransport) ui.sedimentTransport.value = worldSetup.sedimentTransport ?? 1; if (ui.startHerbivores) ui.startHerbivores.value = worldSetup.herbivores; if (ui.startCarnivores) ui.startCarnivores.value = worldSetup.carnivores; if (ui.terrainRelief) ui.terrainRelief.value = worldSetup.relief; if (ui.mountainAmount) ui.mountainAmount.value = worldSetup.mountains; if (ui.hillAmount) ui.hillAmount.value = worldSetup.hills; if (ui.valleyAmount) ui.valleyAmount.value = worldSetup.valleys; if (ui.riverAmount) ui.riverAmount.value = worldSetup.rivers; if (ui.lakeAmount) ui.lakeAmount.value = worldSetup.lakes; if (ui.woodlandAmount) ui.woodlandAmount.value = worldSetup.woodland; if (ui.treeDensity) ui.treeDensity.value = worldSetup.trees ?? 1; if (ui.bushDensity) ui.bushDensity.value = worldSetup.bushes ?? 1; if (ui.longGrass) ui.longGrass.value = worldSetup.longGrass ?? 1; if (ui.rainfallAmount) ui.rainfallAmount.value = worldSetup.rainfall ?? 1; if (ui.northTemperature) ui.northTemperature.value = worldSetup.northTemperature ?? 8; if (ui.southTemperature) ui.southTemperature.value = worldSetup.southTemperature ?? 24; if (ui.coldestTemperature) ui.coldestTemperature.value = worldSetup.coldestTemperature ?? -12; if (ui.hottestTemperature) ui.hottestTemperature.value = worldSetup.hottestTemperature ?? 36; if (ui.temperatureVariation) ui.temperatureVariation.value = worldSetup.temperatureVariation ?? 1; if (ui.climateAmount) ui.climateAmount.value = worldSetup.climate; updateWorldSetupLabels(); }
+function updateWorldSetupLabels() { const setup = selectedWorldSetup(); const set = (id, value) => { const el = document.querySelector(id); if (el) el.textContent = value; }; const amount = (v) => v === 0 ? "Off · 0.00×" : `${v < 0.75 ? "Low" : v > 1.25 ? "High" : "Normal"} · ${v.toFixed(2)}×`; const riverVariation = (v) => v === 0 ? "Off · uniform" : `${v < .75 ? "Subtle" : v > 1.25 ? "Strong" : "Natural"} · ${v.toFixed(2)}×`; const contrast = setup.temperatureVariation === 0 ? "Uniform · temperate" : setup.temperatureVariation < .75 ? "Subtle · mixed regions" : setup.temperatureVariation > 1.6 ? "Strong · hot/cold regions" : "Normal · mixed regions"; const spanName = ["", "Compact", "Medium", "Standard", "Vast"][setup.span], presetSpan = { 1: 90, 2: 150, 3: 220, 4: 300 }[setup.span]; set("#world-size-value", setup.customSpan ? `Custom · ${setup.size} world units (overrides ${spanName} · ${presetSpan})` : `${spanName} · ${setup.size} world units`); if (ui.hexDetailValue) ui.hexDetailValue.textContent = `${setup.hexDetail.toLocaleString()} connected hexes`; set("#start-herbivores-value", String(setup.herbivores)); set("#start-carnivores-value", String(setup.carnivores)); set("#terrain-relief-value", setup.relief === 0 ? "Flat · 0.00×" : amount(setup.relief)); set("#mountain-amount-value", amount(setup.mountains)); set("#hill-amount-value", amount(setup.hills)); set("#valley-amount-value", amount(setup.valleys)); set("#ridge-amount-value", amount(setup.ridges)); set("#plateau-amount-value", amount(setup.plateaus)); set("#roughness-amount-value", amount(setup.roughness)); set("#river-amount-value", amount(setup.rivers)); set("#river-width-variation-value", riverVariation(setup.riverWidthVariation)); set("#river-pattern-diversity-value", riverVariation(setup.riverPatternDiversity)); set("#lake-amount-value", amount(setup.lakes)); set("#woodland-amount-value", amount(setup.woodland)); set("#tree-density-value", amount(setup.trees)); set("#bush-density-value", amount(setup.bushes)); set("#long-grass-value", amount(setup.longGrass)); set("#rainfall-amount-value", amount(setup.rainfall)); set("#wind-strength-value", amount(setup.windStrength)); set("#storm-intensity-value", amount(setup.stormIntensity)); set("#rain-shadow-value", amount(setup.rainShadow)); set("#sediment-transport-value", amount(setup.sedimentTransport)); set("#north-temperature-value", `${setup.northTemperature <= 4 ? "Cold" : "Cool"} · ${setup.northTemperature}°C`); set("#south-temperature-value", `${setup.southTemperature >= 28 ? "Hot" : "Warm"} · ${setup.southTemperature}°C`); set("#coldest-temperature-value", `${setup.coldestTemperature}°C`); set("#hottest-temperature-value", `${setup.hottestTemperature}°C`); set("#temperature-variation-value", contrast); set("#climate-amount-value", amount(setup.climate)); }
+function syncWorldSetupInputs() { if (ui.ecologyPreset) ui.ecologyPreset.value = ECOLOGY_PRESETS[worldSetup.ecologyPreset] ? worldSetup.ecologyPreset : "custom"; syncEcologyPopulationScaleControls(worldSetup.ecologyPopulationScale ?? 100); for (const id of SPECIES_IDS) if (ui.startSpecies?.[id]) ui.startSpecies[id].value = String(worldSetup.speciesCounts?.[id] || 0); if (ui.worldSize) ui.worldSize.value = worldSetup.span ?? 3; if (ui.hexDetail) ui.hexDetail.value = worldSetup.hexDetail ?? 5000; if (ui.startSeason) ui.startSeason.value = seasons.includes(worldSetup.startSeason) ? worldSetup.startSeason : "Spring"; if (ui.windDirection) ui.windDirection.value = worldSetup.windDirection ?? "west"; if (ui.windStrength) ui.windStrength.value = worldSetup.windStrength ?? 1; if (ui.stormIntensity) ui.stormIntensity.value = worldSetup.stormIntensity ?? 1; if (ui.rainShadow) ui.rainShadow.value = worldSetup.rainShadow ?? 1; if (ui.sedimentTransport) ui.sedimentTransport.value = worldSetup.sedimentTransport ?? 1; if (ui.startHerbivores) ui.startHerbivores.value = worldSetup.herbivores; if (ui.startCarnivores) ui.startCarnivores.value = worldSetup.carnivores; if (ui.terrainRelief) ui.terrainRelief.value = worldSetup.relief; if (ui.mountainAmount) ui.mountainAmount.value = worldSetup.mountains; if (ui.hillAmount) ui.hillAmount.value = worldSetup.hills; if (ui.valleyAmount) ui.valleyAmount.value = worldSetup.valleys; if (ui.ridgeAmount) ui.ridgeAmount.value = worldSetup.ridges ?? .55; if (ui.plateauAmount) ui.plateauAmount.value = worldSetup.plateaus ?? .35; if (ui.roughnessAmount) ui.roughnessAmount.value = worldSetup.roughness ?? .3; if (ui.riverAmount) ui.riverAmount.value = worldSetup.rivers; if (ui.riverWidthVariation) ui.riverWidthVariation.value = worldSetup.riverWidthVariation ?? 1; if (ui.riverPatternDiversity) ui.riverPatternDiversity.value = worldSetup.riverPatternDiversity ?? 1; if (ui.lakeAmount) ui.lakeAmount.value = worldSetup.lakes; if (ui.woodlandAmount) ui.woodlandAmount.value = worldSetup.woodland; if (ui.treeDensity) ui.treeDensity.value = worldSetup.trees ?? 1; if (ui.bushDensity) ui.bushDensity.value = worldSetup.bushes ?? 1; if (ui.longGrass) ui.longGrass.value = worldSetup.longGrass ?? 1; if (ui.rainfallAmount) ui.rainfallAmount.value = worldSetup.rainfall ?? 1; if (ui.northTemperature) ui.northTemperature.value = worldSetup.northTemperature ?? 8; if (ui.southTemperature) ui.southTemperature.value = worldSetup.southTemperature ?? 24; if (ui.coldestTemperature) ui.coldestTemperature.value = worldSetup.coldestTemperature ?? -12; if (ui.hottestTemperature) ui.hottestTemperature.value = worldSetup.hottestTemperature ?? 36; if (ui.temperatureVariation) ui.temperatureVariation.value = worldSetup.temperatureVariation ?? 1; if (ui.climateAmount) ui.climateAmount.value = worldSetup.climate; updateWorldSetupLabels(); }
 
 function initialGroupCount(population) { return population < 2 ? 0 : Math.max(1, Math.floor(Math.sqrt(population) / 5)); }
 function initialCarcassCount(population) { return population < 1 ? 0 : Math.max(1, Math.min(14, Math.round(Math.sqrt(population) / 2.5))); }
@@ -4396,7 +4533,7 @@ function startingDemographicPlan(speciesId, population, rng) {
     return plan;
   }
   const stages = ["adult", "adult", "dependent", "juvenile", "subadult", "old", "adult", "juvenile", "subadult", "dependent"];
-  const ageFor = stage => ({ dependent: s.dependency * (.12 + rng() * .45), juvenile: s.matureAge * (.18 + rng() * .22), subadult: s.matureAge * (.52 + rng() * .38), adult: s.matureAge * (1.08 + rng() * 1.45), old: s.oldAge + rng() * Math.max(2, (s.maxAge - s.oldAge) * .45) })[stage];
+  const ageFor = stage => ({ dependent: s.dependency * (.12 + rng() * .45), juvenile: s.matureAge * (.18 + rng() * .22), subadult: s.matureAge * (.52 + rng() * .38), adult: s.matureAge * (1.08 + rng() * 1.45), old: s.oldAge + rng() * Math.max(2, (s.longevityReference - s.oldAge) * .45) })[stage];
   return Array.from({ length: population }, (_, index) => { const stage = stages[index % stages.length]; return { sex: index % 2 === 0 ? "F" : "M", age: ageFor(stage), stage }; });
 }
 function wireStartingFamilies(animals, placeNear = null) { return assignStartingCareFamilies(animals, species, placeNear); }
@@ -4410,17 +4547,18 @@ function seedStartingPregnancies(animals, rng) {
     const selected = eligible.filter((female, index) => index === 0 || rng() < probability);
     for (const [selectedIndex, female] of selected.entries()) {
       const s = species[speciesId], father = males.length ? males[Math.floor(rng() * males.length)] : null;
+      const eggLayer = s.reproduction.mode === "surface-eggs", termDays = eggLayer ? s.reproduction.preLayDays : s.reproduction.gestationDays;
       const protectedFounder = protectPredatorFounder && selectedIndex === 0;
       const singleCarnivoreFounder = protectedFounder && population.length === 1 && isCarnivore(female);
-      female.pregnant = { age: s.gestation * (protectedFounder ? .95 : .08 + rng() * .68), fatherId: father?.id || null, viability: .88 + rng() * .12, offspringCount: chooseOffspringCount(s.litter, rng()), startedBeforeObservation: true, ...(protectedFounder ? { lowPopulationFounderSafeguard: true } : {}) };
-      female.pregnancyHormones = pregnancyHormonalCycle(female.pregnant, s.gestation);
+      female.pregnant = { age: termDays * (protectedFounder ? .95 : .08 + rng() * .68), mode: s.reproduction.mode, phase: eggLayer ? "pre-lay" : "gestating", fatherId: father?.id || null, viability: .88 + rng() * .12, offspringCount: chooseOffspringCount(s.reproduction.broodRange, rng()), startedBeforeObservation: true, ...(protectedFounder ? { lowPopulationFounderSafeguard: true } : {}) };
+      female.pregnancyHormones = eggLayer ? null : pregnancyHormonalCycle(female.pregnant, termDays);
       const profile = compositionProfile(female.speciesId, female.sex), maximumFounderFatPercent = Math.max(20, profile.obeseAbove - 2), targetFatPercent = singleCarnivoreFounder
         ? Math.min(maximumFounderFatPercent, Math.max(20, profile.idealHigh + 6, profile.idealHigh * 1.25))
         : profile.idealHigh * .94;
       setBodyFatPercent(female, targetFatPercent);
       initializeMetabolism(female); recordNutrientIntake(female, { calories: female.leanMass * profile.stomachCaloriesPerKg, carbohydrate: .2, fat: .22, protein: .2, fermentable: .38 }); female.hydration = 100;
       if (singleCarnivoreFounder) fillMetabolicReserves(female, { gut: 1, blood: 1, liver: 1 });
-      female.timeline.push(`${protectedFounder ? "observation began at 95% gestation under the low-predator founder safeguard" : "observation began during pregnancy"}${father ? ` with ${father.id}` : ""}`);
+      female.timeline.push(`${protectedFounder ? `observation began at 95% ${eggLayer ? "pre-lay development" : "gestation"} under the low-predator founder safeguard` : `observation began during ${eggLayer ? "egg formation" : "pregnancy"}`}${father ? ` with ${father.id}` : ""}`);
       if (singleCarnivoreFounder) female.timeline.push("observation began with protected maternal fat, hydration, stomach and rapid fuel reserves");
     }
   }
@@ -4476,23 +4614,28 @@ function seedStartingKnowledge(world, rng) {
     addVague("conspecific", peer, .4, peer?.id || null);
   }
 }
-function createWorld(seed, setup = worldSetup, embodimentRequest = null) {
+function createWorld(seed, setup = worldSetup, embodimentRequest = null, preparedHexWorld = null, preparedNavigationMesh = null) {
   setWorldSetup(setup);
   const rng = mulberry32(seed);
   const requestedEmbodiment = normalizeEmbodiment(embodimentRequest || setup.embodiment || defaultEmbodiment());
   const embodimentCaps = resolveEmbodimentCapabilities(requestedEmbodiment);
   const embodimentRng = mulberry32((seed ^ 0x6e6f6465) >>> 0);
-  const hexWorld = new HexWorld(seed, worldSetup);
-  navigationMesh = buildNavMesh(hexWorld);
+  const hexWorld = preparedHexWorld || new HexWorld(seed, worldSetup);
+  // The shared mesh retains every dry non-tree face. Species-specific slope,
+  // rock and current-strength gates are applied by routing and body support.
+  navigationMesh = preparedNavigationMesh || buildNavMesh(hexWorld, { maxSlope: 1, allowRocky: true });
   terrainProfile = null;
   const occupied = new Set();
-  const randomLandHex = () => {
-    for (let tries = 0; tries < 500; tries++) {
-      const c = hexWorld.cells[Math.floor(rng() * hexWorld.cells.length)];
-      const k = key(c);
-      if (!occupied.has(k) && !c.water && !c.rocky && c.plantType !== "tree") { occupied.add(k); return c; }
+  const randomLandHex = (subject = null) => {
+    let best = null, bestScore = -Infinity;
+    for (let tries = 0; tries < 40; tries++) {
+      const c = hexWorld.cells[Math.floor(rng() * hexWorld.cells.length)], k = key(c);
+      if (occupied.has(k) || !navigationMesh.cellToPolygon.has(c.id) || subject && !terrainMobilityAssessment(subject, c).allowed) continue;
+      const score = subject ? habitatSuitability(subject, c) + rng() * .16 : rng();
+      if (score > bestScore) { best = c; bestScore = score; }
     }
-    return hexWorld.cells.find((c) => !c.water) || hexWorld.cells[0];
+    best ||= hexWorld.cells.find((c) => !occupied.has(key(c)) && navigationMesh.cellToPolygon.has(c.id) && (!subject || terrainMobilityAssessment(subject, c).allowed)) || hexWorld.cells.find((c) => navigationMesh.cellToPolygon.has(c.id) && (!subject || terrainMobilityAssessment(subject, c).allowed)) || hexWorld.cells[0];
+    occupied.add(key(best)); return best;
   };
   const animals = []; let counts = enabledSpeciesCounts(worldSetup.speciesCounts || { grazer: worldSetup.herbivores, hunter: worldSetup.carnivores });
   let resolvedEmbodiedSetup = null;
@@ -4501,19 +4644,19 @@ function createWorld(seed, setup = worldSetup, embodimentRequest = null) {
   for (const speciesId of SPECIES_IDS) {
     const plan = startingDemographicPlan(speciesId, counts[speciesId], rng), prefix = species[speciesId].symbol;
     if (resolvedEmbodiedSetup?.speciesId === speciesId && plan.length) plan[0] = { sex: resolvedEmbodiedSetup.sex, age: resolvedEmbodiedSetup.age, stage: resolvedEmbodiedSetup.lifeStage };
-    for (let i = 0; i < plan.length; i++) { const profile = plan[i], animal = makeAnimal(`${prefix}${i + 1}`, speciesId, profile.sex, randomLandHex(), rng, profile.age, profile.stage === "dependent" ? "pending-caregiver" : null); if (resolvedEmbodiedSetup?.speciesId === speciesId && i === 0) { inhabitedAnimalId = animal.id; Object.assign(animal, { health: resolvedEmbodiedSetup.condition.health, energy: resolvedEmbodiedSetup.condition.energy, hydration: resolvedEmbodiedSetup.condition.hydration, stomach: resolvedEmbodiedSetup.condition.stomach, fatigue: resolvedEmbodiedSetup.condition.fatigue, injuries: resolvedEmbodiedSetup.condition.injuries }); } animals.push(animal); }
+    for (let i = 0; i < plan.length; i++) { const profile = plan[i], animal = makeAnimal(`${prefix}${i + 1}`, speciesId, profile.sex, randomLandHex({ speciesId, lifeStage: profile.stage, health: 100, fatigue: 0 }), rng, profile.age, profile.stage === "dependent" ? "pending-caregiver" : null); if (resolvedEmbodiedSetup?.speciesId === speciesId && i === 0) { inhabitedAnimalId = animal.id; Object.assign(animal, { health: resolvedEmbodiedSetup.condition.health, energy: resolvedEmbodiedSetup.condition.energy, hydration: resolvedEmbodiedSetup.condition.hydration, stomach: resolvedEmbodiedSetup.condition.stomach, fatigue: resolvedEmbodiedSetup.condition.fatigue, injuries: resolvedEmbodiedSetup.condition.injuries }); } animals.push(animal); }
   }
   seedStartingPregnancies(animals, rng);
-  if (inhabitedAnimalId) { const inhabited = animals.find(a => a.id === inhabitedAnimalId), reproductive = resolvedEmbodiedSetup.reproduction || {}; if (reproductive.pregnant === false) inhabited.pregnant = null; else if (reproductive.pregnant === true && inhabited.sex === "F" && ["adult", "old"].includes(inhabited.lifeStage)) inhabited.pregnant = { age: species[inhabited.speciesId].gestation * Math.max(0, Math.min(1, reproductive.gestationProgress ?? .5)), fatherId: null, viability: 1, offspringCount: chooseOffspringCount(species[inhabited.speciesId].litter, embodimentRng()), startedBeforeObservation: true }; }
+  if (inhabitedAnimalId) { const inhabited = animals.find(a => a.id === inhabitedAnimalId), reproductive = resolvedEmbodiedSetup.reproduction || {}; if (reproductive.pregnant === false) inhabited.pregnant = null; else if (reproductive.pregnant === true && inhabited.sex === "F" && ["adult", "old"].includes(inhabited.lifeStage)) { const profile = species[inhabited.speciesId], eggLayer = profile.reproduction.mode === "surface-eggs", termDays = eggLayer ? profile.reproduction.preLayDays : profile.reproduction.gestationDays; inhabited.pregnant = { age: termDays * Math.max(0, Math.min(1, reproductive.gestationProgress ?? .5)), mode: profile.reproduction.mode, phase: eggLayer ? "pre-lay" : "gestating", fatherId: null, viability: 1, offspringCount: chooseOffspringCount(profile.reproduction.broodRange, embodimentRng()), startedBeforeObservation: true }; } }
   formStartingGroups(animals, hexWorld, rng);
   wireStartingFamilies(animals, (child, mother, index) => {
     const origin = hexWorld.lookup(mother.x, mother.z);
-    const sites = [origin, ...(origin?.neighbours || [])].filter((cell) => cell && !cell.water && !cell.rocky && cell.plantType !== "tree");
+    const sites = [origin, ...(origin?.neighbours || [])].filter((cell) => cell && navigationMesh.cellToPolygon.has(cell.id) && terrainMobilityAssessment(child, cell).allowed);
     const site = sites[(index + 1) % Math.max(1, sites.length)] || origin;
     if (site) { child.x = child.fx = site.x; child.z = child.fz = site.z; }
   });
   if (inhabitedAnimalId) {
-    const inhabited = animals.find(animal => animal.id === inhabitedAnimalId), clearSites = hexWorld.cells.filter(cell => !cell.water && !cell.rocky && cell.plantType !== "tree" && Math.abs(cell.x) < HALF - 5 && Math.abs(cell.z) < HALF - 5 && cell.neighbours.every(neighbour => !neighbour.water && !neighbour.rocky && neighbour.plantType !== "tree") && animals.every(other => other.id === inhabited.id || Math.hypot(other.x - cell.x, other.z - cell.z) > 2.4));
+    const inhabited = animals.find(animal => animal.id === inhabitedAnimalId), clearSites = hexWorld.cells.filter(cell => navigationMesh.cellToPolygon.has(cell.id) && terrainMobilityAssessment(inhabited, cell).allowed && Math.abs(cell.x) < HALF - 5 && Math.abs(cell.z) < HALF - 5 && cell.neighbours.every(neighbour => navigationMesh.cellToPolygon.has(neighbour.id) && terrainMobilityAssessment(inhabited, neighbour).allowed) && animals.every(other => other.id === inhabited.id || Math.hypot(other.x - cell.x, other.z - cell.z) > 2.4));
     const site = clearSites.sort((left, right) => Math.hypot(left.x - inhabited.x, left.z - inhabited.z) - Math.hypot(right.x - inhabited.x, right.z - inhabited.z))[0];
     if (site) { inhabited.x = inhabited.fx = site.x; inhabited.z = inhabited.fz = site.z; }
   }
@@ -4526,6 +4669,24 @@ function createWorld(seed, setup = worldSetup, embodimentRequest = null) {
   const world = { worldSchema: WORLD_SCHEMA, seed, worldSetup: { ...worldSetup }, rngState: seed, tick: 0, ecologicalMinute: 0, day: 1, season, weather: { type: season === "Winter" ? "Cold clear" : season === "Summer" ? "Warm settled" : "Settled", temp: seasonal.temp, rain: seasonal.rain, wind: 0.3 }, weatherSystems: [], activeScent: {}, hexWorld, cells: hexWorld.cells, water: hexWorld.cells.filter((c) => c.water).map((c) => c.id), hydrology: { model: "hex-basin-hydrology-v2" }, animals, lineageRecords, relationships: [], corpses, nests: [], events: [], births: 0, deaths: 0, nextId: 1000, nextDecisionOrder, embodiment: normalizeEmbodiment({ ...requestedEmbodiment, inhabitedAnimalId, setupRequest: resolvedEmbodiedSetup || requestedEmbodiment.setupRequest, state: requestedEmbodiment.experience === "embodied" ? "starting" : "observer" }) };
   seedStartingKnowledge(world, rng);
   seedStartingPlans(world, rng);
+  return world;
+}
+
+async function createWorldAsync(seed, setup = worldSetup, embodimentRequest = null, { signal = null, onProgress = null, yieldBudgetMs = 8 } = {}) {
+  setWorldSetup(setup);
+  worldGenerationStage = "terrain";
+  const hexWorld = await HexWorld.createAsync(seed, worldSetup, {
+    signal,
+    yieldBudgetMs,
+    onProgress: progress => onProgress?.({ ...progress, percent: progress.percent * .88 })
+  });
+  if (signal?.aborted) throw Object.assign(new Error("World generation was cancelled"), { name: "AbortError" });
+  worldGenerationStage = "navigation";
+  onProgress?.({ phase: "navigation", completed: 0, total: hexWorld.cells.length * 2, percent: .88 });
+  const preparedNavigationMesh = await buildNavMeshAsync(hexWorld, { maxSlope: 1, allowRocky: true }, { signal, yieldBudgetMs, onProgress: progress => onProgress?.({ phase: "navigation", ...progress, percent: .88 + progress.percent * .1 }) });
+  worldGenerationStage = "simulation";
+  const world = createWorld(seed, setup, embodimentRequest, hexWorld, preparedNavigationMesh);
+  onProgress?.({ phase: "presentation", completed: 1, total: 1, percent: 1 });
   return world;
 }
 
@@ -4695,7 +4856,8 @@ function makeAnimal(id, speciesId, sex, pos, rng, age = 0, motherId = null) {
   const socialDefaults = migrateSocialState({ sex, lifeStage, mateSkill, aggression, matePreferences }, s);
   const initialEnergyScale = eatsMeat(speciesId) ? 3 : 1;
   const initialStomach = initialStomachPercent(speciesId, lifeStage, rng());
-  return migrateKinship(migrateBodyComposition(migrateExertionState({ id, speciesId, sex, x: pos.x, z: pos.z, fx: pos.x, fz: pos.z, orientation: rng() * Math.PI * 2, stationaryTicks: 0, age, lifeStage, sizeTrait, bodyCondition, bodyMass: s.adultMass * body * sizeTrait * bodyCondition, aggression, scentSkill, waterSkill, foodSkill, mateSkill, careAffinity, libido: socialDefaults.libido, health: 100, healthCap: 100, energy: (86 + rng() * 18) * initialEnergyScale, energyCapacityScale: initialEnergyScale, hydration: 96 + rng() * 4, hydrationCapacityMultiplier: HYDRATION_CAPACITY_MULTIPLIER, stomach: initialStomach, seedLoad: [], fatigue: 0, fear: 0, injuries: [], lifeHistory: { observedHours: age * 24, weightedBurdenHours: age * 12, fearHours: 0, fleeingHours: 0, injuryHours: 0, extremeExertionHours: 0, thermalStressHours: 0, deprivationHours: 0, injuriesSustained: 0, emergencyExertions: 0 }, bodyTemperature: initialBodyTemperature(speciesId), tempStress: 0, thermalStatus: "comfortable", thermalSources: {}, capabilities: {}, sensoryBuffer: [], receivedSignals: [], heardEvents: [], mapReveals: [], threatAssessment: null, decisionTrace: null, goalPlan: { shortTerm: null, mediumTerm: null, longTerm: null }, predation: createPredationState(0), socialSignal: null, signalCooldownUntil: 0, groupAlert: null, alive: true, pregnant: null, pregnancyHormones: null, courtship: null, mating: null, birthEvent: null, acceptedUntil: 0, lactation: 0, postpartum: 0, cycleOffset: rng() * (speciesId === "grazer" ? 28 : 36), matePreferences: socialDefaults.matePreferences, mateHistory: [], socialMemory: {}, mediumTermMemory: [], entityKnowledge: {}, motherId, fatherId: null, parentIds: motherId ? [motherId] : [], ancestorDepths: motherId ? { [motherId]: 1 } : {}, dependentUntil: motherId ? age + s.dependency : 0, offspringIds: [], offspringMemory: {}, memories: [], longMemory: [], explored: {}, mapMemory: {}, relationships: [], actionState: createActionState("orient", { label: "orienting" }), currentAction: "orienting", actionTarget: null, drive: "explore", timeline: [`born day ${Math.max(1, Math.floor(age))}`] })));
+  const cycleOffset = rng() * Math.max(1, s.reproduction.cycleDays || (s.reproduction.strategy === "annual-monoestrous" ? 21 : 1));
+  return migrateKinship(migrateBodyComposition(migrateExertionState({ id, speciesId, sex, x: pos.x, z: pos.z, fx: pos.x, fz: pos.z, orientation: rng() * Math.PI * 2, stationaryTicks: 0, age, lifeStage, sizeTrait, bodyCondition, bodyMass: s.adultMass * body * sizeTrait * bodyCondition, aggression, scentSkill, waterSkill, foodSkill, mateSkill, careAffinity, libido: socialDefaults.libido, health: 100, healthCap: 100, energy: (86 + rng() * 18) * initialEnergyScale, energyCapacityScale: initialEnergyScale, hydration: 96 + rng() * 4, hydrationCapacityMultiplier: HYDRATION_CAPACITY_MULTIPLIER, stomach: initialStomach, seedLoad: [], fatigue: 0, fear: 0, injuries: [], lifeHistory: { observedHours: age * 24, weightedBurdenHours: age * 12, fearHours: 0, fleeingHours: 0, injuryHours: 0, extremeExertionHours: 0, thermalStressHours: 0, deprivationHours: 0, injuriesSustained: 0, emergencyExertions: 0 }, bodyTemperature: initialBodyTemperature(speciesId), tempStress: 0, thermalStatus: "comfortable", thermalSources: {}, capabilities: {}, sensoryBuffer: [], receivedSignals: [], heardEvents: [], mapReveals: [], threatAssessment: null, decisionTrace: null, goalPlan: { shortTerm: null, mediumTerm: null, longTerm: null }, predation: createPredationState(0), socialSignal: null, signalCooldownUntil: 0, groupAlert: null, alive: true, pregnant: null, pregnancyHormones: null, courtship: null, mating: null, birthEvent: null, acceptedUntil: 0, lactation: 0, postpartum: 0, cycleOffset, reproductiveState: { cycleOffsetDays: cycleOffset, annualWindowOffsetDays: Math.floor(cycleOffset), broodsByYear: {}, environment: { samples: [], qualifyingStreak: 0, nonqualifyingStreak: 0, gateOpen: ["none", "calendar"].includes(s.reproduction.environmentTrigger), lastSampleDay: 0 } }, matePreferences: socialDefaults.matePreferences, mateHistory: [], socialMemory: {}, mediumTermMemory: [], entityKnowledge: {}, motherId, fatherId: null, parentIds: motherId ? [motherId] : [], ancestorDepths: motherId ? { [motherId]: 1 } : {}, dependentUntil: motherId ? s.dependency : 0, offspringIds: [], offspringMemory: {}, memories: [], longMemory: [], explored: {}, mapMemory: {}, relationships: [], actionState: createActionState("orient", { label: "orienting" }), currentAction: "orienting", actionTarget: null, drive: "explore", timeline: [`born day ${Math.max(1, Math.floor(age))}`] })));
 }
 
 let ecologicalAdvance = { previousMinute: 0, minute: 0, daysCrossed: 0, dayBoundary: false };
@@ -4767,12 +4929,13 @@ function tickWorldMinute() {
       const directPlayerId = directEmbodiedControlActive() ? sim.embodiment?.inhabitedAnimalId : null;
       const locomotionAnimals = directPlayerId ? ordered.filter((animal) => animal.id !== directPlayerId) : ordered;
       profiler.measure("continuous locomotion", () => runLocomotionMinute(locomotionAnimals, navigationMesh, {
-        terrainSpeedAt: (x, z, animal) => terrainTravelEffects(cellAt(x, z), animal.speciesId).speed,
+        elapsed: Math.max(0, ecologicalAdvance.minute - ecologicalAdvance.previousMinute),
+        terrainSpeedAt: (x, z, animal) => terrainTravelEffects(cellAt(x, z), animal).speed,
         neighboursFor: (animal) => nearbyAnimals(animal, 2.5),
         contactTargetFor: (id) => animalById(id) || sim.corpses.find((corpse) => corpse.id === id)
       }));
       for (const animal of ordered) if (animal.alive && animal.locomotion) {
-        const before = tickLocomotionBefore[animal.decisionOrder] || { distance: 0, turning: 0, speed: 0, elevation: terrainHeight(animal.x, animal.z) }, realtime = animal.id === directPlayerId ? animal.playerMotionPending : null, distance = realtime ? realtime.distance : Math.max(0, animal.locomotion.distanceTravelled - before.distance), turning = realtime ? realtime.turning : Math.max(0, animal.locomotion.turningEffort - before.turning), terrain = terrainTravelEffects(cellAt(animal.x, animal.z), animal.speciesId); if (realtime) animal.playerMotionPending = { distance: 0, turning: 0 };
+        const before = tickLocomotionBefore[animal.decisionOrder] || { distance: 0, turning: 0, speed: 0, elevation: terrainHeight(animal.x, animal.z) }, realtime = animal.id === directPlayerId ? animal.playerMotionPending : null, distance = realtime ? realtime.distance : Math.max(0, animal.locomotion.distanceTravelled - before.distance), turning = realtime ? realtime.turning : Math.max(0, animal.locomotion.turningEffort - before.turning), terrain = terrainTravelEffects(cellAt(animal.x, animal.z), animal); if (realtime) animal.playerMotionPending = { distance: 0, turning: 0 };
         const chargedMode = animal.movementRequest?.mode || animal.locomotion.completedMode || animal.locomotion.activeMode || "walk", currentSpeed = animal.locomotion.speed || 0, elevationGain = Math.max(0, terrainHeight(animal.x, animal.z) - before.elevation), stress = migrateStressResponse(animal);
         const demand = createActivityDemand({ activity: chargedMode, distance, averageSpeed: currentSpeed, peakSpeed: Math.max(currentSpeed, before.speed), acceleration: currentSpeed - before.speed, turningEffort: turning, elevationGain, terrainResistance: terrain.energy, bodyMass: animal.bodyMass, carriedLoad: animal.pregnant ? animal.bodyMass * .08 : 0, injuryPenalty: (animal.injuries || []).reduce((sum, injury) => sum + (injury.severity || 0) * .12, 0), thermalPenalty: (animal.tempStress || 0) / 100, dehydrationPenalty: Math.max(0, 45 - animal.hydration) / 45, stressIntensity: stress.intensity, activitySteps: 1 });
         const evaluation = evaluateActivityDemand(animal, demand, { requestedPace: chargedMode }); applyActivityDemand(animal, evaluation); ecologicalAccounting.record("movementEnergy", evaluation.energyCost);
@@ -4814,9 +4977,9 @@ function tickWorldMinute() {
 }
 
 function updateWeather(ecologicalHour = Math.floor((sim.ecologicalMinute || 0) / MINUTES_PER_HOUR)) {
-  const startingSeason = Math.max(0, seasons.indexOf(worldSetup.startSeason));
-  const season = seasons[(startingSeason + Math.floor(((sim.day - 1) % 120) / 30)) % seasons.length];
-  sim.season = season;
+  const calendar = seasonForAbsoluteDay(sim.day, worldSetup.startSeason);
+  sim.season = calendar.name;
+  sim.dayOfSeason = calendar.dayOfSeason;
   if (!sim.weatherSystems?.length) sim.weatherSystems = createWeatherSystems();
   for (const w of sim.weatherSystems) { w.x += w.vx; w.z += w.vz; if (w.x > HALF + w.radius) w.x = -HALF - w.radius; if (w.z > HALF + w.radius) w.z = -HALF - w.radius; if (w.z < -HALF - w.radius) w.z = HALF + w.radius; }
   const centre = regionalWeatherAt({ x: 0, z: 0 });
@@ -4955,7 +5118,17 @@ function localTemperatureAt(p) {
 }
 
 function beginWaterCycle() {
-  if (sim.hexWorld) { const before = new Map(sim.hexWorld.cells.map((c) => [c.id, `${c.water}|${c.waterLevel}|${c.waterSurface}|${c.terrainClass}`])); sim.hexWorld.update(sim.day, sim.season, sim.weather); sim.water = sim.hexWorld.cells.filter((c) => c.water).map((c) => c.id); for (const cell of sim.hexWorld.cells) if (before.get(cell.id) !== `${cell.water}|${cell.waterLevel}|${cell.waterSurface}|${cell.terrainClass}`) markLandscapeCell(cell, "terrain", "water", "vegetation"); buildTerrain(); landscapeDirty = true; return; }
+  if (sim.hexWorld) {
+    const delta = sim.hexWorld.update(sim.day, sim.season, sim.weather), groundIds = new Set(delta.cellIds);
+    sim.water = [...sim.hexWorld.waterCellIds];
+    for (const id of delta.cellIds) {
+      const cell = sim.cells[id]; if (!cell) continue;
+      markLandscapeCell(cell, "terrain", "water", "vegetation");
+      for (const neighbour of cell.neighbours) groundIds.add(neighbour.id);
+    }
+    updateTerrainColours([...groundIds]); rebuildWaterPresentation(delta); drawTerrainFields();
+    return;
+  }
   // The fixed drainage map is still evaluated once per simulated day, but its
   // 92k cells are spread across ticks so the browser never has one large frame.
   // A lake changes one horizontal water level, rather than raising individual
@@ -5054,9 +5227,9 @@ function growPlants(ecologyHour = Math.floor((sim.ecologicalMinute || 0) / MINUT
   for (let i = ecologyHour % cadence; i < sim.cells.length; i += cadence) {
     const cell = sim.cells[i];
     const biomassBefore = Math.max(0, Number(cell.biomass) || 0);
-    const visualBefore = `${cell.terrainClass}|${cell.plantType}|${cell.woodland}|${cell.shrubland}|${cell.woodyStage}|${cell.leaflessTreeUntil > sim.ecologicalMinute}|${cell.leafDepletedUntil > sim.ecologicalMinute}|${cell.fallenTreeUntil > sim.ecologicalMinute}`;
-    const commitVisualChange = () => { const after = `${cell.terrainClass}|${cell.plantType}|${cell.woodland}|${cell.shrubland}|${cell.woodyStage}|${cell.leaflessTreeUntil > sim.ecologicalMinute}|${cell.leafDepletedUntil > sim.ecologicalMinute}|${cell.fallenTreeUntil > sim.ecologicalMinute}`; if (after !== visualBefore) markLandscapeCell(cell, "terrain", "vegetation"); };
-    if (cell.water || cell.rocky || cell.sandy || cell.wetland) { cell.biomass = 0; ecologicalAccounting.record("plantNaturalLoss", biomassBefore); cell.terrainClass = landClass(cell, cachedWeatherAt(cell).temp); commitVisualChange(); continue; }
+    const visualBefore = `${cell.terrainClass}|${cell.plantType}|${cell.woodland}|${cell.shrubland}|${cell.woodyStage}|${cell.habitatType}|${cell.habitatDensityBand}|${cell.habitatHumidityBand}|${cell.leaflessTreeUntil > sim.ecologicalMinute}|${cell.leafDepletedUntil > sim.ecologicalMinute}|${cell.fallenTreeUntil > sim.ecologicalMinute}`;
+    const commitVisualChange = () => { applyHabitatProfile(cell); const after = `${cell.terrainClass}|${cell.plantType}|${cell.woodland}|${cell.shrubland}|${cell.woodyStage}|${cell.habitatType}|${cell.habitatDensityBand}|${cell.habitatHumidityBand}|${cell.leaflessTreeUntil > sim.ecologicalMinute}|${cell.leafDepletedUntil > sim.ecologicalMinute}|${cell.fallenTreeUntil > sim.ecologicalMinute}`; if (after !== visualBefore) markLandscapeCell(cell, "terrain", "vegetation"); };
+    if (cell.water || cell.rocky || cell.sandy) { cell.biomass = 0; ecologicalAccounting.record("plantNaturalLoss", biomassBefore); cell.terrainClass = landClass(cell, cachedWeatherAt(cell).temp); commitVisualChange(); continue; }
     const type = plantTypes[cell.plantType];
     const local = cachedWeatherAt(cell), localTemp = local.temp;
     // A fallen trunk is retained as cover for six simulated months (180 days),
@@ -5121,7 +5294,7 @@ function growPlants(ecologyHour = Math.floor((sim.ecologicalMinute || 0) / MINUT
     }
     cell.plantStage = plantStageFor(cell);
     // Woody succession is deliberately slow.  It is evaluated once per
-    // ecological month per hex, never as a daily forest reshuffle.
+    // 30-day observation interval per hex, never as a daily forest reshuffle.
     const woodlandSetting = worldSetup.woodland ?? 1;
     const ecologicalMonth = (sim.day + cell.id) % 30 === 0;
     if (ecologicalMonth && !cell.woodland && !cell.shrubland && woodlandSetting > 0 && !cell.sandy && !cell.wetland && cell.moisture > .48 && cell.soilDepth > .42 && cell.slope < .22 && cell.plantAge > 120 && rand() < 0.015 * (worldSetup.bushes ?? 1)) { cell.shrubland = true; cell.plantType = "shrub"; cell.woodyStage = "shrub"; cell.biomass = Math.max(cell.biomass, 0.28); }
@@ -5184,7 +5357,7 @@ function prepareAnimalForSensing(a) {
   migrateSocialState(a, s);
   migrateGroupDisposition(a, sim.ecologicalMinute);
   if (!mature(a)) { a.libido = 0; a.courtship = null; a.mating = null; a.conception = null; a.acceptedUntil = 0; }
-  const pregnancyState = pregnancyPhysiology(a.pregnant, s.gestation);
+  const pregnancyState = pregnancyPhysiology(a.pregnant, s.gestation, s.reproduction.mode);
   initializeMetabolism(a);
   const compositionSettings = compositionProfile(a.speciesId, a.sex), idealFat = (compositionSettings.idealLow + compositionSettings.idealHigh) / 200;
   const targetLeanMass = s.adultMass * bodyScale(s, a.age) * (a.sizeTrait || 1) * (1 - idealFat);
@@ -5194,9 +5367,11 @@ function prepareAnimalForSensing(a) {
   recordTrainingStimulus(a, { thermal: Math.max(0, (a.tempStress || 0) - 12) / 18 * elapsedHours });
   adaptTrainableCondition(a, elapsedHours);
   a.bodyMass = (a.leanMass + a.fatMass) * pregnancyState.weightMultiplier;
+  const localWeather = regionalWeatherAt(a);
+  const reproductiveState = migrateReproductiveState(a), localCell = cellAt(a.x, a.z);
+  reproductiveState.environment = updateReproductiveEnvironment(reproductiveState.environment, { rain: localWeather.rain, temperature: localWeather.temp, biomass: localCell?.biomass || 0 }, sim.day, s.reproduction.environmentTrigger);
   a.pregnancyHormones = pregnancyState.hormoneCycle;
   a.capabilities = computeCapabilities(a, s);
-  const localWeather = regionalWeatherAt(a);
   ecologicalAccounting.record("basalMetabolism", composition.demand);
   const hydrationBeforeDemand = a.hydration;
   const waterDemand = hourlyHydrationDemandBreakdown(a, s, localWeather, { pregnancyHydrationMultiplier: pregnancyHydrationMultiplier(a, s.gestation) });
@@ -5219,7 +5394,7 @@ function prepareAnimalForSensing(a) {
   a.movementNoise = Math.max(0, (a.movementNoise || 0) * Math.pow(0.52, elapsedHours));
   a.fear = clamp(a.fear - (5 + safeCoverFor(a) * 7) * elapsedHours, 0, 100);
   updateTrauma(a);
-  ageDecline(a, s, elapsedHours);
+  advanceAgeing(a, s, elapsedHours);
   updateInjuries(a, elapsedHours);
   updateSensoryPosture(a);
   return { ...protectionBefore, x: a.x, z: a.z, fx: a.fx ?? a.x, fz: a.fz ?? a.z };
@@ -5468,14 +5643,14 @@ function applyAnimalPostAction(a) {
   const metabolicFailure = ["protein-catabolism", "organ-failure-risk"].includes(a.metabolism?.phase);
   clampAnimalHealth(a);
   if (a.health <= 0 && a.dehydration.key === "critical") die(a, "dehydration");
-  else if (a.health <= 0 && metabolicFailure) die(a, "starvation");
+  else if (a.health <= 0 && metabolicFailure) die(a, a.senescence?.dentalFunction <= .1 ? "starvation following dental failure" : "starvation");
   else if (a.health <= 0 && a.thermalExposureHours > 3 && a.thermalStatus === "dangerously-hot") die(a, "heat stress");
   else if (a.health <= 0 && a.thermalExposureHours > 3 && a.thermalStatus === "dangerously-cold") die(a, "cold stress");
   else if (a.health <= 0) {
     const recentAttackerId = a.lastHit?.attackerId && sim.tick - a.lastHit.tick <= 18 ? a.lastHit.attackerId : null;
-    die(a, recentAttackerId ? `killed by ${recentAttackerId}` : "injury", recentAttackerId);
+    const senescentPressure = a.senescence?.lastHealthDamage || 0, injuryPressure = a.lastInjuryHealthDamage || 0;
+    die(a, recentAttackerId ? `killed by ${recentAttackerId}` : senescentPressure > injuryPressure ? senescentDeathCause(a) : "injury", recentAttackerId);
   }
-  else if (ecologicalAdvance.dayBoundary && a.age > projectedMaximumAge(a, s.maxAge) + rand() * 40 * lifespanMultiplier(a)) die(a, "old age");
 }
 
 function updateAnimalTemperature(a) {
@@ -6313,7 +6488,7 @@ function actionCandidates(a) {
   if (missingChild) candidates.push({ drive: "safeguard missing offspring", urgent: true, score: missingChild.emergency ? 920 : 520, run: () => searchForOffspring(a, missingChild) });
   const birthingPartner = sim.animals.find((female) => female.alive && birthAttendantEligible(female, a));
   if (birthingPartner) candidates.push({ drive: "attend mate giving birth", commitTicks: 10, score: 280, run: () => attendBirth(a, birthingPartner) });
-  if (a.pregnant) candidates.push({ drive: "safeguard pregnancy", urgent: a.health < 55 || a.hydration < 35, commitTicks: 8, score: 245 + pregnancyPhysiology(a.pregnant, species[a.speciesId].gestation).progress * 85, run: () => coordinatePregnancySafety(a) });
+  if (a.pregnant) candidates.push({ drive: a.pregnant.mode === "surface-eggs" ? "safeguard clutch" : "safeguard pregnancy", urgent: a.health < 55 || a.hydration < 35, commitTicks: 8, score: 245 + pregnancyPhysiology(a.pregnant, species[a.speciesId].gestation, species[a.speciesId].reproduction.mode).progress * 85, run: () => coordinatePregnancySafety(a) });
   const pregnantCompanion = knownPregnantCompanion(a);
   if (pregnantCompanion) candidates.push({ drive: "support pregnant group member", commitTicks: 8, score: (a.sex === "F" ? 205 : 105) + (a.careAffinity || .5) * 55, run: () => escortPregnantCompanion(a, pregnantCompanion) });
   const tiredYoung = tiredYoungGroupMember(a);
@@ -6469,7 +6644,7 @@ function bestKnownWater(a) {
 }
 
 function waterNeedPlan(a) {
-  const s = species[a.speciesId], pregnancy = pregnancyPhysiology(a.pregnant, s.gestation), source = bestKnownWater(a);
+  const s = species[a.speciesId], pregnancy = pregnancyPhysiology(a.pregnant, s.gestation, s.reproduction.mode), source = bestKnownWater(a);
   const demand = hourlyHydrationDemand(a, s, regionalWeatherAt(a), { pregnancyHydrationMultiplier: pregnancyHydrationMultiplier(a, s.gestation) });
   const speed = Math.max(.05, (a.capabilities?.speed || s.speed || 1) * .72);
   const stageMargin = a.lifeStage === "old" ? 5 : a.lifeStage === "dependent" ? 4 : a.lifeStage === "juvenile" ? 2 : 0;
@@ -6574,7 +6749,7 @@ function needPlanningSnapshot(a, water = waterNeedPlan(a)) {
 
 function pregnancyHuntAssessment(a, drives, water, familyUrgency = 0) {
   if (!a.pregnant) return { allowed: true, reason: "not pregnant" };
-  const pregnancy = pregnancyPhysiology(a.pregnant, species[a.speciesId].gestation);
+  const pregnancy = pregnancyPhysiology(a.pregnant, species[a.speciesId].gestation, species[a.speciesId].reproduction.mode);
   const survivalHunger = a.stomach < Math.max(12, 24 - pregnancy.progress * 8) || a.energy < 18 || drives.hunger >= 72 || familyUrgency > 0;
   if (water.urgency >= 48) return { allowed: false, reason: "pregnancy water schedule takes precedence over hunting" };
   if (a.fatigue > 32 + (1 - pregnancy.progress) * 18) return { allowed: false, reason: "pregnancy endurance reserve is too low for a hunt" };
@@ -6603,7 +6778,7 @@ function dependentNeedsCare(a) {
   return (a.offspringIds || []).some((id) => { const child = animalById(id); return child?.alive && child.lifeStage === "dependent" && (child.energy < 55 || child.hydration < 55 || child.fear > 45); });
 }
 function goalPlanningContext(a) {
-  const readiness = reproductionReadiness(a, species[a.speciesId], { dependentNeedsCare: dependentNeedsCare(a) });
+  const readiness = reproductionReadiness(a, species[a.speciesId], { dependentNeedsCare: false });
   const noPreyContact = a.speciesId === "hunter" && !(a.sensoryBuffer || []).some((contact) => contact.type === "animal" && contact.channel === "sight");
   return { depleted: a.energy < 42 || a.stomach < 32 || a.hydration < 38 || a.health < 55, dependentNeedsCare: dependentNeedsCare(a), reproductionReady: readiness.ready, informationNeed: noPreyContact || a.fear > 18, conditionNeeds: improvableConditionNeeds(a) };
 }
@@ -6736,7 +6911,8 @@ function refreshGroupNames(alive) {
     for (const individualId of organization.individualIds || []) { const member = alive.find((animal) => animal.id === individualId); if (member) { member.largeGroupId = organization.id; member.largeGroupName = organization.name; } }
   }
   const territorialOwners = [...localGroups, ...alive.filter((animal) => !animal.groupId && mature(animal) && organizationProfile(species[animal.speciesId]).territoriality >= .35).map((animal) => ({ id: animal.id, speciesId: animal.speciesId, count: 1, centroid: { x: animal.x, z: animal.z }, type: "individual" }))];
-  const territory = updateTerritoryClaims(sim.territoryClaims, territorialOwners, species, sim.tick, { worldSize: WORLD, population: alive.length, breedingSeason: ["Spring", "Summer"].includes(sim.season), resourceConcentration: clamp((sim.worldStocks?.plantBiomass || 0) / Math.max(1, alive.length * 12), 0, 1), establishmentTicks: 3 });
+  const breedingSpecies = new Set(alive.filter((animal) => currentReproductiveStatus(animal).active).map((animal) => animal.speciesId));
+  const territory = updateTerritoryClaims(sim.territoryClaims, territorialOwners, species, sim.tick, { worldSize: WORLD, population: alive.length, breedingSpecies, resourceConcentration: clamp((sim.worldStocks?.plantBiomass || 0) / Math.max(1, alive.length * 12), 0, 1), establishmentTicks: 3 });
   sim.territoryClaims = territory.claims; sim.territoryDisputes = territory.disputes;
   for (const animal of alive) { animal.territoryPressure = 0; animal.territoryRivalId = null; }
   for (const dispute of territory.disputes) for (const ownerId of dispute.owners) {
@@ -7170,7 +7346,7 @@ function seekMate(a, establishedMate = null) {
   // The female resolves acceptance once. The male remains in courtship until
   // her authoritative decision reaches him through their shared event state.
   if (a.id !== female.id) { setAction(a, "courtship", { label: `awaiting ${female.id}'s response`, target: female.id, intendedOutcome: "receive courtship response" }); return; }
-  if (!female.pregnant && !female.conception && reproductionReadiness(female, species[female.speciesId], { dependentNeedsCare: dependentNeedsCare(female) }).ready) {
+  if (!female.pregnant && !female.conception && currentReproductiveStatus(female).canMate && reproductionReadiness(female, species[female.speciesId], { dependentNeedsCare: false }).ready) {
     const fatherId = male.id;
     // Females choose from an encountered mate: safety, condition and the male's condition
     // influence acceptance, so proximity alone never guarantees conception.
@@ -7231,11 +7407,16 @@ function completeMating(female) {
   const compatibility = female.mating?.compatibility || 0, matingDuration = Math.max(0, (female.mating?.completesAt || 0) - (female.mating?.startsAt || 0)), maleCooldown = female.mating?.maleCooldown || REPRODUCTION_DURATIONS.cooldown, male = animalById(female.mating?.partnerId), fatherId = male?.id;
   if (!fatherId) { female.mating = null; return; }
   clearCourtshipPair(female, male);
-  female.conception = { fatherId, completesAt: sim.tick + REPRODUCTION_DURATIONS.conception }; female.mating = null; male.mating = null;
+  const reproduction = species[female.speciesId].reproduction;
+  if (reproduction.ovulation === "induced") recordInducedOvulation(female, sim.ecologicalMinute);
+  const conceptionDelayMinutes = reproduction.ovulation === "induced" ? MINUTES_PER_DAY : 0;
+  female.conception = { fatherId, completesAtMinute: sim.ecologicalMinute + conceptionDelayMinutes, completesAt: sim.tick + REPRODUCTION_DURATIONS.conception }; female.mating = null; male.mating = null;
   // Prevent either participant immediately selecting the other again while
   // conception is resolving or while they recover from the interaction.
   female.mateCooldownUntil = sim.tick + REPRODUCTION_DURATIONS.cooldown;
   male.mateCooldownUntil = sim.tick + maleCooldown;
+  female.mateCooldownUntilMinute = sim.ecologicalMinute + 2 * MINUTES_PER_DAY;
+  male.mateCooldownUntilMinute = sim.ecologicalMinute + Math.max(2, maleCooldown / REPRODUCTION_DURATIONS.cooldown * 2) * MINUTES_PER_DAY;
   spendMetabolicEnergy(female, 10, "reproduction"); spendMetabolicEnergy(male, 3, "reproduction"); ecologicalAccounting.record("reproductionEnergy", 13);
   for (const parent of [female, male]) { const record = parent.mateHistory?.find((entry) => entry.partnerId === (parent.id === female.id ? male.id : female.id) && entry.status === "accepted"); if (record) record.status = "mated"; }
   rememberSocialEvent(female, male.id, "mating", sim.tick, { x: male.x, z: male.z, matingDuration }); rememberSocialEvent(male, female.id, "mating", sim.tick, { x: female.x, z: female.z, matingDuration });
@@ -7246,11 +7427,19 @@ function completeMating(female) {
   addEvent(`${female.id} and ${male.id} completed mating`);
 }
 
-function fertilityCycle(a) { const period = a.speciesId === "grazer" ? 28 : 36, fertileDays = a.speciesId === "grazer" ? 6 : 7; const day = ((a.age + (a.cycleOffset || 0)) % period + period) % period; return { period, day, fertileDays, fertile: a.sex === "F" && mature(a) && !a.pregnant && !a.conception && a.postpartum <= 0 && day < fertileDays }; }
+function currentReproductiveStatus(a) {
+  const calendar = seasonForAbsoluteDay(sim.day, worldSetup.startSeason);
+  return reproductiveStatus(a, species[a.speciesId].lifeHistory, { absoluteDay: sim.day, year: calendar.year, dayOfYear: calendar.dayOfYear, season: calendar.name, dayOfSeason: calendar.dayOfSeason }, sim.ecologicalMinute);
+}
+function fertilityCycle(a) {
+  const status = currentReproductiveStatus(a), reproduction = species[a.speciesId].reproduction;
+  return { ...status, period: reproduction.cycleDays, day: status.cycleDay, fertileDays: reproduction.receptiveDays, fertile: status.canConceive };
+}
 function eligibleMate(a, mate) {
   const female = a.sex === "F" ? a : mate;
-  const femaleReady = female?.sex === "F" && !female.pregnant && !female.conception && fertilityCycle(female).fertile && reproductionReadiness(female, species[female.speciesId], { dependentNeedsCare: dependentNeedsCare(female) }).ready;
-  const cooldownActive = (a.mateCooldownUntil || 0) > sim.tick || (mate?.mateCooldownUntil || 0) > sim.tick;
+  const femaleStatus = female?.sex === "F" ? currentReproductiveStatus(female) : null;
+  const femaleReady = female?.sex === "F" && !female.pregnant && !female.conception && femaleStatus?.canMate && reproductionReadiness(female, species[female.speciesId], { dependentNeedsCare: false }).ready;
+  const cooldownActive = (a.mateCooldownUntilMinute || 0) > sim.ecologicalMinute || (mate?.mateCooldownUntilMinute || 0) > sim.ecologicalMinute;
   return Boolean(mature(a) && femaleReady && mate?.alive && !closeKinForMating(a, mate) && !cooldownActive && !pairRejectionActive(a, mate) && !a.pregnant && !a.conception && !mate.pregnant && !mate.conception && !a.courtship && !a.mating && !mate.courtship && !mate.mating && mate.speciesId === a.speciesId && mate.sex !== a.sex && mature(mate));
 }
 function sensedMateBonus(a) { return (a.sensoryBuffer || []).some((m) => m.channel === "sight" && m.type === "conspecific" && eligibleMate(a, animalById(m.targetId))) ? 35 : 0; }
@@ -7258,27 +7447,29 @@ function threatenedOffspring(a) { const predators = (a.sensoryBuffer || []).filt
 function protectOffspring(a) { const childContact = knownOffspringContact(a); const childId = childContact?.targetId || childContact?.communicatedBy || "offspring"; const predatorContact = (a.sensoryBuffer || []).filter((m) => m.type === "predator" && m.channel === "sight").sort((p, q) => manhattan(p, childContact || a) - manhattan(q, childContact || a))[0]; if (!childContact) return rest(a, "guarding from remembered risk", "guard"); if (predatorContact && manhattan(predatorContact, childContact) < 3) { const predator = animalById(predatorContact.targetId); if (predator) { setAction(a, "defend", { label: `defending ${childId} from ${predator.id}`, target: predator.id, intendedOutcome: "protect offspring" }); predator.fatigue += 4; if (rand() < 0.12) herbivoreCounterattack(a, predator); return; } } moveToward(a, childContact, "protect-offspring", `rushing to protect ${childId}`, "reach offspring"); }
 
 function updatePregnancy(a, s) {
-  if (a.conception && sim.tick >= a.conception.completesAt) { const fatherId = a.conception.fatherId; a.conception = null; const father = animalById(fatherId), profile = compositionProfile(a.speciesId, a.sex), condition = maternalConditionScore(a, profile), chance = conceptionProbability(a, profile); if (rand() >= chance || !a.alive || a.health <= 0) { for (const parent of [a, father]) { const record = parent?.mateHistory?.find((entry) => entry.partnerId === (parent.id === a.id ? fatherId : a.id) && entry.status === "courtship"); if (record) record.status = "conception-failed"; } a.timeline.push(`conception did not establish day ${sim.day}`); addEvent(`${a.id} did not establish a pregnancy after mating`); } else { a.pregnant = { age: 0, fatherId, viability: clamp(.62 + condition * .38, 0, 1), conditionAtConception: condition, averageMaternalCondition: condition, conditionSamples: 1, lossChecksThroughDay: -1, offspringCount: chooseOffspringCount(s.litter, rand()) }; a.pregnancyHormones = pregnancyHormonalCycle(a.pregnant, s.gestation); for (const parent of [a, father]) { const record = parent?.mateHistory?.find((entry) => entry.partnerId === (parent.id === a.id ? fatherId : a.id) && entry.status === "courtship"); if (record) record.status = "conceived"; } a.timeline.push(`pregnancy established day ${sim.day}`); addEvent(`${a.id} conceived ${a.pregnant.offspringCount} offspring with ${fatherId}`); } }
+  const reproduction = s.reproduction, eggLayer = reproduction.mode === "surface-eggs", termDays = eggLayer ? reproduction.preLayDays : reproduction.gestationDays;
+  if (a.conception && sim.ecologicalMinute >= (a.conception.completesAtMinute ?? sim.ecologicalMinute)) { const fatherId = a.conception.fatherId; a.conception = null; const father = animalById(fatherId), profile = compositionProfile(a.speciesId, a.sex), condition = maternalConditionScore(a, profile), chance = conceptionProbability(a, profile); if (rand() >= chance || !a.alive || a.health <= 0) { for (const parent of [a, father]) { const record = parent?.mateHistory?.find((entry) => entry.partnerId === (parent.id === a.id ? fatherId : a.id) && entry.status === "courtship"); if (record) record.status = "conception-failed"; } a.timeline.push(`conception did not establish day ${sim.day}`); addEvent(`${a.id} did not establish ${eggLayer ? "a clutch" : "a pregnancy"} after mating`); } else { a.pregnant = { age: 0, mode: reproduction.mode, phase: eggLayer ? "pre-lay" : reproduction.implantationDelayDays > 0 ? "preimplantation" : "gestating", fatherId, viability: clamp(.62 + condition * .38, 0, 1), conditionAtConception: condition, averageMaternalCondition: condition, conditionSamples: 1, lossChecksThroughDay: -1, offspringCount: chooseOffspringCount(reproduction.broodRange, rand()) }; a.pregnancyHormones = eggLayer || reproduction.implantationDelayDays > 0 ? null : pregnancyHormonalCycle(a.pregnant, termDays); for (const parent of [a, father]) { const record = parent?.mateHistory?.find((entry) => entry.partnerId === (parent.id === a.id ? fatherId : a.id) && entry.status === "courtship"); if (record) record.status = "conceived"; } a.timeline.push(`${eggLayer ? "clutch" : "pregnancy"} established day ${sim.day}`); addEvent(`${a.id} conceived ${a.pregnant.offspringCount} ${eggLayer ? "eggs" : "offspring"} with ${fatherId}`); } }
   if (!a.pregnant) { a.pregnancyHormones = null; return; }
-  if (a.birthEvent) { if (sim.tick >= a.birthEvent.completesAt) { a.birthEvent = null; biologicalPhenotype(a)?.reproduction.mode === "surface-eggs" ? laySurfaceEggs(a, s) : giveBirth(a, s); } return; }
+  if (a.birthEvent) { if (sim.tick >= a.birthEvent.completesAt) { a.birthEvent = null; eggLayer ? laySurfaceEggs(a, s) : giveBirth(a, s); } return; }
   const previousAge = a.pregnant.age; a.pregnant.age += ecologicalMinutesThisTick() / MINUTES_PER_DAY;
-  a.pregnancyHormones = pregnancyHormonalCycle(a.pregnant, s.gestation);
+  a.pregnant.phase = eggLayer ? "pre-lay" : a.pregnant.age < reproduction.implantationDelayDays ? "preimplantation" : "gestating";
+  a.pregnancyHormones = eggLayer || a.pregnant.phase === "preimplantation" ? null : pregnancyHormonalCycle({ ...a.pregnant, age: a.pregnant.age - reproduction.implantationDelayDays }, Math.max(1, termDays - reproduction.implantationDelayDays));
   const profile = compositionProfile(a.speciesId, a.sex), condition = maternalConditionScore(a, profile), samples = Math.max(1, a.pregnant.conditionSamples || 1);
   a.pregnant.averageMaternalCondition = ((a.pregnant.averageMaternalCondition || condition) * samples + condition) / (samples + 1); a.pregnant.conditionSamples = samples + 1;
   a.pregnant.viability = clamp((a.pregnant.viability ?? 1) - Math.max(0, .42 - condition) * .006 * ecologicalHoursThisTick(), 0, 1);
   const firstDay = Math.max(0, Math.floor(previousAge)), lastDay = Math.floor(a.pregnant.age);
-  for (let day = Math.max(firstDay, (a.pregnant.lossChecksThroughDay ?? -1) + 1); day <= lastDay; day++) { a.pregnant.lossChecksThroughDay = day; if (rand() < pregnancyDailyLossRisk(a, a.pregnant, s.gestation, profile)) { const early = a.pregnant.age / s.gestation < .35, loss = early ? "early embryonic loss" : "miscarriage"; a.timeline.push(`${loss} day ${sim.day}`); a.pregnant = null; a.pregnancyHormones = null; a.postpartum = Math.max(a.postpartum || 0, early ? 2 : s.dependency * .12); addEvent(`${a.id} experienced ${loss}`); return; } }
-  if (a.pregnant.age >= s.gestation) { a.birthEvent = createBirthEvent(sim.tick); addEvent(`${a.id} entered labour`); }
+  for (let day = Math.max(firstDay, (a.pregnant.lossChecksThroughDay ?? -1) + 1); day <= lastDay; day++) { a.pregnant.lossChecksThroughDay = day; const lossRisk = eggLayer ? clamp(.0005 + (1 - condition) ** 2 * .05 + (a.health < 45 ? .04 : 0) + (a.hydration < 22 ? .03 : 0), .0002, .3) : pregnancyDailyLossRisk(a, a.pregnant, termDays, profile); if (rand() < lossRisk) { const early = a.pregnant.age / termDays < .35, loss = eggLayer ? "clutch loss" : early ? "early embryonic loss" : "miscarriage"; a.timeline.push(`${loss} day ${sim.day}`); a.pregnant = null; a.pregnancyHormones = null; a.postpartum = eggLayer ? 0 : Math.max(a.postpartum || 0, early ? 2 : reproduction.postpartumDays * .12); addEvent(`${a.id} experienced ${loss}`); return; } }
+  if (a.pregnant.age >= termDays) { a.birthEvent = createBirthEvent(sim.tick); addEvent(`${a.id} ${eggLayer ? "began laying" : "entered labour"}`); }
 }
 
 function giveBirth(mother, s, options = {}) {
   const count = Math.max(1, Math.floor(options.count || mother.pregnant?.offspringCount || s.litter[0] || 1));
-  const father = animalById(mother.pregnant?.fatherId);
+  const father = animalById(mother.pregnant?.fatherId) || options.fatherSnapshot || null;
   for (let i = 0; i < count; i++) {
     const pos = nearestFree(mother);
     const id = `${mother.speciesId === "grazer" ? "H" : "C"}${sim.nextId++}`;
     const child = makeAnimal(id, mother.speciesId, rand() > 0.5 ? "F" : "M", pos, rand, 0, mother.id);
-    const birthCondition = prenatalHealthOutcome(mother.pregnant, mother, compositionProfile(mother.speciesId, mother.sex), rand());
+    const birthCondition = options.fromEgg ? { health: Math.round(65 + clamp(options.viability ?? 1, 0, 1) * 35), healthCap: Math.round(72 + clamp(options.viability ?? 1, 0, 1) * 28), quality: clamp(options.viability ?? 1, 0, 1), fullHealth: (options.viability ?? 1) >= .9 } : prenatalHealthOutcome(mother.pregnant, mother, compositionProfile(mother.speciesId, mother.sex), rand());
     const generatedSizeTrait = child.sizeTrait || 1, traitArchitecture = offspringTraitArchitecture({ mother, father, prenatalQuality: birthCondition.quality, random: rand }); applyOffspringTraitArchitecture(child, traitArchitecture);
     child.healthCap = Math.round(clamp(birthCondition.healthCap * child.healthPotential, 45, 120)); child.health = Math.round(clamp(birthCondition.health * child.healthPotential, 35, child.healthCap)); child.prenatalCondition = birthCondition.quality;
     child.bodyMass *= child.sizeTrait / generatedSizeTrait; child.leanMass *= child.sizeTrait / generatedSizeTrait; child.fatMass *= child.sizeTrait / generatedSizeTrait; child.muscleMass = Math.min(child.leanMass, child.muscleMass * child.strengthPotential); migrateBodyComposition(child); child.metabolism = null; initializeMetabolism(child);
@@ -7286,7 +7477,7 @@ function giveBirth(mother, s, options = {}) {
     registerBirthKinship(child, mother, father); child.birthTick = sim.tick;
     ecologicalAccounting.record("offspringStartingEnergy", child.energy);
     child.decisionOrder = sim.nextDecisionOrder++;
-    mother.offspringIds.push(id);
+    mother.offspringIds ||= []; mother.offspringIds.push(id);
     if (father?.alive) { father.offspringIds ||= []; if (!father.offspringIds.includes(id)) father.offspringIds.push(id); }
     mother.offspringMemory ||= {};
     mother.offspringMemory[id] = { x: pos.x, z: pos.z, tick: sim.tick, confidence: 1, source: "birth", dependent: true };
@@ -7297,28 +7488,46 @@ function giveBirth(mother, s, options = {}) {
     sim.births += 1;
     addEvent(`${id} ${options.fromEgg ? "hatched for" : "born to"} ${mother.id}${birthCondition.fullHealth ? " in full health" : ` with reduced prenatal condition (${birthCondition.health}/${birthCondition.healthCap} health)`}`);
   }
-  mother.pregnant = null;
-  mother.pregnancyHormones = null;
-  mother.lactation = options.fromEgg ? 0 : s.dependency;
-  mother.postpartum = s.dependency * 0.65;
-  spendMetabolicEnergy(mother, 18, "reproduction");
-  ecologicalAccounting.record("reproductionEnergy", 18);
+  mother.pregnant = null; mother.pregnancyHormones = null;
+  if (!options.fromEgg) {
+    mother.lactation = s.lactationDays;
+    mother.postpartum = s.reproduction.postpartumDays;
+    recordReproductiveOutcome(mother, s.lifeHistory, sim.ecologicalMinute, "birth");
+    spendMetabolicEnergy(mother, 18, "reproduction");
+    ecologicalAccounting.record("reproductionEnergy", 18);
+  } else { mother.lactation = 0; mother.postpartum = 0; }
 }
 
+const eggParentSnapshot = (parent) => {
+  if (!parent) return null;
+  const snapshot = Object.fromEntries(["id", "speciesId", "sex", "sizeTrait", "aggression", "scentSkill", "waterSkill", "foodSkill", "mateSkill", "careAffinity", "memoryPersistence", "bodyFatPercent", "energy", "hydration", "health", "parentIds", "ancestorDepths"].map((key) => [key, parent[key]]));
+  snapshot.parentIds = [...(parent.parentIds || [])];
+  snapshot.ancestorDepths = { ...(parent.ancestorDepths || {}) };
+  return snapshot;
+};
+
 function laySurfaceEggs(mother, s) {
-  const pregnancy = { ...(mother.pregnant || {}) }, count = Math.max(1, Math.floor(pregnancy.offspringCount || s.litter[0] || 1)), reproduction = biologicalPhenotype(mother).reproduction;
+  const pregnancy = { ...(mother.pregnant || {}) }, count = Math.max(1, Math.floor(pregnancy.offspringCount || s.litter[0] || 1)), phenotypeReproduction = biologicalPhenotype(mother).reproduction, reproduction = s.reproduction, father = animalById(pregnancy.fatherId);
   sim.nests ||= [];
-  const incubationDays = Math.max(2, s.dependency * .35), nest = { id: `nest-${mother.id}-${sim.nextId++}`, speciesId: mother.speciesId, motherId: mother.id, fatherId: pregnancy.fatherId || null, x: mother.x, z: mother.z, count, nestType: reproduction.nest, laidMinute: sim.ecologicalMinute, hatchMinute: sim.ecologicalMinute + incubationDays * MINUTES_PER_DAY, pregnancy, guardedBy: [mother.id], status: "incubating" };
-  sim.nests.push(nest); mother.pregnant = null; mother.pregnancyHormones = null; mother.lactation = 0; mother.postpartum = incubationDays; mother.nestId = nest.id; mother.timeline.push(`laid ${count} surface eggs day ${sim.day}`); addEvent(`${mother.id} laid ${count} eggs in a ${reproduction.nest.replaceAll("-", " ")} nest`);
+  const incubationDays = reproduction.incubationDays, nest = { id: `nest-${mother.id}-${sim.nextId++}`, speciesId: mother.speciesId, motherId: mother.id, fatherId: pregnancy.fatherId || null, motherSnapshot: eggParentSnapshot(mother), fatherSnapshot: eggParentSnapshot(father), x: mother.x, z: mother.z, count, nestType: phenotypeReproduction.nest, careMode: reproduction.nestCare, laidMinute: sim.ecologicalMinute, hatchMinute: sim.ecologicalMinute + incubationDays * MINUTES_PER_DAY, lastCareCheckMinute: sim.ecologicalMinute, unattendedDays: 0, viability: pregnancy.viability ?? 1, pregnancy, guardedBy: [mother.id], status: "incubating" };
+  sim.nests.push(nest); mother.pregnant = null; mother.pregnancyHormones = null; mother.lactation = 0; mother.postpartum = 0; mother.nestId = nest.id; recordReproductiveOutcome(mother, s.lifeHistory, sim.ecologicalMinute, "laying"); mother.timeline.push(`laid ${count} surface eggs day ${sim.day}`); addEvent(`${mother.id} laid ${count} eggs in a ${phenotypeReproduction.nest.replaceAll("-", " ")} nest`);
 }
 
 function processSurfaceNests() {
   for (const nest of sim.nests || []) {
-    if (nest.status !== "incubating" || sim.ecologicalMinute < nest.hatchMinute) continue;
-    const mother = animalById(nest.motherId);
-    if (!mother?.alive) { nest.status = "failed"; continue; }
-    mother.pregnant = { ...nest.pregnancy, fatherId: nest.fatherId, offspringCount: nest.count, age: species[nest.speciesId].gestation };
-    giveBirth(mother, species[nest.speciesId], { fromEgg: true, count: nest.count }); nest.status = "hatched"; nest.hatchedMinute = sim.ecologicalMinute; mother.nestId = null;
+    if (nest.status !== "incubating") continue;
+    const s = species[nest.speciesId], mother = animalById(nest.motherId), elapsedCareDays = Math.max(0, (sim.ecologicalMinute - (nest.lastCareCheckMinute || nest.laidMinute)) / MINUTES_PER_DAY);
+    const attendants = nest.careMode === "unattended" ? [] : nest.careMode === "communal" ? sim.animals.filter((animal) => animal.alive && animal.speciesId === nest.speciesId && (animal.nestId === nest.id || dist(animal, nest) <= 8)) : mother?.alive && (mother.nestId === nest.id || dist(mother, nest) <= 8) ? [mother] : [];
+    if (elapsedCareDays > 0) {
+      Object.assign(nest, advanceSurfaceNestCare(nest, elapsedCareDays, attendants.map((animal) => animal.id))); nest.lastCareCheckMinute = sim.ecologicalMinute;
+    }
+    if (nest.status === "failed") { addEvent(`${nest.id} failed after seven unattended days`); continue; }
+    if (sim.ecologicalMinute < nest.hatchMinute) continue;
+    const hatchCount = surfaceNestHatchCount(nest);
+    if (!hatchCount) { nest.status = "failed"; addEvent(`${nest.id} failed before hatching`); continue; }
+    const hatchMother = mother || { ...nest.motherSnapshot, alive: false, x: nest.x, z: nest.z, offspringIds: [], offspringMemory: {}, timeline: [], pregnant: null, lactation: 0, postpartum: 0 };
+    hatchMother.pregnant = { ...nest.pregnancy, fatherId: nest.fatherId, offspringCount: hatchCount, age: s.reproduction.preLayDays };
+    giveBirth(hatchMother, s, { fromEgg: true, count: hatchCount, fatherSnapshot: nest.fatherSnapshot, viability: nest.viability }); nest.status = "hatched"; nest.hatchedMinute = sim.ecologicalMinute; if (mother) mother.nestId = null;
   }
 }
 
@@ -7343,7 +7552,7 @@ function moveToMemory(a, type, label, arrival) {
   }
   arrival(a);
 }
-function waterSourceLabel(cell) { return cell.waterChannel ? `${cell.riverClass || "stream"} bank` : String(cell.waterBodyId || "").startsWith("puddle-") ? "puddle edge" : "lake shore"; }
+function waterSourceLabel(cell) { return cell.waterChannel ? `${cell.flowRegime || "seasonal"} ${String(cell.riverSizeClass || cell.riverClass || "stream").replaceAll("-", " ")} bank` : String(cell.waterBodyId || "").startsWith("puddle-") ? "puddle edge" : "lake shore"; }
 function moveByLongMemory(a, type, label) {
   let memory = null;
   for (const candidate of a.longMemory || []) if (candidate.type === type && (!memory || candidate.confidence > memory.confidence)) memory = candidate;
@@ -7358,7 +7567,7 @@ function moveByLongMemory(a, type, label) {
   memory.bearing += (rand() - 0.5) * 0.12;
   return true;
 }
-function graze(a) { if (!canEat(a)) return rest(a, "resting while full"); if (a.feedingHeadRaised) { setAction(a, "listen", { label: "pausing feeding with head raised", intendedOutcome: "check surroundings before resuming feeding" }); return; } const c = cellAt(a.x, a.z), food = c.plantType || "grass", shrub = food === "shrub", tree = food === "tree", preference = plantPreference(a, food), digestion = digestiveEfficiency(a, food); if (!grazeableCellFor(a, c)) return wander(a, "search", "seeking suitable vegetation"); const bite = Math.min(c.biomass, forageBite(tree ? "shrub" : food, a.bodyMass) * ecologicalMinutesThisTick() * preference), hydrationBefore = a.hydration; c.biomass -= bite; ecologicalAccounting.record("plantConsumed", bite); c.shrubBiomass = shrub ? c.biomass : 0; c.grazingPressure = clamp((c.grazingPressure || 0) + bite * 2.5, 0, 1.5); if (!tree) c.grassHeight = clamp((c.grassHeight || 0) - bite * 1.6, 0, 1); if (shrub && c.biomass < 0.06) { c.woodland = false; c.shrubland = false; c.plantType = "grass"; c.woodyStage = "none"; } if (tree && c.biomass < 0.08) { c.biomass = 0; c.leafDepletedUntil = sim.ecologicalMinute + MINUTES_PER_DAY * 20; c.plantStage = "browsed-leafless"; } requestVegetationPresentationUpdate(c, (shrub && c.biomass < 0.06) || tree); a.hydration = clamp(a.hydration + forageHydrationGain(bite, c, a), 0, 100); ecologicalAccounting.record("forageWaterGained", Math.max(0, a.hydration - hydrationBefore)); const calories = bite * (tree || shrub ? 5200 : 4200) * digestion; recordNutrientIntake(a, { calories, carbohydrate: .12, fat: .04, protein: tree || shrub ? .18 : .12, fermentable: tree || shrub ? .66 : .72 }); ecologicalAccounting.record("feedingEnergyGained", calories); a.lastMealTick = sim.tick; a.lastDigestionEfficiency = digestion; if ((c.plantStage === "reproductive" || c.seedStore > 0.45) && rand() < seedChanceForBite(bite, tree || shrub ? .11 : .16)) a.seedLoad.push({ plantType: c.plantType, age: 0, viability: 0.65 + rand() * 0.3 }); setAction(a, tree || shrub ? "browse" : "graze", { label: tree ? "browsing reachable tree foliage" : shrub ? "browsing shrub slowly" : c.grassHeight > 0.65 ? "grazing long grass steadily" : "grazing short grass steadily", intendedOutcome: "consume preferred vegetation over time" }); }
+function graze(a) { if (!canEat(a)) return rest(a, "resting while full"); if (a.feedingHeadRaised) { setAction(a, "listen", { label: "pausing feeding with head raised", intendedOutcome: "check surroundings before resuming feeding" }); return; } const c = cellAt(a.x, a.z), food = c.plantType || "grass", shrub = food === "shrub", tree = food === "tree", preference = plantPreference(a, food), digestion = digestiveEfficiency(a, food), feedingAbility = senescenceModifiers(a).feeding; if (!grazeableCellFor(a, c)) return wander(a, "search", "seeking suitable vegetation"); const bite = Math.min(c.biomass, forageBite(tree ? "shrub" : food, a.bodyMass) * ecologicalMinutesThisTick() * preference * feedingAbility), hydrationBefore = a.hydration; c.biomass -= bite; ecologicalAccounting.record("plantConsumed", bite); c.shrubBiomass = shrub ? c.biomass : 0; c.grazingPressure = clamp((c.grazingPressure || 0) + bite * 2.5, 0, 1.5); if (!tree) c.grassHeight = clamp((c.grassHeight || 0) - bite * 1.6, 0, 1); if (shrub && c.biomass < 0.06) { c.woodland = false; c.shrubland = false; c.plantType = "grass"; c.woodyStage = "none"; } if (tree && c.biomass < 0.08) { c.biomass = 0; c.leafDepletedUntil = sim.ecologicalMinute + MINUTES_PER_DAY * 20; c.plantStage = "browsed-leafless"; } requestVegetationPresentationUpdate(c, (shrub && c.biomass < 0.06) || tree); a.hydration = clamp(a.hydration + forageHydrationGain(bite, c, a), 0, 100); ecologicalAccounting.record("forageWaterGained", Math.max(0, a.hydration - hydrationBefore)); const calories = bite * (tree || shrub ? 5200 : 4200) * digestion; recordNutrientIntake(a, { calories, carbohydrate: .12, fat: .04, protein: tree || shrub ? .18 : .12, fermentable: tree || shrub ? .66 : .72 }); ecologicalAccounting.record("feedingEnergyGained", calories); a.lastMealTick = sim.tick; a.lastDigestionEfficiency = digestion * feedingAbility; if ((c.plantStage === "reproductive" || c.seedStore > 0.45) && rand() < seedChanceForBite(bite, tree || shrub ? .11 : .16)) a.seedLoad.push({ plantType: c.plantType, age: 0, viability: 0.65 + rand() * 0.3 }); setAction(a, tree || shrub ? "browse" : "graze", { label: tree ? "browsing reachable tree foliage" : shrub ? "browsing shrub slowly" : c.grassHeight > 0.65 ? "grazing long grass steadily" : "grazing short grass steadily", intendedOutcome: "consume preferred vegetation over time" }); }
 function drink(a) {
   const source = drinkableSource(a);
   if (a.hydration >= 92) { a.drinkingSource = null; return wander(a, "wander", "leaving water, thirst satisfied"); }
@@ -7454,7 +7663,8 @@ function wander(a, key = "wander", label = "exploring") {
   const inwardMoves = currentClearance < DEFAULT_EDGE_MARGIN ? moves.filter((move) => worldBoundaryClearance(move, HALF) > currentClearance + .15) : moves;
   const choices = inwardMoves.length ? inwardMoves : moves;
   const sprint = key === "wander" && youthfulSprintIntent(a, "explore");
-  applyMove(a, choices[Math.floor(rand() * choices.length)] || { x: a.x, z: a.z }, key, sprint ? `sprinting sporadically while ${label}` : label, { sprint, intendedOutcome: key === "search" ? "locate resource or entity" : "explore surroundings" });
+  const destination = selectHabitatWeighted(a, choices, rand()) || { x: a.x, z: a.z };
+  applyMove(a, destination, key, sprint ? `sprinting sporadically while ${label}` : label, { sprint, intendedOutcome: key === "search" ? "locate resource or entity" : "explore suitable surroundings" });
 }
 function moveToward(a, target, actionKey, label, intendedOutcome, options = {}) { applyMove(a, target, actionKey, label, { ...options, target: target.id || target.targetId || `${target.x},${target.z}`, intendedOutcome, perceivedTarget: target, destinationSource: target.channel || target.type ? "perceived-evidence" : "environment" }); }
 function visualState(a, now = performance.now(), target = {}) {
@@ -7503,7 +7713,7 @@ function poseOnTerrain(object, visual, clearance = .015) {
   // than only beneath the torso centre. A fixed small footprint allowed heads
   // to enter the uphill triangle while the body remained correctly supported.
   const footprint = Math.max(.38, object.userData.groundFootprint || .38);
-  const support = stableGroundSupport(visual.x, visual.z, visual.orientation, terrainRenderHeight, { footprint, maxTilt: Math.PI / 8, maxLift: footprint * 1.25 + .08 });
+  const support = stableGroundSupport(visual.x, visual.z, visual.orientation, terrainRenderHeight, { footprint, maxTilt: Math.PI / 8, avoidClipping: true });
   object.position.set(visual.x, support.height + clearance, visual.z);
   // Bounded pitch and roll prevent a single rough triangle from flipping a
   // complete animal group while retaining a clear relationship to the slope.
@@ -7863,6 +8073,46 @@ function reuseResolvedEntityConstellations(entries, onScreenProjected) {
   entityConstellationBudgetState = entityConstellationSolveState.budget;
   return entityConstellationLayouts;
 }
+function bodyAttachedCollisionLayout(layout, projection) {
+  const entityId = String(layout.entityId), selected = String(selectedId || "") === entityId;
+  const panelAllowed = selected ? graphicsSettings.entitySelectedPresentationVisible !== false : graphicsSettings.entityPublicPanelsVisible !== false;
+  const configuredScale = selected ? graphicsSettings.entitySelectedPanelScale : graphicsSettings.entityPublicPanelScale;
+  const displayScale = clamp(Number(configuredScale) || .4, .1, 2);
+  const bubbleScale = clamp((Number(graphicsSettings.entityBubbleScale) || 1) * displayScale, .2, 3);
+  const channels = new Set(projection?.visibleChannels || []);
+  const bodyX = Number(layout.body?.x) || 0, bodyY = Number(layout.body?.y) || 0;
+  const headX = Number.isFinite(projection?.headScreenX) ? projection.headScreenX : bodyX;
+  const headY = Number.isFinite(projection?.headScreenY) ? projection.headScreenY : bodyY;
+  const headRadius = Math.max(5, Number(projection?.projectedHeadPx) || Math.max(7, (Number(projection?.projectedBodyPx) || 14) * .25));
+  const geometry = bodyAttachedOverlayGeometry({
+    bodyX,
+    bodyY,
+    headX,
+    headY,
+    headRadius,
+    displayScale,
+    bubbleScale,
+    identityVisible: panelAllowed && graphicsSettings.entityPanelIdentityVisible !== false,
+    healthVisible: panelAllowed && graphicsSettings.entityPanelHealthVisible !== false,
+    expressionVisible: channels.has("expression"),
+    publicCueVisible: channels.has("signal") || channels.has("action"),
+    thoughtVisible: channels.has("thought"),
+    predictionVisible: channels.has("prediction")
+  });
+  const footprint = geometry.footprint;
+  return Object.freeze({
+    ...layout,
+    anchor: Object.freeze({ x: bodyX, y: bodyY }),
+    footprint: Object.freeze({
+      left: footprint.left - bodyX,
+      right: footprint.right - bodyX,
+      top: footprint.top - bodyY,
+      bottom: footprint.bottom - bodyY,
+      width: footprint.width,
+      height: footprint.height
+    })
+  });
+}
 function resolveVisibleEntityConstellations(entries) {
   const publicPanelsVisible = graphicsSettings.entityPublicPanelsVisible !== false;
   const selectedPresentationVisible = graphicsSettings.entitySelectedPresentationVisible !== false;
@@ -7939,7 +8189,9 @@ function resolveVisibleEntityConstellations(entries) {
   // A separate centre-ranked visibility pass keeps the highest-importance
   // complete footprint and hides later intersections instead of pinning,
   // shoving or resizing either panel.
-  const overlapAdmission = suppressOverlappingEntityConstellations(records, { viewportBounds: canvasViewport, previousVisibleIds: previousOwnership, paddingPx: 6 * layoutScale });
+  const projectionsById = new Map(projected.map((projection) => [String(projection.id), projection]));
+  const collisionRecords = records.map((record) => bodyAttachedCollisionLayout(record, projectionsById.get(record.entityId)));
+  const overlapAdmission = suppressOverlappingEntityConstellations(collisionRecords, { viewportBounds: canvasViewport, previousVisibleIds: previousOwnership, paddingPx: 6 * layoutScale });
   const overlapDecisions = new Map(overlapAdmission.decisions.map((decision) => [decision.entityId, decision]));
   const finalDecisions = budgetAdmission.decisions.map((decision) => {
     if (!decision.admitted) return decision.reason === "exclusive-focus" ? Object.freeze({ ...decision, reason: panelFocus.reason }) : decision;
@@ -8498,9 +8750,13 @@ function updateEntityPosture(rendered, a, state, now, visual = a, groundRestProg
     if (!rest) continue;
     part.position.copy(rest.position); part.rotation.copy(rest.rotation); part.scale.copy(rest.scale);
   }
-  const locomotion = locomotionAnimation(state.movement.stationary ? "idle" : state.action.posture, now), stride = Math.sin(now * (state.action.posture === "flee" || state.action.posture === "chase" ? .01 : .0032));
-  if (locomotion.active) for (const part of [parts.body, parts.head, parts.tail]) if (part) part.position.y += locomotion.bob;
-  const feedingCarcass = a.speciesId === "hunter" && state.action.key === "feed-carcass" && !a.feedingHeadRaised ? sim.corpses.find((corpse) => corpse.id === state.action.target && corpse.biomass > 0 && physicalContact(a, corpse)) : null;
+  const locomotion = locomotionAnimation(a.speciesId, state.movement.stationary ? "idle" : state.action.posture, now, cellAt(a.x, a.z)), stride = Math.sin(now * (state.action.posture === "flee" || state.action.posture === "chase" ? .01 : .0032));
+  if (locomotion.active) {
+    for (const part of [parts.body, parts.head, parts.tail]) if (part) part.position.y += locomotion.bob;
+    parts.body.position.y -= locomotion.bodyLower; parts.body.rotation.x += locomotion.bodyPitch; parts.body.rotation.z += locomotion.bodyRoll; parts.body.rotation.y += locomotion.bodyYaw; parts.body.scale.z *= locomotion.lengthScale;
+    if (parts.head) { parts.head.position.y += locomotion.headBob - locomotion.headLower; parts.head.position.z += locomotion.headForward; parts.head.rotation.x += locomotion.headPitch; parts.head.rotation.y += locomotion.headYaw; }
+  }
+  const feedingCarcass = state.action.key === "feed-carcass" && !a.feedingHeadRaised ? sim.corpses.find((corpse) => corpse.id === state.action.target && corpse.biomass > 0 && physicalContact(a, corpse)) : null;
   const drinkingTarget = state.action.key === "drink" && a.drinkingSource ? a.drinkingSource : null;
   const nursingTarget = state.action.key === "nurse" ? animalById(state.action.target) : null;
   const feedingFocus = feedingCarcass || drinkingTarget || nursingTarget;
@@ -8512,11 +8768,11 @@ function updateEntityPosture(rendered, a, state, now, visual = a, groundRestProg
   if (feedingFocus) rendered.rotation.y += feedingLook.bodyYaw;
   if (state.action.posture === "flee") { parts.body.rotation.x -= .16; if (parts.head) { parts.head.rotation.x -= .08; parts.head.position.z += .07; } if (parts.tail) parts.tail.rotation.x -= .15 + stride * .08; }
   else if (state.action.posture === "chase") { parts.body.rotation.x -= .12; if (parts.head) parts.head.position.z += .06; }
-  else if (state.action.posture === "stalk") { parts.body.position.y -= .12; parts.body.rotation.x -= .08; if (parts.head) parts.head.position.y -= .08; if (parts.tail) parts.tail.rotation.x += .22; }
+  else if (state.action.posture === "stalk") { if (parts.tail) parts.tail.rotation.x += .22; }
   else if (state.action.posture === "scan") { if (parts.head) parts.head.position.y += .04; }
   else if (state.action.posture === "listen") { if (parts.head) parts.head.position.y += .12; }
   else if (state.action.posture === "sniff") { if (parts.head) parts.head.position.y -= .12; }
-  else if (state.action.posture === "feed" || state.action.posture === "drink") { const feedingDip = Math.sin(now * .008) * .035; if (parts.head) { parts.head.position.y -= .22 + feedingDip; parts.head.position.z += Math.abs(feedingDip) * .35; parts.head.rotation.x += .28 + feedingDip * .45; } }
+  else if (state.action.posture === "feed" || state.action.posture === "drink") { const feeding = feedingAnimation(a.speciesId, now, state.action.posture === "drink"); parts.body.rotation.x += feeding.bodyPitch; if (parts.head) { parts.head.position.y -= feeding.headDrop; parts.head.position.z += feeding.headForward; parts.head.rotation.x += feeding.headPitch; parts.head.rotation.y += feeding.headYaw; } }
   else if (state.action.posture === "suckle" && parts.head) { const suckle = Math.sin(now * .011) * .018; parts.head.position.z += .09; parts.head.rotation.x += .14 + suckle; }
   else if (state.action.posture === "collapse") { parts.body.position.y -= .32; parts.body.rotation.z += Math.PI * .46; parts.body.scale.y *= .68; if (parts.head) { parts.head.position.y -= .28; parts.head.position.x += .2; parts.head.rotation.z += Math.PI * .38; } if (parts.tail) { parts.tail.position.y -= .18; parts.tail.rotation.z -= .35; } }
   else if (state.action.posture === "guard") { parts.body.position.y += .05; if (parts.head) parts.head.position.y += .08; }
@@ -8537,7 +8793,7 @@ function updateEntityPosture(rendered, a, state, now, visual = a, groundRestProg
     for (const part of [parts.body, parts.head, parts.tail]) if (part) part.position.y -= lowering;
     if (state.action.posture === "nursing-mother" && parts.body) parts.body.position.y += Math.sin(now * .004) * .008 * groundRestProgress;
   }
-  const pregnancyBodyScale = pregnancyPhysiology(a.pregnant, species[a.speciesId].gestation).bodyLinearScale;
+  const pregnancyBodyScale = pregnancyPhysiology(a.pregnant, species[a.speciesId].gestation, species[a.speciesId].reproduction.mode).bodyLinearScale;
   const condition = visibleBodyCondition(a);
   parts.body.scale.x *= condition.widthScale;
   parts.body.scale.z *= condition.widthScale;
@@ -8721,19 +8977,22 @@ function syncAnimalVisuals(now) {
   if (contactShadowCount) animalContactShadows.instanceMatrix.needsUpdate = true;
   sweepDormantConstellationPanelResources(now);
 }
-function terrainTravelEffects(c, speciesId) {
+function terrainTravelEffects(c, subject) {
+  const speciesId = typeof subject === "string" ? subject : subject?.speciesId;
   const cover = c?.landCover || (c?.woodland ? "youngWoodland" : c?.shrubland ? "bushland" : (c?.grassHeight || 0) > .68 ? "longGrass" : "shortGrass");
   const hunter = speciesCanHunt(speciesId), locomotion = biologicalPhenotype(speciesId)?.locomotion || {}, adjust = (base, affinity = 1) => clamp(base * affinity, .2, 1.45);
-  if (cover === "longGrass") return { speed: adjust(hunter ? .80 : .90), noise: 1.28, energy: 1.08, label: "moving through long grass" };
-  if (cover === "bushland" || cover === "dryScrub") return { speed: adjust(hunter ? .76 : .70, locomotion.woodland), noise: 1.60 / Math.max(.65, locomotion.woodland || 1), energy: 1.16, label: "pushing through scrub" };
-  if (cover === "youngWoodland" || cover === "matureForest") return { speed: adjust(hunter ? .70 : .66, locomotion.woodland), noise: .90, energy: 1.18, label: "moving through woodland" };
-  if (cover === "wetMeadow") return { speed: adjust(.78, locomotion.mud), noise: .88, energy: 1.20, label: "crossing wet meadow" };
-  if (cover === "swamp") return { speed: adjust(.55, Math.max(locomotion.mud || 1, locomotion.shallowWater || 1)), noise: .72, energy: 1.55, label: "crossing swamp" };
-  if (cover === "snow") return { speed: adjust(.72, locomotion.snow), noise: .90, energy: 1.30, label: "crossing snow" };
-  if (cover === "rock" || cover === "alpineRock") return { speed: adjust(.70, Math.max(locomotion.rock || 1, locomotion.slope || 1)), noise: .82, energy: 1.40, label: "crossing rocky ground" };
-  if (cover === "sand") return { speed: .80, noise: .98, energy: 1.22, label: "crossing sand" };
-  if (cover === "bareDirt") return { speed: .94, noise: 1.02, energy: 1.04, label: "crossing bare ground" };
-  return { speed: 1, noise: 1, energy: 1, label: "moving across grassland" };
+  let effect = { speed: 1, noise: 1, energy: 1, label: "moving across grassland" };
+  if (cover === "longGrass") effect = { speed: adjust(hunter ? .80 : .90), noise: 1.28, energy: 1.08, label: "moving through long grass" };
+  else if (cover === "bushland" || cover === "dryScrub") effect = { speed: adjust(hunter ? .76 : .70, locomotion.woodland), noise: 1.60 / Math.max(.65, locomotion.woodland || 1), energy: 1.16, label: "pushing through scrub" };
+  else if (cover === "youngWoodland" || cover === "matureForest") effect = { speed: adjust(hunter ? .70 : .66, locomotion.woodland), noise: .90, energy: 1.18, label: "moving through woodland" };
+  else if (cover === "wetMeadow" || cover === "marsh") effect = { speed: adjust(cover === "marsh" ? .66 : .78, Math.max(locomotion.mud || 1, locomotion.shallowWater || 1)), noise: .82, energy: cover === "marsh" ? 1.38 : 1.20, label: `crossing ${cover === "marsh" ? "marsh" : "wet meadow"}` };
+  else if (["swamp", "woodedSwamp", "shrubSwamp"].includes(cover)) effect = { speed: adjust(.55, Math.max(locomotion.mud || 1, locomotion.shallowWater || 1, locomotion.woodland || 1)), noise: .72, energy: 1.55, label: `crossing ${cover === "woodedSwamp" ? "wooded swamp" : cover === "shrubSwamp" ? "shrub swamp" : "swamp"}` };
+  else if (cover === "snow") effect = { speed: adjust(.72, locomotion.snow), noise: .90, energy: 1.30, label: "crossing snow" };
+  else if (cover === "rock" || cover === "alpineRock") effect = { speed: adjust(.70, Math.max(locomotion.rock || 1, locomotion.slope || 1)), noise: .82, energy: 1.40, label: "crossing rocky ground" };
+  else if (cover === "sand") effect = { speed: .80, noise: .98, energy: 1.22, label: "crossing sand" };
+  else if (cover === "bareDirt") effect = { speed: .94, noise: 1.02, energy: 1.04, label: "crossing bare ground" };
+  const slope = terrainMobilityAssessment(subject || speciesId, c || {}), climbing = slope.demand > .08;
+  return { ...effect, energy: effect.energy * slope.energyMultiplier, slopeDemand: slope.demand, slopeAllowed: slope.allowed, label: climbing ? `${effect.label}; ${slope.reason}` : effect.label };
 }
 function applyMove(a, p, actionKey, label, options = {}) {
   if (!p) { setBlockedAction(a, "no continuous destination", { label: `blocked while ${label}`, target: options.target, intendedOutcome: options.intendedOutcome }); return false; }
@@ -8778,7 +9037,7 @@ function applyMove(a, p, actionKey, label, options = {}) {
   }
   // Slow/stalking movement genuinely advances less distance each simulation tick.
   const wading = (destination?.waterDepth || 0) > 0;
-  const terrainEffect = terrainTravelEffects(destination, a.speciesId);
+  const terrainEffect = terrainTravelEffects(destination, a);
   const movementCapability = exertion.key === "adrenaline-overdrive" ? Math.max(1, a.capabilities?.speed || 0) : (a.capabilities?.speed || 1);
   const ordinaryStep = movementCapability * (0.16 + (exertion.speedMultiplier ? .52 : pace) * 0.58) * terrainEffect.speed * (wading ? 0.55 : 1);
   const step = clamp(ordinaryStep * (exertion.speedMultiplier || 1), 0.05, exertion.speedMultiplier ? 2.4 : 0.78);
@@ -8849,13 +9108,16 @@ function die(a, cause, ownerId = null) {
   for (const parent of sim.animals) if (parent.offspringIds) parent.offspringIds = parent.offspringIds.filter((id) => id !== a.id);
 }
 function decayCorpses() { for (const corpse of sim.corpses) { corpse.age += 1; const before = corpse.biomass; const t = localTemperatureAt(corpse); const rotLimit = t > 25 ? 60 : t < 5 ? 120 : 84; if (corpse.biomass > 0) corpse.biomass = Math.max(0, corpse.biomass - corpse.initialBiomass / rotLimit); if (corpse.biomass <= 0.03 || corpse.age >= rotLimit) { corpse.biomass = 0; corpse.eaten = true; corpse.skeletonAge = (corpse.skeletonAge || 0) + 1; } ecologicalAccounting.record("corpseDecayed", Math.max(0, before - corpse.biomass)); const c = cellAt(corpse.x, corpse.z); c.fertility = clamp(c.fertility + 0.0015, 0, 1); } const retained = []; for (const corpse of sim.corpses) { if (!corpse.eaten || corpse.skeletonAge < 365 * 24) retained.push(corpse); else { sim.entityIndex?.removeCorpse(corpse.id); if (selectedId === corpse.id) { selectedId = null; entityLocked = false; } } } sim.corpses = retained; }
-function reproductionDrive(a) { const mod = seasonMods[sim.season].breed; const cycle = fertilityCycle(a), s = species[a.speciesId]; if (!(a.capabilities?.canMate) || mod <= 0 || a.postpartum > 0) return 0; if (a.sex === "F" && (!cycle.fertile || !reproductionReadiness(a, s, { dependentNeedsCare: dependentNeedsCare(a) }).ready)) return 0; const readiness = 55 + (a.energy - s.reproductionEnergy) * 0.8, loss = activeBereavement(a), griefModifier = loss ? clamp(1 - loss.griefIntensity * .72, .18, 1) : 1; return (a.sex === "F" ? readiness + 30 : readiness * 0.38 * (.55 + (a.libido ?? inferredLibido(a)))) * mod * griefModifier; }
+function reproductionDrive(a) { const status = currentReproductiveStatus(a), s = species[a.speciesId]; if (!(a.capabilities?.canMate) || !status.canMate) return 0; if (a.sex === "F" && !reproductionReadiness(a, s, { dependentNeedsCare: false }).ready) return 0; const readiness = 55 + (a.energy - s.reproductionEnergy) * 0.8, loss = activeBereavement(a), griefModifier = loss ? clamp(1 - loss.griefIntensity * .72, .18, 1) : 1; return (a.sex === "F" ? readiness + 30 : readiness * 0.38 * (.55 + (a.libido ?? inferredLibido(a)))) * griefModifier; }
 function mature(a) { return a.lifeStage === "adult" || a.lifeStage === "old"; }
 function stageForAge(s, age, motherId) { if (motherId) return "dependent"; if (age < s.matureAge * 0.45) return "juvenile"; if (age < s.matureAge) return "subadult"; if (age > s.oldAge) return "old"; return "adult"; }
 function bodyScale(s, age) { return clamp(0.28 + age / s.matureAge * 0.72, 0.22, age > s.oldAge ? 0.92 : 1); }
 function stageCost(a) { return a.lifeStage === "dependent" ? 0.55 : a.lifeStage === "old" ? 1.25 : 1; }
 function weatherCost(a) { const t = localTemperatureAt(a); a.tempStress = t < -5 ? -t - 5 : t > 31 ? t - 31 : 0; return 1 + a.tempStress * 0.025; }
-function ageDecline(a, s, elapsedHours = 1) { const oldAge = projectedSenescenceAge(a, s.oldAge, s.maxAge), maximumAge = projectedMaximumAge(a, s.maxAge); if (a.age <= oldAge) return; const decline = (a.age - oldAge) / Math.max(1, maximumAge - oldAge); a.health -= Math.max(0, decline) * 0.035 * elapsedHours; }
+function advanceAgeing(a, s, elapsedHours = 1) {
+  const state = advanceSenescence(a, s.lifeHistory.development, elapsedHours);
+  a.health -= state.lastHealthDamage;
+}
 function targetScore(a, p) { return dist(a, p) + (p.lifeStage === "dependent" ? -6 : 0) + (p.lifeStage === "old" ? -2 : 0) + p.health / 40; }
 
 function terrainDetailStride() {
@@ -8910,24 +9172,21 @@ function renderAllWork({ cameraOnly = false, refreshOverlays = false } = {}) {
     const detail = terrainDetailStride();
     if (detail !== lastTerrainDetail) { lastTerrainDetail = detail; landscapeDirty = true; }
     for (const id of vegetationPresentationInvalidator.due(sim.tick)) { const cell = sim.cells[id]; if (cell) markLandscapeCell(cell, "terrain", "vegetation"); }
-    const refreshLandscape = landscapeDirty || lastLandscapeTick < 0 || landscapeDirtyState.vegetation.size > 0;
+    const refreshLandscape = landscapeDirty || lastLandscapeTick < 0 || landscapeDirtyState.terrain.size > 0 || landscapeDirtyState.vegetation.size > 0;
     if (refreshLandscape) {
-      profiler.measure("display.vegetation", () => profiler.measure("vegetation rebuild", () => {
-        if (landscapeDirty) landscapeDirtyState.markAll("vegetation");
-        const dirtyVegetationChunks = new Set(landscapeDirtyState.take("vegetation"));
-        const dirtyVegetationBatches = new Set([...dirtyVegetationChunks].map((key) => vegetationBatchKey(key)));
-        const rebuildVegetationChunks = new Set(chunkKeysForVegetationBatches(landscapeChunkCells.keys(), dirtyVegetationChunks));
-        updateTerrainColours();
-        drawTerrainFields(null, detail);
-        drawVegetationRegions(detail, null, rebuildVegetationChunks);
-        for (const chunkKey of rebuildVegetationChunks) for (const cell of landscapeChunkCells.get(chunkKey) || []) vegetationPresentationInvalidator.commit(cell.id, vegetationPresentationState(cell, sim.tick));
-      }));
+      profiler.measure("display.vegetation", () => {
+        if (landscapeDirty) { landscapeDirtyState.markAll("terrain"); landscapeDirtyState.markAll("vegetation"); }
+        const terrainChunks = landscapeDirtyState.take("terrain"), terrainIds = terrainChunks.flatMap(key => (landscapeChunkCells.get(key) || []).map(cell => cell.id));
+        if (terrainIds.length) { updateTerrainColours(terrainIds); drawTerrainFields(); }
+        queueVegetationChunks(landscapeDirtyState.take("vegetation")); landscapeDirtyState.take("water");
+      });
       landscapeDirty = false;
       lastLandscapeTick = sim.tick;
       lastTerrainObserverKey = "data-only";
     }
   }
   updateLandscapeChunkVisibility(entityFocus);
+  if (!cameraOnly && vegetationRebuildQueue.size) profiler.measure("display.vegetation", () => processVegetationRebuildQueue(terrainDetailStride()));
   // One camera frustum governs both organism admission and corpse culling.
   // Unlike the former target-centred ground radius, this changes only which
   // entities are actually inside the current view when the camera is moved.
@@ -8993,42 +9252,34 @@ function renderAllWork({ cameraOnly = false, refreshOverlays = false } = {}) {
 }
 
 function terrainColour(c) {
-  if (c.water) return c.waterLevel > 0.72 ? [26, 93, 158] : [51, 137, 194];
-  if (c.terrainClass === "snow") return [218, 230, 232];
-  if (c.terrainClass === "rock") return [101, 110, 107];
-  if (c.terrainClass === "sand") return [190, 164, 91];
-  if (c.terrainClass === "dirt") return [116, 87, 55];
-  if (c.terrainClass === "dryGrass") return [150, 131, 78];
-  if (c.terrainClass === "forest" || c.terrainClass === "woodland") return [31, 76, 51];
-  if (c.terrainClass === "shrubland") return [55, 99, 53];
-  const vitality = clamp(c.biomass || 0, 0, 1);
-  return [55 + Math.round(vitality * 25), 104 + Math.round(vitality * 43), 62 + Math.round(vitality * 18)];
+  return habitatColourRgb(c);
 }
 
 function visualTerrainColour(cell) {
   if (!cell) return [24, 32, 28];
   // Water is expanded by one visual cell only, so narrow rivers remain legible
   // without changing the hydrology or where animals may drink.
-  const nearWater = neighbors(cell).some((p) => inside(p.x, p.z) && cellAt(p.x, p.z).water);
+  const nearWater = cell.water || cell.neighbours.some(neighbour => neighbour.water);
   return cell.water || nearWater ? (cell.waterLevel > 0.72 ? [26, 93, 158] : [51, 137, 194]) : terrainColour(cell);
 }
 
-function updateTerrainColours() {
-  // Hex terrain uses material groups, not a legacy sampled colour texture.
-  if (groundMesh?.userData.hexTerrain) return;
+function updateTerrainColours(cellIds = null) {
   if (!groundMesh || !groundColours) return;
-  let plants = 0;
-  const positions = groundMesh.geometry.attributes.position;
-  for (let i = 0; i < positions.count; i++) {
-    const x = clamp(Math.round(positions.getX(i)), -HALF, HALF - 1);
-    const z = clamp(Math.round(groundMesh.userData.hexTerrain ? positions.getZ(i) : -positions.getY(i)), -HALF, HALF - 1);
-    const cell = cellAt(x, z);
-    if (!cell.water && cell.biomass > 0.2) plants += 1;
+  const ids = cellIds ? [...new Set(cellIds)].sort((a, b) => a - b) : sim.cells.map(cell => cell.id);
+  groundColours.clearUpdateRanges?.();
+  for (const id of ids) {
+    const cell = sim.cells[id]; if (!cell) continue;
     const [r, g, b] = visualTerrainColour(cell);
-    groundColours.setXYZ(i, r / 255, g / 255, b / 255);
+    const firstVertex = id * 7;
+    for (let vertex = 0; vertex < 7; vertex += 1) groundColours.setXYZ(firstVertex + vertex, r / 255, g / 255, b / 255);
   }
+  for (let cursor = 0; cursor < ids.length;) {
+    const first = ids[cursor]; let last = first; cursor += 1;
+    while (cursor < ids.length && ids[cursor] === last + 1) last = ids[cursor++];
+    groundColours.addUpdateRange?.(first * 7 * 3, (last - first + 1) * 7 * 3);
+  }
+  if (groundColours.updateRange && ids.length) { groundColours.updateRange.offset = ids[0] * 7 * 3; groundColours.updateRange.count = (ids.at(-1) - ids[0] + 1) * 7 * 3; }
   groundColours.needsUpdate = true;
-  sim.plantCount = plants;
 }
 
 function hexMaterialIndexAt(x, z) {
@@ -9054,6 +9305,37 @@ function initialiseLandscapeChunks() {
   vegetationSampleCache = { source: sim.cells, stride: 0, chunks: new Map() };
   landscapeDirtyState.markAll("terrain"); landscapeDirtyState.markAll("water"); landscapeDirtyState.markAll("vegetation");
 }
+function queueVegetationChunks(chunkKeys) {
+  for (const chunkKey of chunkKeys) { const batchKey = vegetationBatchKey(chunkKey), pending = vegetationRebuildQueue.get(batchKey); vegetationRebuildQueue.set(batchKey, { key: batchKey, revision: (pending?.revision || 0) + 1 }); }
+}
+function vegetationBatchGeometry(batchKey) {
+  const batchSize = DEFAULT_LANDSCAPE_CHUNK_SIZE * VEGETATION_BATCH_CHUNKS, [gx, gz] = batchKey.split(",").map(Number);
+  return { x: -HALF + (gx + .5) * batchSize, z: -HALF + (gz + .5) * batchSize, radius: batchSize * .78, batchSize };
+}
+function vegetationBatchPriority(item) {
+  const geometry = vegetationBatchGeometry(item.key), selected = selectedAnimal(), inhabited = inhabitedAnimal(), focusDistance = Math.min(...[selected, inhabited].filter(Boolean).map(animal => Math.hypot(animal.x - geometry.x, animal.z - geometry.z)), Infinity), root = vegetationChunkRoots.get(item.key), distance = Math.hypot(controls.target.x - geometry.x, controls.target.z - geometry.z);
+  return { item, focus: Number.isFinite(focusDistance) && focusDistance <= geometry.batchSize * 1.5 ? 0 : root?.visible ? 1 : 2, distance };
+}
+function processVegetationRebuildQueue(detail) {
+  if (!vegetationRebuildQueue.size) return 0;
+  const started = performance.now(), budget = graphicsSettings.largeMapPerformanceMode ? 4 : 8, cameraDistance = camera.position.distanceTo(controls.target), allowed = [];
+  for (const item of vegetationRebuildQueue.values()) {
+    const ranked = vegetationBatchPriority(item), geometry = vegetationBatchGeometry(item.key), lod = vegetationLod(Math.max(0, ranked.distance - geometry.radius), cameraDistance, graphicsSettings.animalDetail, { largeMapPerformanceMode: graphicsSettings.largeMapPerformanceMode });
+    if (graphicsSettings.largeMapPerformanceMode && ranked.focus > 1 && ranked.distance > lod.visibleRadius + geometry.batchSize) continue;
+    allowed.push(ranked);
+  }
+  allowed.sort((left, right) => left.focus - right.focus || left.distance - right.distance || left.item.key.localeCompare(right.item.key));
+  let completed = 0;
+  for (const { item } of allowed) {
+    const chunkKeys = [...landscapeChunkCells.keys()].filter(key => vegetationBatchKey(key) === item.key);
+    profiler.measure("vegetation batch rebuild", () => drawVegetationRegions(detail, null, new Set(chunkKeys)));
+    for (const chunkKey of chunkKeys) for (const cell of landscapeChunkCells.get(chunkKey) || []) vegetationPresentationInvalidator.commit(cell.id, vegetationPresentationState(cell, sim.tick));
+    if (vegetationRebuildQueue.get(item.key)?.revision === item.revision) vegetationRebuildQueue.delete(item.key);
+    completed += 1;
+    if (performance.now() - started >= budget) break;
+  }
+  return completed;
+}
 function vegetationRootForBatch(key) { let root = vegetationChunkRoots.get(key); if (!root) { const batchSize = DEFAULT_LANDSCAPE_CHUNK_SIZE * VEGETATION_BATCH_CHUNKS, [gx, gz] = key.split(",").map(Number); root = new THREE.Group(); root.userData.resourceOwnership = RESOURCE_OWNERSHIP.chunk; root.userData.batchKey = key; root.userData.landscapeCenter = { x: -HALF + (gx + .5) * batchSize, z: -HALF + (gz + .5) * batchSize }; vegetationChunkRoots.set(key, root); groups.plants.add(root); } return root; }
 function vegetationRootFor(chunkKey) { return vegetationRootForBatch(vegetationBatchKey(chunkKey)); }
 function updateLandscapeChunkVisibility(entityFocus) {
@@ -9064,14 +9346,14 @@ function updateLandscapeChunkVisibility(entityFocus) {
     const center = root.userData.landscapeCenter || (root.userData.landscapeCenter = (() => { const [gx, gz] = key.split(",").map(Number); return { x: -HALF + (gx + .5) * batchSize, z: -HALF + (gz + .5) * batchSize }; })()), x = center.x, z = center.z, dx = x - controls.target.x, dz = z - controls.target.z;
     landscapeChunkSphere.center.set(x, terrainHeight(clamp(x, -HALF, HALF - 1), clamp(z, -HALF, HALF - 1)), z);
     landscapeChunkSphere.radius = batchSize * .78;
-    const distance = Math.hypot(dx, dz), lod = vegetationLod(Math.max(0, distance - landscapeChunkSphere.radius), cameraDistance, graphicsSettings.animalDetail);
+    const distance = Math.hypot(dx, dz), lod = vegetationLod(Math.max(0, distance - landscapeChunkSphere.radius), cameraDistance, graphicsSettings.animalDetail, { largeMapPerformanceMode: graphicsSettings.largeMapPerformanceMode });
     root.visible = !entityFocus && lod.visible && landscapeFrustum.intersectsSphere(landscapeChunkSphere);
     if (root.visible) {
       for (const child of root.children) child.visible = child.userData.landscapeDetail === "fine" ? lod.fine : child.userData.landscapeDetail === "medium" ? lod.medium : true;
     }
   }
 }
-function resetLandscapeChunks() { for (const root of vegetationChunkRoots.values()) clear(root); vegetationChunkRoots.clear(); landscapeChunkCells.clear(); landscapeDirtyState.clear(); vegetationPresentationInvalidator.clear(); vegetationSampleCache = { source: null, stride: 0, chunks: new Map() }; }
+function resetLandscapeChunks() { for (const root of vegetationChunkRoots.values()) clear(root); vegetationChunkRoots.clear(); vegetationRebuildQueue.clear(); landscapeChunkCells.clear(); landscapeDirtyState.clear(); vegetationPresentationInvalidator.clear(); vegetationSampleCache = { source: null, stride: 0, chunks: new Map() }; }
 
 function createCorpseVisual(corpse, stage) {
   const root = new THREE.Group(), remains = new THREE.Group(); root.add(remains);
@@ -9269,89 +9551,110 @@ function drawMapMarkers(requestedMode = "auto") {
 
 function terrainRenderHeight(x, z) {
   const cell = sim?.hexWorld?.lookup(x, z);
-  return cell ? fanSurfaceHeight(terrainSurfaceCache.get(cell.id), x, z) : 0;
+  return cell && terrainSurfaceTable ? indexedFanSurfaceHeight(terrainSurfaceTable.positions, terrainSurfaceTable.offsets[cell.id], x, z) : 0;
+}
+
+function replaceLandscapeWaterMesh(cache, key, mesh) {
+  const previous = cache.get(key);
+  if (previous) { groups.water.remove(previous); previous.geometry?.dispose?.(); cache.delete(key); }
+  if (mesh) { mesh.userData.landscapeWaterKey = key; groups.water.add(mesh); cache.set(key, mesh); }
+  return mesh;
+}
+
+function lakeMeshFor(world, lake) {
+  if (!lake?.cells?.length) return null;
+  const positions = [], indices = [], vertices = new Map(), level = lake.level + .014;
+  const add = (x, z) => { const key = `${Math.round(x * 1000)},${Math.round(z * 1000)}`; if (vertices.has(key)) return vertices.get(key); const id = positions.length / 3; positions.push(x, level, z); vertices.set(key, id); return id; };
+  for (const cell of lake.cells) {
+    const centre = add(cell.x, cell.z), corners = world.corners(cell).map(point => add(clamp(point.x, -HALF, HALF), clamp(point.z, -HALF, HALF)));
+    for (let index = 0; index < 6; index += 1) indices.push(centre, corners[index], corners[(index + 1) % 6]);
+  }
+  const geometry = new THREE.BufferGeometry(); geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3)); geometry.setIndex(indices); geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(geometry, mats.shallowWater); mesh.userData.lakeBasinId = lake.id.replace(/^lake-/, ""); return mesh;
+}
+
+function riverRouteMeshFor(world, route) {
+  const positions = [], indices = [], colours = [];
+  const colourFor = (cell) => {
+    const colour = cell.flowRegime === "perennial" ? [0.18, .56, .86] : cell.flowRegime === "ephemeral" ? [.49, .76, .82] : [.31, .68, .9], depth = clamp(cell.riverSizeScore || 0, 0, 1) * .12;
+    return [Math.max(0, colour[0] - depth), Math.max(0, colour[1] - depth * .45), Math.min(1, colour[2] + depth * .25)];
+  };
+  const addRibbon = (points, laneOffset, widthFactor) => {
+    const left = [], right = [], pointColours = [], miterLimit = world.riverWidthStats?.miterLimit || 2.5;
+    for (let index = 0; index < points.length; index += 1) {
+      const point = points[index], previous = points[Math.max(0, index - 1)], next = points[Math.min(points.length - 1, index + 1)];
+      const inX = point.x - previous.x, inZ = point.z - previous.z, outX = next.x - point.x, outZ = next.z - point.z, inLength = Math.max(.0001, Math.hypot(inX, inZ)), outLength = Math.max(.0001, Math.hypot(outX, outZ));
+      const inNormalX = -inZ / inLength, inNormalZ = inX / inLength, outNormalX = -outZ / outLength, outNormalZ = outX / outLength;
+      let miterX = inNormalX + outNormalX, miterZ = inNormalZ + outNormalZ, miterLength = Math.hypot(miterX, miterZ);
+      if (miterLength < .0001) { miterX = outNormalX; miterZ = outNormalZ; } else { miterX /= miterLength; miterZ /= miterLength; }
+      const laneFade = points.length <= 2 ? 0 : Math.sin(Math.PI * index / (points.length - 1)), lane = point.width * laneOffset * laneFade, centreX = point.x + outNormalX * lane, centreZ = point.z + outNormalZ * lane;
+      const ratio = 1 / Math.max(.001, Math.abs(miterX * outNormalX + miterZ * outNormalZ)), half = point.width * widthFactor * .5, scale = ratio <= miterLimit ? half * ratio : half, sideX = (ratio <= miterLimit ? miterX : outNormalX) * scale, sideZ = (ratio <= miterLimit ? miterZ : outNormalZ) * scale;
+      const leftX = centreX + sideX, leftZ = centreZ + sideZ, rightX = centreX - sideX, rightZ = centreZ - sideZ;
+      left.push([leftX, point.lakeMouth ? point.y : Math.max(point.y, terrainHeight(leftX, leftZ) + .018), leftZ]); right.push([rightX, point.lakeMouth ? point.y : Math.max(point.y, terrainHeight(rightX, rightZ) + .018), rightZ]); pointColours.push(colourFor(point.cell));
+    }
+    const base = positions.length / 3;
+    for (let index = 0; index < points.length; index += 1) { positions.push(...left[index], ...right[index]); colours.push(...pointColours[index], ...pointColours[index]); }
+    for (let index = 0; index < points.length - 1; index += 1) { const a = base + index * 2, b = a + 1, c = a + 2, d = a + 3; indices.push(a, b, c, b, d, c); }
+  };
+  const addRun = (run, pattern) => {
+    if (!run.length) return;
+    const points = run.map(cell => ({ cell, x: cell.x, z: cell.z, y: (cell.waterSurface ?? cell.elevation) + .014, width: Math.max(.001, cell.waterWidth || world.radius * .035), lakeMouth: false })), last = points.at(-1), downstream = last.cell.flowTo;
+    if (downstream?.channel && downstream.waterChannel) points.push({ cell: downstream, x: downstream.x, z: downstream.z, y: (downstream.waterSurface ?? downstream.elevation) + .014, width: Math.max(last.width, downstream.waterWidth || last.width), lakeMouth: false });
+    else if (downstream?.cells && Number.isFinite(downstream.level)) { const mouth = adjacentLakeMouthCell(last.cell, downstream); if (mouth) points.push({ cell: last.cell, x: (last.x + mouth.x) * .5, z: (last.z + mouth.z) * .5, y: downstream.level + .014, width: last.width, lakeMouth: true }); }
+    if (points.length < 2) return;
+    const diversity = clamp(world.settings.riverPatternDiversity ?? 1, 0, 2);
+    if (pattern === "meandering" && diversity > 0 && points.length > 2) for (let index = 1; index < points.length - 1; index += 1) { const point = points[index], previous = points[index - 1], next = points[index + 1], dx = next.x - previous.x, dz = next.z - previous.z, length = Math.max(.001, Math.hypot(dx, dz)), bend = (point.cell.riverBend || 0) * world.radius * .34 * diversity; point.x += -dz / length * bend; point.z += dx / length * bend; point.y = terrainHeight(point.x, point.z) + .022; }
+    if (pattern === "braided") for (const lane of [-.72, 0, .72]) addRibbon(points, lane, .26); else if (pattern === "anastomosing") for (const lane of [-.42, .42]) addRibbon(points, lane, .38); else addRibbon(points, 0, 1);
+  };
+  let run = [], pattern = null;
+  const flush = () => { addRun(run, pattern); run = []; pattern = null; };
+  for (const cell of route.cells) { if (!cell.waterChannel || !cell.water) { flush(); continue; } const nextPattern = cell.riverPattern || "single-channel"; if (run.length && nextPattern !== pattern) flush(); pattern = nextPattern; run.push(cell); }
+  flush(); if (!positions.length) return null;
+  const geometry = new THREE.BufferGeometry(); geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3)); geometry.setAttribute("color", new THREE.Float32BufferAttribute(colours, 3)); geometry.setIndex(indices); geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(geometry, mats.riverWater); mesh.userData.riverRouteId = route.id; return mesh;
+}
+
+function rebuildWaterPresentation({ lakeBasinIds = [], riverRouteIds = [] } = {}) {
+  const world = sim?.hexWorld; if (!world) return;
+  for (const basinId of lakeBasinIds) { const lakeId = `lake-${basinId}`, lake = world.waterBodies.find(body => body.id === lakeId); replaceLandscapeWaterMesh(lakeRenderMeshes, lakeId, lakeMeshFor(world, lake)); }
+  for (const routeId of riverRouteIds) { const route = world.riverRoutes.find(item => item.id === routeId); replaceLandscapeWaterMesh(riverRenderMeshes, routeId, route ? riverRouteMeshFor(world, route) : null); }
 }
 
 function buildTerrain() { return profiler.measure("display.terrain", () => profiler.measure("terrain rebuild", buildTerrainWork)); }
 function buildTerrainWork() {
   clear(groups.terrain); clear(groups.water);
+  lakeRenderMeshes.clear(); riverRenderMeshes.clear();
   worldEdgeLine = null;
   if (!landscapeChunkCells.size) initialiseLandscapeChunks();
-  const world = sim.hexWorld, positions = [], uvs = [], materialBatches = Array.from({ length: hexGroundMaterials.length }, () => []), vertexMap = new Map();
-  terrainSurfaceCache.clear();
-  const add = (x, z, height) => { x = clamp(x, -HALF, HALF); z = clamp(z, -HALF, HALF); const k = `${Math.round(x * 1000)},${Math.round(z * 1000)}`; if (vertexMap.has(k)) return vertexMap.get(k); const id = positions.length / 3; positions.push(x, height, z); uvs.push(x / 5, z / 5); vertexMap.set(k, id); return id; };
+  const world = sim.hexWorld, cellCount = world.cells.length, verticesPerCell = 7;
+  const positions = new Float32Array(cellCount * verticesPerCell * 3), uvs = new Float32Array(cellCount * verticesPerCell * 2), colours = new Float32Array(cellCount * verticesPerCell * 3), offsets = new Uint32Array(cellCount);
+  const IndexArray = cellCount * verticesPerCell > 65535 ? Uint32Array : Uint16Array, indices = new IndexArray(cellCount * 18);
   for (const c of world.cells) {
-    const surfaceCorners = world.corners(c).map((p) => { const x = clamp(p.x, -HALF, HALF), z = clamp(p.z, -HALF, HALF); return { x, z, y: world.lookup(x, z)?.elevation ?? c.elevation }; });
-    const centre = add(c.x, c.z, c.elevation), corners = surfaceCorners.map((p) => add(p.x, p.z, p.y));
-    const renderedPoint = (index) => ({ x: positions[index * 3], y: positions[index * 3 + 1], z: positions[index * 3 + 2] });
-    // Fog, picking, and terrain support must use the same merged vertices as
-    // the rendered ground. Reusing each cell's pre-merge corner height causes
-    // black depth gaps wherever neighbouring slope corners disagree.
-    terrainSurfaceCache.set(c.id, { centre: renderedPoint(centre), corners: corners.map(renderedPoint) });
-    // X/Z terrain uses the opposite winding from an XY polygon.  Keep these
-    // faces upward so the one-sided land materials are lit and visible.
-    // A geometry group is a draw submission. Sort triangles into one batch per
-    // material instead of creating one group per hex cell.
-    const materialIndex = c.waterBodyId?.startsWith("lake-") ? 5 : hexMaterialIndexAt(c.x, c.z), batch = materialBatches[materialIndex];
-    for (let i = 0; i < 6; i++) batch.push(centre, corners[(i + 1) % 6], corners[i]);
+    const baseVertex = c.id * verticesPerCell, basePosition = baseVertex * 3, baseUv = baseVertex * 2, baseIndex = c.id * 18, corners = world.corners(c), [red, green, blue] = habitatColourRgb(c);
+    offsets[c.id] = baseVertex;
+    positions[basePosition] = c.x; positions[basePosition + 1] = c.elevation; positions[basePosition + 2] = c.z; uvs[baseUv] = c.x / 5; uvs[baseUv + 1] = c.z / 5;
+    for (let vertex = 0; vertex < verticesPerCell; vertex += 1) { const colourOffset = (baseVertex + vertex) * 3; colours[colourOffset] = red / 255; colours[colourOffset + 1] = green / 255; colours[colourOffset + 2] = blue / 255; }
+    for (let cornerIndex = 0; cornerIndex < 6; cornerIndex += 1) {
+      const corner = corners[cornerIndex], x = clamp(corner.x, -HALF, HALF), z = clamp(corner.z, -HALF, HALF), vertex = baseVertex + cornerIndex + 1, positionOffset = vertex * 3, uvOffset = vertex * 2;
+      positions[positionOffset] = x; positions[positionOffset + 1] = world.lookup(x, z)?.elevation ?? c.elevation; positions[positionOffset + 2] = z; uvs[uvOffset] = x / 5; uvs[uvOffset + 1] = z / 5;
+      const triangleOffset = baseIndex + cornerIndex * 3; indices[triangleOffset] = baseVertex; indices[triangleOffset + 1] = baseVertex + (cornerIndex + 1) % 6 + 1; indices[triangleOffset + 2] = vertex;
+    }
   }
-  const { indices, groups: terrainMaterialGroups } = batchIndicesByMaterial(materialBatches);
   const groundGeo = new THREE.BufferGeometry();
-  groundGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  groundGeo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  groundGeo.setIndex(indices);
-  for (const group of terrainMaterialGroups) groundGeo.addGroup(group.start, group.count, group.materialIndex);
+  groundGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  groundGeo.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+  groundColours = new THREE.BufferAttribute(colours, 3); groundColours.setUsage(THREE.DynamicDrawUsage);
+  groundGeo.setAttribute("color", groundColours);
+  groundGeo.setIndex(new THREE.BufferAttribute(indices, 1));
   groundGeo.computeVertexNormals();
-  const ground = new THREE.Mesh(groundGeo, hexGroundMaterials);
+  const ground = new THREE.Mesh(groundGeo, groundLandMaterial);
   ground.userData.hexTerrain = true;
-  groundColours = null;
   groups.terrain.add(ground);
   groundMesh = ground;
   terrainPickable = ground;
-  // Lakes are joined, level surfaces. Their shared shoreline vertices remove
-  // the former independent-hex water-cap effect.
-  const lakePositions = [], lakeIndices = [], lakeVertices = new Map();
-  const addLakeVertex = (x, y, z, lakeId) => { const k = `${lakeId}|${Math.round(x * 1000)},${Math.round(z * 1000)}`; if (lakeVertices.has(k)) return lakeVertices.get(k); const id = lakePositions.length / 3; lakePositions.push(x, y, z); lakeVertices.set(k, id); return id; };
-  for (const lake of world.waterBodies || []) {
-    const level = lake.level + .014;
-    for (const c of lake.cells) { const centre = addLakeVertex(c.x, level, c.z, lake.id), corners = world.corners(c).map((p) => addLakeVertex(clamp(p.x, -HALF, HALF), level, clamp(p.z, -HALF, HALF), lake.id)); for (let i = 0; i < 6; i++) lakeIndices.push(centre, corners[i], corners[(i + 1) % 6]); }
-  }
-  if (lakePositions.length) { const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.Float32BufferAttribute(lakePositions, 3)); geo.setIndex(lakeIndices); geo.computeVertexNormals(); groups.water.add(new THREE.Mesh(geo, mats.shallowWater)); }
-  // Rivers are continuous downhill ribbons drawn over the existing terrain.
-  // They are not separate six-sided water caps and never flatten a hillside.
-  const riverPositions = [], riverIndices = [];
-  const addRiverRun = (run) => {
-    if (run.length < 2) return;
-    const points = run.map((c) => ({ cell: c, x: c.x, z: c.z, y: (c.waterSurface ?? c.elevation) + .014, width: Math.max(.001, c.waterWidth || world.radius * .05) }));
-    const last = points[points.length - 1], downstream = last.cell.flowTo;
-    if (downstream?.channel && downstream.waterChannel) points.push({ cell: downstream, x: downstream.x, z: downstream.z, y: (downstream.waterSurface ?? downstream.elevation) + .014, width: Math.max(last.width, downstream.waterWidth || last.width) });
-    else if (downstream?.cells && downstream.level > -Infinity) {
-      const shore = downstream.spillInside || downstream.cells[0];
-      points.push({ cell: shore, x: last.x + (shore.x - last.x) * .62, z: last.z + (shore.z - last.z) * .62, y: downstream.level + .013, width: last.width });
-    }
-    const left = [], right = [], miterLimit = world.riverWidthStats?.miterLimit || 2.5;
-    for (let i = 0; i < points.length; i++) {
-      const p = points[i], prev = points[Math.max(0, i - 1)], next = points[Math.min(points.length - 1, i + 1)];
-      const inX = p.x - prev.x, inZ = p.z - prev.z, outX = next.x - p.x, outZ = next.z - p.z;
-      const inL = Math.max(.0001, Math.hypot(inX, inZ)), outL = Math.max(.0001, Math.hypot(outX, outZ));
-      const nxIn = -inZ / inL, nzIn = inX / inL, nxOut = -outZ / outL, nzOut = outX / outL;
-      let mx = nxIn + nxOut, mz = nzIn + nzOut, ml = Math.hypot(mx, mz);
-      if (ml < .0001) { mx = nxOut; mz = nzOut; ml = 1; } else { mx /= ml; mz /= ml; }
-      const denom = Math.abs(mx * nxOut + mz * nzOut), ratio = 1 / Math.max(.001, denom);
-      const half = p.width * .5, scale = ratio <= miterLimit ? half * ratio : half;
-      const px = (ratio <= miterLimit ? mx : nxOut) * scale, pz = (ratio <= miterLimit ? mz : nzOut) * scale;
-      left.push([p.x + px, p.y, p.z + pz]); right.push([p.x - px, p.y, p.z - pz]);
-    }
-    const base = riverPositions.length / 3;
-    for (let i = 0; i < points.length; i++) riverPositions.push(...left[i], ...right[i]);
-    for (let i = 0; i < points.length - 1; i++) { const a = base + i * 2, b = a + 1, c = a + 2, d = a + 3; riverIndices.push(a, b, c, b, d, c); }
-  };
-  for (const route of world.riverRoutes || []) {
-    let run = [];
-    for (const cell of route.cells) { if (cell.waterChannel && cell.water) run.push(cell); else { addRiverRun(run); run = []; } }
-    addRiverRun(run);
-  }
-  if (riverPositions.length) { const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.Float32BufferAttribute(riverPositions, 3)); geo.setIndex(riverIndices); geo.computeVertexNormals(); groups.water.add(new THREE.Mesh(geo, mats.shallowWater)); }
+  terrainSurfaceTable = { positions, offsets, verticesPerCell };
+  for (const lake of world.waterBodies || []) replaceLandscapeWaterMesh(lakeRenderMeshes, lake.id, lakeMeshFor(world, lake));
+  for (const route of world.riverRoutes || []) replaceLandscapeWaterMesh(riverRenderMeshes, route.id, riverRouteMeshFor(world, route));
   // A visible recovery apron extends beyond the playable terrain. It is not
   // navigable world: animals that enter it receive an authoritative walk-back
   // goal, while the outer edge remains a final hard safety limit.
@@ -9427,7 +9730,7 @@ function updateAnimalTransientParts(group, a, state, now = performance.now()) {
   const parts = group.userData.parts, currentScale = animalVisualScale(a), stage = reproductionStage(a, sim.tick), courting = stage === "courtship" || stage === "courtship-decision", accepting = stage === "accepted", rejecting = stage === "rejected", attacking = hasVisualEvent("attack", a, now), injured = hasVisualEvent("injury-alert", a, now) || (a.injuries || []).length > 0;
   group.userData.createdScale ||= currentScale; group.scale.setScalar(currentScale / group.userData.createdScale);
   const scale = group.userData.createdScale, layout = entityIndicatorLayout(scale, graphicsSettings.entityIconScale);
-  const bodyMat = animalMaterial(a); for (const part of [parts.body, parts.headMesh, parts.tail]) if (part) part.material = bodyMat;
+  const bodyMat = animalMaterial(a); for (const part of [parts.body, parts.headMesh, parts.tail, ...(parts.features || [])]) if (part) part.material = bodyMat;
   const showEntitySymbols = (movieState.active ? ["expressions","calls","actions"].some(channel => movieChannelEnabled(channel)) : ui.overlayEntitySymbols?.checked !== false) && !ui.overlayOrganismOnly?.checked, movieFeatured = !movieState.active || movieFeaturedAnimal(a);
   const heldExpression = resolveHeldExpression(a, state, now, movieFeatured && showEntitySymbols && showcaseChannel("expression"));
   const heldCallout = resolveHeldCallout(a, now, movieFeatured && showEntitySymbols && showcaseChannel("signal"));
@@ -9473,6 +9776,63 @@ function applyPresentationTier(group, tier, channels) {
     for (const part of [parts.wound, parts.attackEffect]) hide(part);
   }
 }
+
+function realSpeciesBodyGeometry(kind) {
+  if (kind === "coil") return geos.animalCoil;
+  if (["block", "low"].includes(kind)) return geos.animalBlock;
+  return geos.herbivore;
+}
+function realSpeciesHeadGeometry(kind) {
+  if (["block", "low"].includes(kind)) return geos.animalBlock;
+  if (["tapered", "wedge", "small"].includes(kind)) return geos.animalWedge;
+  return geos.herbivore;
+}
+function addRealSpeciesFeatures(design, head, body, material, scale) {
+  const parts = [];
+  const addHead = (geometry, position, featureScale, rotation = [0, 0, 0]) => {
+    const mesh = new THREE.Mesh(geometry, material); mesh.position.set(...position.map(value => value * scale)); mesh.scale.set(...featureScale.map(value => value * scale)); mesh.rotation.set(...rotation); head.add(mesh); parts.push(mesh); return mesh;
+  };
+  const addBody = (geometry, position, featureScale, rotation = [0, 0, 0]) => {
+    const mesh = new THREE.Mesh(geometry, material); mesh.position.set(...position); mesh.scale.set(...featureScale); mesh.rotation.set(...rotation); body.add(mesh); parts.push(mesh); return mesh;
+  };
+  for (const feature of design.features || []) {
+    const kind = feature.kind;
+    if (["long-ears", "large-ears", "pointed-ears", "tufted-ears", "round-ears", "small-ears"].includes(kind)) {
+      const length = kind === "long-ears" ? .34 : kind === "large-ears" ? .25 : kind === "small-ears" ? .12 : .18;
+      for (const side of [-1, 1]) addHead(kind.includes("round") || kind === "small-ears" ? geos.eye : geos.horn, [side * .19, .23, -.02], [kind.includes("round") ? 1.5 : 1, length / .26, kind.includes("round") ? 1.2 : .8], [0, 0, side * (kind === "large-ears" ? .5 : .22)]);
+      continue;
+    }
+    if (["paired-horns", "pronged-horns", "swept-horns", "wide-horns", "broad-antlers"].includes(kind)) {
+      const wide = kind === "wide-horns" || kind === "broad-antlers", swept = kind === "swept-horns";
+      for (const side of [-1, 1]) {
+        addHead(geos.horn, [side * (wide ? .23 : .16), .2, .04], [wide ? 1.15 : .85, swept ? 1.9 : wide ? 1.55 : 1.25, wide ? 1.15 : .85], [swept ? -.45 : 0, 0, side * (wide ? .65 : .25)]);
+        if (kind === "broad-antlers" || kind === "pronged-horns") addHead(geos.horn, [side * .25, .31, .02], [.65, .9, .65], [0, 0, side * .75]);
+      }
+      continue;
+    }
+    if (kind === "nasal-horns") { addHead(geos.horn, [0, .03, .34], [1.2, 1.75, 1.2], [Math.PI / 2, 0, 0]); addHead(geos.horn, [0, .11, .18], [.75, 1.05, .75], [Math.PI / 2, 0, 0]); continue; }
+    if (kind === "tusks") { for (const side of [-1, 1]) addHead(geos.horn, [side * .15, -.11, .3], [.62, 1.35, .62], [Math.PI / 2, 0, side * .12]); continue; }
+    if (kind === "trunk") { addHead(geos.horn, [0, -.32, .25], [1.2, 2.7, 1.2], [0, 0, 0]); continue; }
+    if (["hooked-beak", "heat-pits", "head-crest"].includes(kind)) {
+      if (kind === "hooked-beak") addHead(geos.featureBeak, [0, -.02, .28], [1, 1.25, 1], [Math.PI / 2, 0, 0]);
+      else if (kind === "head-crest") addHead(geos.horn, [0, .24, -.05], [.75, 1.15, .75], [0, 0, -.2]);
+      else for (const side of [-1, 1]) addHead(geos.eye, [side * .12, -.06, .29], [.42, .32, .32]);
+      continue;
+    }
+    if (["shoulder-hump", "single-hump", "back-ridge", "armoured-ridge", "bristle-ridge", "shaggy-mantle", "domed-shell"].includes(kind)) {
+      const dome = kind === "domed-shell";
+      addBody(dome ? geos.animalDome : geos.herbivore, [0, ["armoured-ridge", "bristle-ridge"].includes(kind) ? .42 : .34, ["shoulder-hump", "single-hump", "shaggy-mantle"].includes(kind) ? .2 : -.05], dome ? [.9, .52, .92] : ["armoured-ridge", "bristle-ridge"].includes(kind) ? [.62, kind === "bristle-ridge" ? .12 : .18, .82] : kind === "single-hump" ? [.58, .58, .52] : [.72, .35, .55]);
+      continue;
+    }
+    if (kind === "neck-column") { addBody(geos.animalBlock, [0, .72, .43], [.2, .92, .22], [-.08, 0, 0]); continue; }
+    if (kind === "folded-wings") { for (const side of [-1, 1]) addBody(geos.featureWing, [side * .34, .04, -.04], [.42, .18, .76], [0, 0, side * .12]); continue; }
+    if (["short-tail", "bushy-tail", "long-tail", "ringed-tail"].includes(kind)) {
+      const long = ["long-tail", "ringed-tail", "bushy-tail"].includes(kind);
+      addBody(geos.horn, [0, .02, -.58], [kind === "bushy-tail" ? 1.8 : .85, long ? 3.1 : 1.25, kind === "bushy-tail" ? 1.8 : .85], [-Math.PI / 2, 0, 0]);
+    }
+  }
+  return parts;
+}
 function drawAnimal(a, tier = "close", channels = new Set()) {
   const visualKey = animalStructureKey(a), state = presentationSnapshot(a);
   const cached = animalRenderCache.get(a.id);
@@ -9480,7 +9840,7 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
   if (cached) removeAnimalVisual(a.id);
   const group = new THREE.Group();
   resourceCounters.animalRootsCreated += 1;
-  let head = null, headMesh = null, tail = null, feature = null, youngMarker = null; const eyes = [];
+  let head = null, headMesh = null, tail = null, feature = null, youngMarker = null; const eyes = []; let featureParts = [];
   const scale = animalVisualScale(a);
   // The hunter muzzle and grazer head extend beyond the torso ellipsoid.
   // Ground support must cover that entire length on slopes and hill crests.
@@ -9488,10 +9848,17 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
   const bodyMat = animalMaterial(a);
   // Both silhouettes face local +Z. Group rotation then makes the head point
   // exactly along the organism's actual orientation.
-  const body = new THREE.Mesh(geos.herbivore, bodyMat);
-  const shape = speciesProfile(a), bodyLength = shape.sizeClass === "small" ? .7 : shape.sizeClass === "large" ? 1.02 : .84;
-  body.scale.set(a.speciesId === "hunter" ? scale * 0.66 : speciesCanHunt(a) ? scale * .68 : scale * (shape.sizeClass === "large" ? .9 : .76), a.speciesId === "hunter" ? scale * 0.34 : scale * (shape.sizeClass === "large" ? .55 : speciesCanHunt(a) ? .36 : .45), a.speciesId === "hunter" ? scale * 1.05 : scale * bodyLength);
-  body.position.y = a.speciesId === "hunter" ? 0.28 * scale : shape.sizeClass === "large" ? .46 * scale : 0.38 * scale;
+  const shape = speciesProfile(a), design = shape.visual, small = ["tiny", "small"].includes(shape.sizeClass), bodyLength = shape.sizeClass === "small" ? .7 : shape.sizeClass === "large" ? 1.02 : .84;
+  if (design) group.userData.groundFootprint = scale * Math.max(1.02, design.bodyScale[2] + design.headOffset[2] * .45);
+  const body = new THREE.Mesh(design ? realSpeciesBodyGeometry(design.bodyShape) : geos.herbivore, bodyMat);
+  if (design) {
+    body.scale.set(...design.bodyScale.map(value => value * scale));
+    body.position.y = (["coil", "low-long"].includes(design.bodyShape) ? .22 : design.bodyScale[1] * .72) * scale;
+    if (design.bodyShape === "coil") body.rotation.x = Math.PI / 2;
+  } else {
+    body.scale.set(a.speciesId === "hunter" ? scale * 0.66 : speciesCanHunt(a) ? scale * .68 : scale * (shape.sizeClass === "large" ? .9 : .76), a.speciesId === "hunter" ? scale * 0.34 : scale * (shape.sizeClass === "large" ? .55 : speciesCanHunt(a) ? .36 : .45), a.speciesId === "hunter" ? scale * 1.05 : scale * bodyLength);
+    body.position.y = a.speciesId === "hunter" ? 0.28 * scale : shape.sizeClass === "large" ? .46 * scale : 0.38 * scale;
+  }
   body.userData.id = a.id;
   group.add(body);
 
@@ -9534,22 +9901,19 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
       head.add(eye); eyes.push(eye);
     }
   } else {
-    // Added species keep the original abstract language: a neckless rounded
-    // head, one body and one restrained tail. Proportion carries identity.
-    const carnivore = speciesCanHunt(a), large = shape.sizeClass === "large", small = ["tiny", "small"].includes(shape.sizeClass);
-    head = new THREE.Group(); head.position.set(0, (large ? .46 : .35) * scale, (bodyLength * .5 + (large ? .18 : .12)) * scale); group.add(head);
-    headMesh = new THREE.Mesh(carnivore ? geos.carnivore : geos.herbivore, bodyMat);
-    if (carnivore) headMesh.rotation.x = Math.PI / 2;
-    headMesh.scale.set((small ? .3 : large ? .46 : .38) * scale, (carnivore ? .46 : small ? .3 : .36) * scale, (carnivore ? .44 : small ? .32 : .39) * scale); head.add(headMesh);
-    tail = new THREE.Mesh(carnivore ? geos.horn : geos.eye, bodyMat);
-    if (carnivore) tail.rotation.x = -Math.PI / 2;
-    tail.scale.set((small ? .45 : .65) * scale, (carnivore ? .85 : .38) * scale, (carnivore ? .72 : .48) * scale);
-    tail.position.set(0, (large ? .3 : .2) * scale, -(bodyLength * .72) * scale); group.add(tail);
-    const identifying = shape.biology?.morphology?.identifyingFeature;
-    if (["dorsal-shell", "horns"].includes(identifying)) { feature = new THREE.Mesh(identifying === "horns" ? geos.horn : geos.herbivore, bodyMat); if (identifying === "horns") { feature.rotation.x = Math.PI / 2; feature.position.set(0, .12 * scale, .22 * scale); feature.scale.set(.38 * scale, .5 * scale, .38 * scale); head.add(feature); } else { feature.position.set(0, .25 * scale, -.06 * scale); feature.scale.set(.88 * scale, .3 * scale, .72 * scale); body.add(feature); } }
+    // Every real species retains exactly two primary masses: body and head.
+    // Horns, ears, wings, shells, crests and tails are subordinate features
+    // attached to one of those masses and never become independent roots.
+    const carnivore = speciesCanHunt(a);
+    head = new THREE.Group(); head.position.set(...design.headOffset.map(value => value * scale)); group.add(head);
+    headMesh = new THREE.Mesh(realSpeciesHeadGeometry(design.headShape), bodyMat);
+    if (["tapered", "wedge", "small"].includes(design.headShape)) headMesh.rotation.x = Math.PI / 2;
+    headMesh.scale.set(...design.headScale.map(value => value * scale)); head.add(headMesh);
+    featureParts = addRealSpeciesFeatures(design, head, body, bodyMat, scale); feature = featureParts[0] || null;
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(geos.eye, mats.eye), eyeScale = clamp(scale * (small ? .7 : .82), .36, .82);
-      const eyePosition = attachedAnimalEyePosition({ side, headScale: headMesh.scale, headKind: carnivore ? "tapered" : "rounded" });
+      const headKind = ["tapered", "wedge", "small"].includes(design.headShape) ? "tapered" : "rounded";
+      const eyePosition = attachedAnimalEyePosition({ side, headScale: headMesh.scale, headKind });
       eye.position.set(eyePosition.x, eyePosition.y, eyePosition.z); eye.scale.setScalar(eyeScale); head.add(eye); eyes.push(eye);
     }
   }
@@ -9577,7 +9941,7 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
   group.userData.presentationTier = tier;
   group.userData.presentationChannels = channels;
   group.userData.constellation = constellationParts.constellationRoot;
-  group.userData.parts = { body, head, headMesh, eyes, tail, feature, youngMarker, ...constellationParts, ...transientParts };
+  group.userData.parts = { body, head, headMesh, eyes, tail, feature, features: featureParts, youngMarker, ...constellationParts, ...transientParts };
   for (const part of [constellationParts.identityPanel, ...Object.values(constellationParts.ownershipNotches), transientParts.pregnantIcon, ...transientParts.courtshipHearts, transientParts.rejection, transientParts.acceptance, transientParts.attackIcon, transientParts.injuryAlert, transientParts.signal, transientParts.face]) if (part) part.userData.ownerEntityId = a.id;
   for (const part of [body, head, tail]) if (part) part.userData.restTransform = { position: part.position.clone(), rotation: part.rotation.clone(), scale: part.scale.clone() };
   updateAnimalTransientParts(group, a, state);
@@ -9811,13 +10175,13 @@ function advanceEmbodiedGameplay(deltaMs, now) {
     const profile = LOCOMOTION_PROFILES[animal.speciesId], horizon = 4.5, enteringDirectControl = animal.movementRequest?.id !== "embodied-camera-relative";
     animal.movementRequest = createMovementRequest("embodied-camera-relative", { x: clamp(animal.x + movement.x * horizon, -HALF + 1, HALF - 1), z: clamp(animal.z + movement.z * horizon, -HALF + 1, HALF - 1) }, { destinationSource: "player-camera-relative", interactionRadius: .08, urgency: frame.sprint ? 1 : .55, mode: frame.sprint && animal.capabilities?.canSprint !== false && animal.lifeStage !== "dependent" ? "sprint" : "walk" });
     animal.locomotion ||= createLocomotionState(animal, profile); if (enteringDirectControl) { Object.assign(animal.locomotion, { x: animal.x, z: animal.z, heading: animal.orientation || 0, vx: 0, vz: 0 }); gameplayCameraState.lastManualAt = now / 1000; } const beforeDistance = animal.locomotion.distanceTravelled || 0, beforeTurning = animal.locomotion.turningEffort || 0;
-    runLocomotionMinute([animal], navigationMesh, { elapsed: dt * 1.75, substeps: 2, alignmentSlowAngle: Math.PI * 1.15, profileFor: () => ({ ...profile, turnRate: Math.max(8, profile.turnRate) }), terrainSpeedAt: (x, z, actor) => terrainTravelEffects(cellAt(x, z), actor.speciesId).speed, neighboursFor: actor => nearbyAnimals(actor, 2.5), contactTargetFor: id => animalById(id) || sim.corpses.find(corpse => corpse.id === id) });
+    runLocomotionMinute([animal], navigationMesh, { elapsed: dt * 1.75, substeps: 2, alignmentSlowAngle: Math.PI * 1.15, profileFor: () => ({ ...profile, turnRate: Math.max(8, profile.turnRate) }), terrainSpeedAt: (x, z, actor) => terrainTravelEffects(cellAt(x, z), actor).speed, neighboursFor: actor => nearbyAnimals(actor, 2.5), contactTargetFor: id => animalById(id) || sim.corpses.find(corpse => corpse.id === id) });
     animal.playerMotionPending ||= { distance: 0, turning: 0 }; animal.playerMotionPending.distance += Math.max(0, animal.locomotion.distanceTravelled - beforeDistance); animal.playerMotionPending.turning += Math.max(0, animal.locomotion.turningEffort - beforeTurning); animal.visualMove = null;
     if (animal.actionState?.key !== "travel") setAction(animal, "travel", { label: frame.sprint ? "sprinting under direct control" : "moving under direct control", intendedOutcome: "move in the camera-relative direction", moving: true });
   } else if (animal.movementRequest?.id === "embodied-camera-relative") { animal.movementRequest = null; animal.routeState = null; if (animal.locomotion) animal.locomotion.vx = animal.locomotion.vz = 0; }
   else if (running && animal.movementRequest) {
     const profile = LOCOMOTION_PROFILES[animal.speciesId]; animal.locomotion ||= createLocomotionState(animal, profile); const beforeDistance = animal.locomotion.distanceTravelled || 0, beforeTurning = animal.locomotion.turningEffort || 0;
-    runLocomotionMinute([animal], navigationMesh, { elapsed: dt * 1.45, substeps: 2, profileFor: () => profile, terrainSpeedAt: (x, z, actor) => terrainTravelEffects(cellAt(x, z), actor.speciesId).speed, neighboursFor: actor => nearbyAnimals(actor, 2.5), contactTargetFor: id => animalById(id) || sim.corpses.find(corpse => corpse.id === id) });
+    runLocomotionMinute([animal], navigationMesh, { elapsed: dt * 1.45, substeps: 2, profileFor: () => profile, terrainSpeedAt: (x, z, actor) => terrainTravelEffects(cellAt(x, z), actor).speed, neighboursFor: actor => nearbyAnimals(actor, 2.5), contactTargetFor: id => animalById(id) || sim.corpses.find(corpse => corpse.id === id) });
     animal.playerMotionPending ||= { distance: 0, turning: 0 }; animal.playerMotionPending.distance += Math.max(0, animal.locomotion.distanceTravelled - beforeDistance); animal.playerMotionPending.turning += Math.max(0, animal.locomotion.turningEffort - beforeTurning); animal.visualMove = null;
   }
   const speed = Math.hypot(animal.locomotion?.vx || 0, animal.locomotion?.vz || 0), preferredYaw = speed > .01 ? Math.atan2(animal.locomotion.vx, animal.locomotion.vz) : Math.atan2(Math.sin(Math.PI / 2 - (animal.orientation || 0)), Math.cos(Math.PI / 2 - (animal.orientation || 0)));
@@ -9978,7 +10342,7 @@ function cinemaInteractionChains() {
     const preyContact = contacts.find(contact => contact.targetId && contact.type === "animal" && preyCompatible(animal, animalById(contact.targetId))) || null;
     const targetId = actionTarget || preyContact?.targetId || null, targetContact = contacts.find(contact => contact.targetId === targetId) || preyContact;
     const awareOfIds = contacts.filter(contact => contact.targetId && (contact.type === "predator" || speciesCanHunt(animalById(contact.targetId)))).map(contact => contact.targetId);
-    const gestation = species[animal.speciesId]?.gestation, pregnancy = pregnancyPhysiology(animal.pregnant, gestation);
+    const profile = species[animal.speciesId], gestation = profile?.gestation, pregnancy = pregnancyPhysiology(animal.pregnant, gestation, profile?.reproduction?.mode);
     return {
       id: animal.id,
       label: entityDisplayName(animal),
@@ -10177,7 +10541,7 @@ function movieNarrationContext(story, sceneCandidate) {
     if ((candidate.grazingPressure || 0) > .55) localCounts.heavilyGrazedCells += 1;
   }
   const localMean = field => sceneCells.length ? localTotals[field] / sceneCells.length : 0;
-  const localWeather = cell ? regionalWeatherAt(cell) : sim?.weather || {}, landscape = { cellCount: sceneCells.length, terrain: cell?.terrainClass || cell?.landCover || cell?.biome || "open habitat", landCover: cell?.landCover, elevation: cell?.elevation, slope: cell?.slope, soilDepth: cell?.soilDepth, soilWater: cell?.soilWater, groundwater: cell?.groundwater, moisture: cell?.ecoMoisture ?? cell?.moisture, runoff: cell?.runoff, discharge: cell?.discharge ?? cell?.streamFlow, snowPack: cell?.snowPack, floodFrequency: cell?.floodFrequency, daysWet: cell?.daysWet, daysDry: cell?.daysDry, sediment: cell?.sediment || cell?.substrate, biomass: cell?.biomass, grassHeight: cell?.grassHeight, grazingPressure: cell?.grazingPressure, plantType: cell?.plantType, plantStage: cell?.plantStage, vegetationStage: cell?.vegetationStage, woodyStage: cell?.woodyStage, canopyCover: cell?.canopyCover, woodland: Boolean(cell?.woodland), shrubland: Boolean(cell?.shrubland), wetland: Boolean(cell?.wetland), riparian: Boolean(cell?.riparian), floodplain: Boolean(cell?.floodplain), waterDepth: cell?.waterDepth, waterBodyId: cell?.waterBodyId, leaflessTree: Boolean(cell?.leaflessTreeUntil > sim.ecologicalMinute), fallenTree: Boolean(cell?.fallenTreeUntil > sim.ecologicalMinute), local: { meanMoisture: localMean("ecoMoisture") || localMean("moisture"), meanBiomass: localMean("biomass"), meanRunoff: localMean("runoff"), meanDischarge: localMean("discharge") || localMean("streamFlow"), ...localCounts } };
+  const localWeather = cell ? regionalWeatherAt(cell) : sim?.weather || {}, landscape = { cellCount: sceneCells.length, terrain: cell?.habitatType || cell?.terrainClass || cell?.landCover || cell?.biome || "open habitat", landform: cell?.landform, habitatLabel: cell?.habitatLabel, habitatDensity: cell?.habitatDensity, habitatDensityBand: cell?.habitatDensityBand, habitatHumidity: cell?.habitatHumidity, habitatHumidityBand: cell?.habitatHumidityBand, habitatTemperatureBand: cell?.habitatTemperatureBand, plantCommunity: cell?.plantCommunity, waterAvailability: cell?.waterAvailability, canopyDensity: cell?.canopyDensity, understoryDensity: cell?.understoryDensity, landCover: cell?.landCover, elevation: cell?.elevation, slope: cell?.slope, soilDepth: cell?.soilDepth, soilWater: cell?.soilWater, groundwater: cell?.groundwater, moisture: cell?.ecoMoisture ?? cell?.moisture, runoff: cell?.runoff, discharge: cell?.discharge ?? cell?.streamFlow, snowPack: cell?.snowPack, floodFrequency: cell?.floodFrequency, daysWet: cell?.daysWet, daysDry: cell?.daysDry, sediment: cell?.sediment || cell?.substrate, biomass: cell?.biomass, grassHeight: cell?.grassHeight, grazingPressure: cell?.grazingPressure, plantType: cell?.plantType, plantStage: cell?.plantStage, vegetationStage: cell?.vegetationStage, woodyStage: cell?.woodyStage, canopyCover: cell?.canopyCover, woodland: Boolean(cell?.woodland), shrubland: Boolean(cell?.shrubland), wetland: Boolean(cell?.wetland), riparian: Boolean(cell?.riparian), floodplain: Boolean(cell?.floodplain), waterDepth: cell?.waterDepth, waterBodyId: cell?.waterBodyId, leaflessTree: Boolean(cell?.leaflessTreeUntil > sim.ecologicalMinute), fallenTree: Boolean(cell?.fallenTreeUntil > sim.ecologicalMinute), local: { meanMoisture: localMean("ecoMoisture") || localMean("moisture"), meanBiomass: localMean("biomass"), meanRunoff: localMean("runoff"), meanDischarge: localMean("discharge") || localMean("streamFlow"), ...localCounts } };
   const subjectFacts = subjects.slice(0, 6).map(animal => { const commitment = animal.commitmentState || {}, plan = animal.needDependencyPlan || {}, memories = animal.memories || [], social = Object.values(animal.socialMemory || {}), currentCell = sim?.hexWorld?.lookup(animal.x, animal.z) || cellAt(animal.x, animal.z); return { id: animal.id, speciesId: animal.speciesId, speciesLabel: species[animal.speciesId]?.label || animal.speciesId, sex: animal.sex, lifeStage: animal.lifeStage, age: animal.age, pregnant: Boolean(animal.pregnant), pregnancyDueTick: animal.pregnant?.dueTick, lactation: animal.lactation, offspring: animal.offspringIds?.length || 0, caregivers: animal.caregiverIds?.length || 0, motherId: animal.motherId, health: animal.health, hydration: animal.hydration, energy: animal.energy, stomach: animal.stomach, fatigue: animal.fatigue, fear: animal.fear, bodyTemperature: animal.bodyTemperature, thermalStatus: animal.thermalStatus, tempStress: animal.tempStress, injuries: animal.injuries?.length || 0, bodyMass: animal.bodyMass, bodyFat: animal.bodyComposition?.fatMass ?? animal.fatMass, muscle: animal.bodyComposition?.muscleMass ?? animal.muscleMass, anaerobicDebt: animal.metabolicState?.anaerobicDebt, priority: commitment.priority || animal.drive, commitmentStatus: commitment.status, commitmentProgress: commitment.progress, commitmentConfidence: commitment.confidence, publicIntention: commitment.publicIntention, satisfier: plan.satisfierId, method: plan.method, planPhase: plan.phase, intendedOutcome: animal.actionState?.intendedOutcome, targetId: animal.actionTarget || animal.predation?.targetId, predationPhase: animal.predation?.phase || animal.predation?.stage, rememberedFacts: memories.length, rememberedThreats: memories.filter(memory => /predator|threat|danger|attack/.test(`${memory.type} ${memory.kind}`)).length, socialMemories: social.length, strongestAffinity: Math.max(0, ...social.map(memory => Number(memory.affinity) || 0)), groupGoal: animal.groupGoal, isLeader: animal.groupLeaderId === animal.id, sensoryContacts: animal.sensoryBuffer?.length || 0, visibleContacts: (animal.sensoryBuffer || []).filter(contact => contact.channel === "sight").length, heardContacts: (animal.sensoryBuffer || []).filter(contact => contact.channel === "sound").length, smelledContacts: (animal.sensoryBuffer || []).filter(contact => contact.channel === "smell").length, exploredCells: Object.keys(animal.explored || {}).length, localMoisture: currentCell?.ecoMoisture ?? currentCell?.moisture, localBiomass: currentCell?.biomass, action: movieActivity(animal).label }; });
   for (const fact of subjectFacts) {
     const animal = animalById(fact.id), observable = animal ? cinemaObservableSpeakerCues(animal, sim.tick) : { expression: null, call: null }, memories = [...(animal?.memories || []), ...(animal?.longMemory || [])].filter(memory => memory && (memory.type || memory.kind)).sort((left, right) => (Number(right.confidence) || 0) - (Number(left.confidence) || 0)), social = Object.values(animal?.socialMemory || {}).sort((left, right) => (Number(right.affinity) || 0) - (Number(left.affinity) || 0));
@@ -10396,6 +10760,7 @@ function resetCamera() {
   camera.updateProjectionMatrix();
   camera.position.set(175, 230, 190);
   controls.target.set(0, 0, 0);
+  applyObserverCameraEnvelope({ cinema: false });
   controls.update();
 }
 function clearEntityPresentation() { for (const id of [...animalRenderCache.keys()]) removeAnimalVisual(id); for (const id of [...entityIntentCache.keys()]) removeIntentVisual(id); clearOwnershipPanelSpritePool(); animalContactShadows.count = 0; hoveredEntityId = null; entityConstellationLayouts = new Map(); entityConstellationBudgetState = null; entityConstellationSolveState = { signature: "", revision: -1, solvedAt: -Infinity, layouts: new Map(), budget: null }; invalidateEntityConstellationSolve({ viewport: true }); entityPanelScaleSnapshots.clear(); entityThoughtStates.clear(); expressionTransientStates.clear(); presentationChannelHolds.clear(); presentationEmptyPulses.clear(); presentationSnapshots.clear(); entityMotionHistory.clear(); currentVisionCells.clear(); cellVisionCaches.clear(); visualEvents.clear(); presentationBudgets.reset(); minimapInvalidation.reset(); realityTerrainCache = { key: "", html: "" }; }
@@ -10436,12 +10801,12 @@ function backgroundJsonStringify(value) {
   }
   return jsonExportSerializer ? jsonExportSerializer.stringify(value) : deferredJsonStringify(value);
 }
-function activateSnapshot(snapshot, label) {
+function activateSnapshot(snapshot, label, preparedHexWorld = null, preparedNavigationMesh = null) {
   if (!snapshot?.animals || !Number.isFinite(snapshot.seed)) throw new Error("not a valid world save");
-  if (snapshot.worldSchema !== WORLD_SCHEMA) throw new Error(`This save uses world schema ${snapshot.worldSchema ?? "unknown"}; continuous locomotion requires schema ${WORLD_SCHEMA}. Start a new world.`);
-  sim = migrateEcologicalClock(migrateMinuteClock({ ...createWorld(snapshot.seed, snapshot.worldSetup || worldSetup), ...snapshot })); activeSaveSlotName = String(snapshot.saveSlotName || "").trim() || null; ecologicalAccounting.reset(); ecologicalStockSnapshot = null; sim.worldSchema = WORLD_SCHEMA; sim.worldSetup = { ...worldSetup }; sim.embodiment = normalizeEmbodiment(snapshot.embodiment); sim.activeScent ||= {}; sim.weatherSystems ||= []; sim.lineageRecords ||= {}; navigationMesh = buildNavMesh(sim.hexWorld);
+  if (snapshot.worldSchema !== WORLD_SCHEMA) throw new Error(`This save uses world schema ${snapshot.worldSchema ?? "unknown"}. The 365-day biological timing model requires schema ${WORLD_SCHEMA}; create a new world.`);
+  sim = migrateEcologicalClock(migrateMinuteClock({ ...createWorld(snapshot.seed, snapshot.worldSetup || worldSetup, null, preparedHexWorld, preparedNavigationMesh), ...snapshot })); activeSaveSlotName = String(snapshot.saveSlotName || "").trim() || null; ecologicalAccounting.reset(); ecologicalStockSnapshot = null; sim.worldSchema = WORLD_SCHEMA; sim.worldSetup = { ...worldSetup }; sim.embodiment = normalizeEmbodiment(snapshot.embodiment); sim.activeScent ||= {}; sim.weatherSystems ||= []; sim.lineageRecords ||= {};
   for (const animal of sim.animals) {
-    migrateActionState(animal); migrateGoalPlan(animal, sim.tick); migrateCommitment(animal, sim.tick); migrateNeedPlanAudit(animal); migrateTemperatureState(animal); migrateReproductionEvents(animal, sim.tick); migratePregnancyState(animal, species[animal.speciesId]); migrateSocialState(animal, species[animal.speciesId]); migrateGroupDisposition(animal, sim.tick); migrateEntityMemory(animal); migrateStrategicMemory(animal); migrateBodyComposition(animal); initializeFuelProjection(animal); migrateExertionState(animal); migrateLifeHistory(animal); migratePredationState(animal, sim.tick); migrateKinship(animal); migratePersonalSpace(animal); migratePredictiveCognition(animal, { mode: snapshot.animalCognitionMode || "PREDICTIVE_SHADOW", profile: snapshot.animalCognitionProfile || "FIXED" }); animal.predictiveCycle = animal.predictiveCognition?.current || null; if (animal.decisionTrace && animal.predictiveCycle) animal.decisionTrace.predictive = predictiveTraceProjection(animal.predictiveCycle); storeLineage(sim.lineageRecords, animal); clearFrameMotion(animal);
+    migrateActionState(animal); migrateGoalPlan(animal, sim.tick); migrateCommitment(animal, sim.tick); migrateNeedPlanAudit(animal); migrateTemperatureState(animal); migrateReproductionEvents(animal, sim.tick); migrateReproductiveState(animal); migratePregnancyState(animal, species[animal.speciesId]); migrateSocialState(animal, species[animal.speciesId]); migrateGroupDisposition(animal, sim.tick); migrateEntityMemory(animal); migrateStrategicMemory(animal); migrateBodyComposition(animal); initializeFuelProjection(animal); migrateExertionState(animal); migrateLifeHistory(animal); migrateSenescence(animal, species[animal.speciesId].lifeHistory.development); migratePredationState(animal, sim.tick); migrateKinship(animal); migratePersonalSpace(animal); migratePredictiveCognition(animal, { mode: snapshot.animalCognitionMode || "PREDICTIVE_SHADOW", profile: snapshot.animalCognitionProfile || "FIXED" }); animal.predictiveCycle = animal.predictiveCognition?.current || null; if (animal.decisionTrace && animal.predictiveCycle) animal.decisionTrace.predictive = predictiveTraceProjection(animal.predictiveCycle); storeLineage(sim.lineageRecords, animal); clearFrameMotion(animal);
     const profile = LOCOMOTION_PROFILES[animal.speciesId];
     animal.locomotion ||= createLocomotionState(animal, profile);
     animal.locomotion.collisionRadius = collisionRadiusFor(animal, profile.bodyRadius);
@@ -10467,12 +10832,39 @@ function activateSnapshot(snapshot, label) {
   clearEntityPresentation(); clearCorpsePresentation(); disposeFogBuffer(); resetLandscapeChunks(); clear(groups.terrain); clear(groups.plants); clear(groups.water); clear(groups.animals); clear(groups.overlays); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false;
   buildTerrain(); applyEmbodimentPresentation(); resetCamera(); addEvent(label); renderAll(); updateUI();
 }
+async function activateSnapshotAsync(snapshot, label) {
+  if (!snapshot?.animals || !Number.isFinite(snapshot.seed)) throw new Error("not a valid world save");
+  if (snapshot.worldSchema !== WORLD_SCHEMA) throw new Error(`This save uses world schema ${snapshot.worldSchema ?? "unknown"}. The 365-day biological timing model requires schema ${WORLD_SCHEMA}; create a new world.`);
+  worldGenerationController?.abort();
+  const controller = new AbortController(), previous = worldGenerationFallback || { sim, setup: { ...worldSetup }, running, slot: activeSaveSlotName };
+  worldGenerationFallback = previous;
+  worldGenerationController = controller; worldGenerationInProgress = true; running = false; showWorldGenerationProgress(); disposeWorldPresentation();
+  try {
+    const setup = snapshot.worldSetup || worldSetup;
+    setWorldSetup(setup);
+    const prepared = await HexWorld.createAsync(snapshot.seed, worldSetup, { signal: controller.signal, yieldBudgetMs: 8, onProgress: progress => showWorldGenerationProgress({ ...progress, percent: progress.percent * .9 }) });
+    if (controller.signal.aborted || worldGenerationController !== controller) throw Object.assign(new Error("World generation was cancelled"), { name: "AbortError" });
+    showWorldGenerationProgress({ phase: "navigation", completed: 0, total: prepared.cells.length * 2, percent: .9 });
+    const preparedNavigationMesh = await buildNavMeshAsync(prepared, { maxSlope: 1, allowRocky: true }, { signal: controller.signal, yieldBudgetMs: 8, onProgress: progress => showWorldGenerationProgress({ phase: "navigation", ...progress, percent: .9 + progress.percent * .08 }) });
+    activateSnapshot(snapshot, label, prepared, preparedNavigationMesh);
+    showWorldGenerationProgress({ phase: "presentation", completed: 1, total: 1, percent: 1 });
+    return true;
+  } catch (error) {
+    if (worldGenerationController === controller && previous.sim) {
+      setWorldSetup(previous.setup); disposeWorldPresentation(); navigationMesh = buildNavMesh(previous.sim.hexWorld, { maxSlope: 1, allowRocky: true });
+      commitGeneratedWorld(previous.sim, { label: error?.name === "AbortError" ? "World load cancelled" : "World load failed; previous world restored", saveSlotName: previous.slot, shouldRun: previous.running });
+    }
+    throw error;
+  } finally {
+    if (worldGenerationController === controller) { worldGenerationController = null; worldGenerationInProgress = false; worldGenerationFallback = null; hideWorldGenerationProgress(); }
+  }
+}
 async function saveProgress(silent = false, { slotName = activeSaveSlotName } = {}) { try { const snapshot = { ...snapshotWorld(), saveSlotName: slotName || null }; await writeSnapshot("resume", snapshot); activeSaveSlotName = slotName || null; if (!silent) { addEvent("Quick save created"); updateUI(); } return true; } catch { if (!silent) { addEvent("Quick save failed: browser storage is full or unavailable"); updateUI(); } return false; } }
-async function restoreAutosavedProgress(manual = false) { const slot = requestedSaveSlot(window.location.search); if (!manual && slot) return loadSlotByName(slot); try { let snapshot = await readSnapshot("resume"); if (!snapshot) { const legacy = localStorage.getItem(SAVE_KEY); if (legacy) snapshot = JSON.parse(legacy); } if (!snapshot) { if (manual) addEvent("No quick save exists yet"); return false; } activateSnapshot(snapshot, manual ? "Quick save loaded" : "Resumed previous simulation"); return true; } catch { if (manual) { addEvent("Quick load failed: saved world is invalid or incomplete"); updateUI(); } return false; } }
-function savedSlotMetadata() { return readLocalList(SAVE_SLOTS_KEY).map((slot) => typeof slot === "string" ? { name: slot, seed: "unknown", day: "?", savedAt: "" } : slot); }
-async function saveNamedSlot({ name: requestedName = "", alsoResume = false, silent = false } = {}) { const slots = savedSlotMetadata(), name = (requestedName || window.prompt("Name this save", `World day ${sim.day}`) || "").trim(); if (!name) return false; try { const snapshot = { ...snapshotWorld(), saveSlotName: name }; await Promise.all([writeSnapshot(`slot:${name}`, snapshot), ...(alsoResume ? [writeSnapshot("resume", snapshot)] : [])]); activeSaveSlotName = name; const entry = { name, seed: sim.seed, day: sim.day, savedAt: new Date().toLocaleString() }; writeLocalList(SAVE_SLOTS_KEY, [entry, ...slots.filter((x) => x.name !== name)].slice(0, 12)); if (!silent) { addEvent(`Saved slot: ${name} (seed ${sim.seed})`); updateUI(); } return true; } catch { if (!silent) { addEvent("Save slot failed: browser storage is full or unavailable"); updateUI(); } return false; } }
+async function restoreAutosavedProgress(manual = false) { const slot = requestedSaveSlot(window.location.search); if (!manual && slot) return loadSlotByName(slot); try { let snapshot = await readSnapshot("resume"); if (!snapshot) { const legacy = localStorage.getItem(SAVE_KEY); if (legacy) snapshot = JSON.parse(legacy); } if (!snapshot) { if (manual) addEvent("No quick save exists yet"); return false; } await activateSnapshotAsync(snapshot, manual ? "Quick save loaded" : "Resumed previous simulation"); return true; } catch (error) { if (manual) { addEvent(error?.message?.includes("365-day") ? error.message : "Quick load failed: saved world is invalid or incomplete"); updateUI(); } return false; } }
+function savedSlotMetadata() { return readLocalList(SAVE_SLOTS_KEY).map((slot) => typeof slot === "string" ? { name: slot, seed: "unknown", day: "?", savedAt: "", worldSchema: null } : slot); }
+async function saveNamedSlot({ name: requestedName = "", alsoResume = false, silent = false } = {}) { const slots = savedSlotMetadata(), name = (requestedName || window.prompt("Name this save", `World day ${sim.day}`) || "").trim(); if (!name) return false; try { const snapshot = { ...snapshotWorld(), saveSlotName: name }; await Promise.all([writeSnapshot(`slot:${name}`, snapshot), ...(alsoResume ? [writeSnapshot("resume", snapshot)] : [])]); activeSaveSlotName = name; const entry = { name, seed: sim.seed, day: sim.day, savedAt: new Date().toLocaleString(), worldSchema: WORLD_SCHEMA }; writeLocalList(SAVE_SLOTS_KEY, [entry, ...slots.filter((x) => x.name !== name)].slice(0, 12)); if (!silent) { addEvent(`Saved slot: ${name} (seed ${sim.seed})`); updateUI(); } return true; } catch { if (!silent) { addEvent("Save slot failed: browser storage is full or unavailable"); updateUI(); } return false; } }
 async function loadNamedSlot() { const slots = savedSlotMetadata(); if (!slots.length) { addEvent("No named save slots yet"); updateUI(); return false; } const name = window.prompt(`Choose a save name\n${slots.map((x) => `${x.name} — seed ${x.seed}, day ${x.day}`).join("\n")}`)?.trim(); return name ? loadSlotByName(name) : false; }
-async function loadSlotByName(name) { try { const snapshot = await readSnapshot(`slot:${name}`); if (!snapshot) { addEvent(`No save slot named “${name}”`); updateUI(); return false; } activateSnapshot({ ...snapshot, saveSlotName: name }, `Loaded slot: ${name} (seed ${snapshot.seed})`); return true; } catch { addEvent("Load slot failed"); updateUI(); return false; } }
+async function loadSlotByName(name) { try { const snapshot = await readSnapshot(`slot:${name}`); if (!snapshot) { addEvent(`No save slot named “${name}”`); updateUI(); return false; } if (snapshot.worldSchema !== WORLD_SCHEMA) { addEvent(`This save uses world schema ${snapshot.worldSchema ?? "unknown"}. The 365-day biological timing model requires schema ${WORLD_SCHEMA}; create a new world.`); updateUI(); return false; } await activateSnapshotAsync({ ...snapshot, saveSlotName: name }, `Loaded slot: ${name} (seed ${snapshot.seed})`); return true; } catch { addEvent("Load slot failed"); updateUI(); return false; } }
 function saveLaunchStatus(message, state = "loading") {
   if (!ui.gameMenuSaveControls) return;
   let output = ui.gameMenuSaveControls.querySelector("[data-save-launch-status]");
@@ -10509,7 +10901,7 @@ async function launchRequestedSaveShortcut() {
 async function deleteNamedSlot(name) { if (!window.confirm(`Delete the save “${name}”? This also removes its saved-entity bookmarks and cannot be undone.`)) return; try { const saveKey = `slot:${name}`; await deleteSnapshot(saveKey); writeLocalList(SAVE_SLOTS_KEY, savedSlotMetadata().filter((slot) => slot.name !== name)); writeLocalList(FAVOURITES_KEY, readLocalList(FAVOURITES_KEY).filter(item => item.saveKey !== saveKey)); addEvent(`Deleted save slot and its entity bookmarks: ${name}`); updateUI(); } catch { addEvent("Could not delete that save slot"); updateUI(); } }
 async function exportProgress() { try { const json = await backgroundJsonStringify(snapshotWorld()), blob = new Blob([json], { type: "application/json" }); const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `rss-living-laboratory-day-${sim.day}-seed-${sim.seed}.json`; link.click(); URL.revokeObjectURL(url); addEvent("Save file exported"); updateUI(); } catch { addEvent("Export failed"); updateUI(); } }
 function exportSlotShortcut() { const slots = savedSlotMetadata(); if (!slots.length) { addEvent("Create a named save slot before exporting its game shortcut"); updateUI(); return; } const name = window.prompt(`Shortcut for which save?\n${slots.map((slot) => `${slot.name} — seed ${slot.seed}, day ${slot.day}`).join("\n")}`, slots[0].name)?.trim(); if (!name || !slots.some((slot) => slot.name === name)) return; const base = `${window.location.protocol}//${window.location.host}${window.location.pathname}`; const blob = new Blob([`[InternetShortcut]\nURL=${base}?slot=${encodeURIComponent(name)}\n`], { type: "text/url" }); const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `${name.replace(/[^a-z0-9_-]+/gi, "-")}-rss-save.url`; link.click(); URL.revokeObjectURL(url); addEvent(`Game shortcut exported for ${name}`); updateUI(); }
-function importProgress(event) { const file = event.target.files?.[0], enterAfterImport = !ui.gameMenu?.hidden; event.target.value = ""; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { activateSnapshot(JSON.parse(reader.result), `Imported save: ${file.name}`); if (enterAfterImport) enterGame(); } catch { addEvent("Import failed: that file is not a compatible simulation save"); updateUI(); } }; reader.readAsText(file); }
+function importProgress(event) { const file = event.target.files?.[0], enterAfterImport = !ui.gameMenu?.hidden; event.target.value = ""; if (!file) return; const reader = new FileReader(); reader.onload = async () => { try { await activateSnapshotAsync(JSON.parse(reader.result), `Imported save: ${file.name}`); if (enterAfterImport) enterGame(); } catch (error) { addEvent(error?.message?.includes("365-day") ? error.message : "Import failed: that file is not a compatible simulation save"); updateUI(); } }; reader.readAsText(file); }
 function applyEmbodimentPresentation() {
   if (!sim) return; const embodiment = currentEmbodiment(), capabilities = embodimentCapabilities(), policy = presentationPolicy(capabilities), embodied = embodiment.experience === "embodied";
   let runtime = document.querySelector("#embodied-runtime-panel");
@@ -10545,9 +10937,102 @@ function applyEmbodimentPresentation() {
   else { ui.mapView.disabled = ui.hudMap.disabled = ui.labToggle.disabled = false; }
   if (embodied) { if (ui.overlayKnowledgeFog) ui.overlayKnowledgeFog.checked = capabilities.mapKnowledge !== "full"; if (!policy.overlays) for (const control of [ui.overlayVision, ui.overlayPersonalSpace, ui.overlayPredatorIntent, ui.overlaySmell, ui.overlaySound, ui.overlayCalls, ui.overlayMemory, ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone]) if (control) control.checked = false; if (!policy.entityIndicators) for (const control of [ui.overlayEntitySymbols, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar, ui.overlayAnalysisStage]) if (control) control.checked = false; }
 }
-function loadSeedWorld(seed, setup = worldSetup, embodimentRequest = null) { clearEntityPresentation(); clearCorpsePresentation(); disposeFogBuffer(); resetLandscapeChunks(); clear(groups.animals); clear(groups.intent); clear(groups.overlays); clear(groups.terrain); clear(groups.plants); clear(groups.water); activeSaveSlotName = null; sim = migrateEcologicalClock(migrateMinuteClock(createWorld(seed, setup, embodimentRequest))); ecologicalAccounting.reset(); ecologicalStockSnapshot = null; buildTerrain(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false; running = true; ui.playPause.textContent = "Pause"; ui.runState.textContent = "Running"; applyEmbodimentPresentation(); resetCamera(); addEvent(`Generated world seed ${seed}`); renderAll(); updateUI(); }
+function disposeWorldPresentation() {
+  clearEntityPresentation(); clearCorpsePresentation(); disposeFogBuffer(); resetLandscapeChunks();
+  clear(groups.animals); clear(groups.intent); clear(groups.overlays); clear(groups.terrain); clear(groups.plants); clear(groups.water);
+  groundMesh = null; groundColours = null; terrainPickable = null; terrainSurfaceTable = null; worldEdgeLine = null;
+  lakeRenderMeshes.clear(); riverRenderMeshes.clear(); navigationMesh = null;
+}
+async function disposeWorldPresentationAsync() {
+  traceWorldGeneration("disposing-entities"); clearEntityPresentation(); await cooperativeYield();
+  traceWorldGeneration("disposing-corpses"); clearCorpsePresentation(); await cooperativeYield();
+  traceWorldGeneration("disposing-fog"); disposeFogBuffer(); await cooperativeYield();
+  traceWorldGeneration("disposing-vegetation"); resetLandscapeChunks(); await cooperativeYield();
+  const presentationGroups = [["intent", groups.intent], ["overlays", groups.overlays], ["terrain", groups.terrain], ["plants", groups.plants], ["water", groups.water]];
+  for (const [name, group] of presentationGroups) { traceWorldGeneration(`disposing-${name}`); clear(group); await cooperativeYield(); }
+  groundMesh = null; groundColours = null; terrainPickable = null; terrainSurfaceTable = null; worldEdgeLine = null;
+  lakeRenderMeshes.clear(); riverRenderMeshes.clear(); navigationMesh = null;
+}
+function commitGeneratedWorld(world, { label, saveSlotName = null, shouldRun = true } = {}) {
+  activeSaveSlotName = saveSlotName;
+  sim = migrateEcologicalClock(migrateMinuteClock(world));
+  ecologicalAccounting.reset(); ecologicalStockSnapshot = null; invalidateResourceCellIndexes();
+  if (worldGenerationInProgress) traceWorldGeneration("terrain-presentation");
+  buildTerrain(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false;
+  running = shouldRun; ui.playPause.textContent = shouldRun ? "Pause" : "Play"; ui.hudPlay.textContent = shouldRun ? "Pause" : "Play"; ui.runState.textContent = shouldRun ? "Running" : "Paused";
+  if (worldGenerationInProgress) traceWorldGeneration("embodiment-presentation");
+  applyEmbodimentPresentation(); resetCamera(); if (label) addEvent(label);
+  if (worldGenerationInProgress) traceWorldGeneration("scene-presentation");
+  renderAll();
+  if (worldGenerationInProgress) traceWorldGeneration("ui-presentation");
+  updateUI();
+}
+function loadSeedWorld(seed, setup = worldSetup, embodimentRequest = null) {
+  disposeWorldPresentation();
+  commitGeneratedWorld(createWorld(seed, setup, embodimentRequest), { label: `Generated world seed ${seed}` });
+}
+async function advanceLoadedSeedToDay(targetDay, controller, { startPercent = .55, endPercent = .97 } = {}) {
+  const targetMinute = (targetDay - 1) * MINUTES_PER_DAY;
+  if (targetMinute <= (sim.ecologicalMinute || 0)) return;
+  const previousDiagnosticBatch = diagnosticBatch;
+  seedDateLoadSession = { targetMinute, stepMinutes: ecologicalMinutesPerInteractionTick(60) };
+  diagnosticBatch = true; running = false; accumulator = 0;
+  try {
+    while ((sim.ecologicalMinute || 0) < targetMinute) {
+      const batchStarted = performance.now();
+      do {
+        if (controller.signal.aborted) throw Object.assign(new Error("World generation was cancelled"), { name: "AbortError" });
+        tickWorld();
+      } while ((sim.ecologicalMinute || 0) < targetMinute && performance.now() - batchStarted < 12);
+      const fraction = clamp((sim.ecologicalMinute || 0) / targetMinute, 0, 1), currentDay = ecologicalClockParts(sim).day;
+      showWorldGenerationProgress({ phase: "history", completed: currentDay, total: targetDay, percent: startPercent + fraction * (endPercent - startPercent), stageDetail: `seed ${sim.seed} · day ${currentDay.toLocaleString()}` });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  } finally {
+    seedDateLoadSession = null; diagnosticBatch = previousDiagnosticBatch;
+    for (const animal of sim.animals) clearFrameMotion(animal);
+  }
+}
+async function loadSeedWorldAsync(seed, setup = worldSetup, embodimentRequest = null, { targetDay = 1 } = {}) {
+  targetDay = Math.max(1, Math.floor(Number(targetDay) || 1));
+  const loadHistory = targetDay > 1, generationShare = loadHistory ? .55 : 1;
+  worldGenerationController?.abort();
+  const controller = new AbortController(), previous = worldGenerationFallback || { sim, setup: { ...worldSetup }, running, slot: activeSaveSlotName };
+  worldGenerationFallback = previous;
+  worldGenerationController = controller; worldGenerationInProgress = true; traceWorldGeneration("disposing"); running = false; showWorldGenerationProgress();
+  const generationStarted = performance.now(); let terrainMs = 0;
+  for (const control of [ui.newWorldGenerate, ui.reset, ui.load, ui.loadSlot, ui.importSave]) if (control) control.disabled = true;
+  await disposeWorldPresentationAsync();
+  try {
+    const world = await createWorldAsync(seed, setup, embodimentRequest, { signal: controller.signal, onProgress: progress => { if (!terrainMs && progress.phase === "navigation") terrainMs = performance.now() - generationStarted; showWorldGenerationProgress({ ...progress, percent: progress.percent * generationShare }); }, yieldBudgetMs: 8 });
+    if (controller.signal.aborted || worldGenerationController !== controller) throw Object.assign(new Error("World generation was cancelled"), { name: "AbortError" });
+    traceWorldGeneration("presentation");
+    commitGeneratedWorld(world, { label: `Generated world seed ${seed}`, shouldRun: !loadHistory });
+    if (loadHistory) {
+      await advanceLoadedSeedToDay(targetDay, controller, { startPercent: generationShare });
+      running = true; ui.playPause.textContent = ui.hudPlay.textContent = "Pause"; ui.runState.textContent = "Running";
+      addEvent(`Loaded seed ${seed} at absolute day ${targetDay.toLocaleString()}`);
+      showWorldGenerationProgress({ phase: "presentation", completed: 1, total: 1, percent: .99 });
+      renderAll(); updateUI();
+    }
+    lastWorldGenerationMetrics = { terrainMs: terrainMs || performance.now() - generationStarted, completeMs: performance.now() - generationStarted };
+    return true;
+  } catch (error) {
+    if (worldGenerationController === controller && previous.sim) {
+      setWorldSetup(previous.setup); disposeWorldPresentation(); navigationMesh = buildNavMesh(previous.sim.hexWorld, { maxSlope: 1, allowRocky: true });
+      commitGeneratedWorld(previous.sim, { label: error?.name === "AbortError" ? "World generation cancelled" : "World generation failed; previous world restored", saveSlotName: previous.slot, shouldRun: previous.running });
+    }
+    if (error?.name !== "AbortError") { addEvent(`World generation failed: ${error?.message || "unknown error"}`); updateUI(); }
+    return false;
+  } finally {
+    if (worldGenerationController === controller) {
+      worldGenerationController = null; worldGenerationInProgress = false; worldGenerationStage = "idle"; worldGenerationFallback = null; hideWorldGenerationProgress();
+      for (const control of [ui.newWorldGenerate, ui.reset, ui.load, ui.loadSlot, ui.importSave]) if (control) control.disabled = false;
+    }
+  }
+}
 
-function loadScreenshotShowcaseWorld(scenario = "overview", presentationPreset = "ultra") {
+async function loadScreenshotShowcaseWorld(scenario = "overview", presentationPreset = "ultra") {
   const requested = readShowcaseDirectorControls(); requested.scenario = scenario; applyShowcaseScenarioCast(requested);
   showcaseDirector = { ...showcaseDirector, ...requested, playing: requested.mode !== "static", elapsed: 0, eventCompleted: false, birthMotherId: null, lastTimeSecond: -1, actors: [] };
   const seed = 742031;
@@ -10560,7 +11045,7 @@ function loadScreenshotShowcaseWorld(scenario = "overview", presentationPreset =
   };
   const showcaseTerrainProfile = { mountains: .2, valleys: .2 };
   const population = { grazer: Math.max(14, requested.herbivores), hunter: requested.carnivores ? Math.max(8, requested.carnivores) : 0 };
-  loadSeedWorld(seed, { ...worldSetup, ...mapPresets[requested.map], ...showcaseTerrainProfile, speciesCounts: { ...worldSetup.speciesCounts, ...population }, herbivores: population.grazer, carnivores: population.hunter });
+  if (!await loadSeedWorldAsync(seed, { ...worldSetup, ...mapPresets[requested.map], ...showcaseTerrainProfile, speciesCounts: { ...worldSetup.speciesCounts, ...population }, herbivores: population.grazer, carnivores: population.hunter })) return false;
   const alive = sim.animals.filter((animal) => animal.alive), subjects = [...alive.filter(animal => animal.speciesId === "grazer").slice(0, requested.herbivores), ...alive.filter(animal => animal.speciesId === "hunter").slice(0, requested.carnivores)];
   const landCells = sim.cells.filter((cell) => !cell.water && !cell.rocky && cell.plantType !== "tree"), allWaterCells = sim.cells.filter(cell => cell.water), waterStride = Math.max(1, Math.ceil(allWaterCells.length / 160)), waterCells = allWaterCells.filter((_, index) => index % waterStride === 0);
   const centreScore = (cell) => {
@@ -10621,7 +11106,7 @@ function loadScreenshotShowcaseWorld(scenario = "overview", presentationPreset =
   if (ui.overlayEntityFocus) ui.overlayEntityFocus.checked = false;
   if (ui.overlayOrganismOnly) ui.overlayOrganismOnly.checked = false;
   if (ui.overlayAnalysisStage) ui.overlayAnalysisStage.checked = false;
-  applyGraphicsSettings({ ...graphicsPreset(presentationPreset), ...currentTypographySettings() });
+  applyGraphicsSettings({ ...graphicsPreset(presentationPreset), ...currentTypographySettings(), ...currentObserverPresentationSettings() });
   showcaseVisibleIds = new Set(participants.filter(Boolean).map(animal => animal.id));
   showcaseDirector.actors = participants.filter(Boolean).map((animal, index) => ({ id: animal.id, role: animal.actionState?.key || "orient", targetId: animal.actionState?.target || animal.actionTarget || null, originX: animal.x, originZ: animal.z, originOrientation: animal.orientation || 0, phase: index / Math.max(1, participants.length) * Math.PI * 2 }));
   showcaseFeaturedId = featured?.id || subjects[0]?.id || null; selectedId = showcaseFeaturedId; entityLocked = false; running = false; showcasePresentationMode = "complete";
@@ -10693,7 +11178,7 @@ function detailedMemoryHtml(a) {
 
 function maleSocialStrategyNetworkHtml(male) {
   const phenotype = biologicalPhenotype(male), observedIds = (male.sensoryBuffer || []).filter((item) => item.targetId && ["sight", "sound", "smell"].includes(item.channel)).map((item) => item.targetId);
-  const lens = maleSocialStrategyNetwork(male, sim.animals, { tick: sim.tick, observedIds, organisation: phenotype?.social?.organisation || species[male.speciesId]?.social || "unknown", breedingContext: seasonMods[sim.season]?.breed || 0, availableFemales: sim.animals.filter((animal) => animal.alive && animal.speciesId === male.speciesId && animal.sex === "F" && mature(animal)).length });
+  const lens = maleSocialStrategyNetwork(male, sim.animals, { tick: sim.tick, observedIds, organisation: phenotype?.social?.organisation || species[male.speciesId]?.social || "unknown", breedingContext: currentReproductiveStatus(male).active ? 1 : 0, availableFemales: sim.animals.filter((animal) => animal.alive && animal.speciesId === male.speciesId && animal.sex === "F" && mature(animal)).length });
   const width = 680, height = 430, centre = { x: width / 2, y: 214 };
   const layout = {
     affiliation: { x: 132, ys: [78, 148, 280, 350] },
@@ -10808,7 +11293,7 @@ function failResourceTarget(a, memory) {
 }
 // Candidate sampling may still use neighbouring terrain for high-level goals,
 // but animal occupancy is never a locomotion or route-selection authority.
-function validMoves(a) { return traversableNeighbourCells(sim.hexWorld, a, null, key); }
+function validMoves(a) { return traversableNeighbourCells(sim.hexWorld, a, null, key, cell => terrainMobilityAssessment(a, cell).allowed); }
 function recoverStuckEntity() {
   const embodied = inhabitedAnimal(), animal = embodied?.alive ? embodied : selectedAnimal();
   const report = (message, failed = false) => {
@@ -10818,13 +11303,13 @@ function recoverStuckEntity() {
   if (!animal?.alive) { report("Select a living animal before using recovery.", true); return false; }
   if (!navigationMesh?.polygons?.size) { report("No verified navigation surface is currently available.", true); return false; }
   const radius = collisionRadiusFor(animal, LOCOMOTION_PROFILES[animal.speciesId]?.bodyRadius || bodyRadius(animal));
-  const candidates = [...navigationMesh.polygons.values()].map((polygon) => ({ id: polygon.id, x: polygon.center.x, z: polygon.center.z }));
+  const candidates = [...navigationMesh.polygons.values()].filter(polygon => terrainMobilityAssessment(animal, polygon).allowed).map((polygon) => ({ id: polygon.id, x: polygon.center.x, z: polygon.center.z }));
   const occupied = sim.animals.filter((other) => other.alive && other.id !== animal.id).map((other) => ({ id: other.id, alive: true, x: other.x, z: other.z, bodyRadius: collisionRadiusFor(other, LOCOMOTION_PROFILES[other.speciesId]?.bodyRadius || bodyRadius(other)) }));
   const destination = nearestSafeUnstuckDestination(animal, candidates, {
     bodyRadius: radius,
     occupied,
     minimumMove: Math.max(.75, radius * 2.5),
-    supportsBody: (x, z, bodyClearance) => inside(x, z) && bodySupportedByNavmesh(navigationMesh, x, z, bodyClearance)
+    supportsBody: (x, z, bodyClearance) => inside(x, z) && bodySupportedByNavmesh(navigationMesh, x, z, bodyClearance, 10, polygon => terrainMobilityAssessment(animal, polygon).allowed)
   });
   if (!destination) { report(`No safe recovery space could be found for ${animal.id}.`, true); return false; }
   const distance = Math.hypot(destination.x - animal.x, destination.z - animal.z);
@@ -10970,7 +11455,7 @@ function clear(group) {
   for (const child of [...group.children]) disposeTemporaryGroupChild(group, child, ownership);
 }
 function escapeHtml(s) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
-function resize() { const { clientWidth, clientHeight } = ui.viewport; camera.aspect = clientWidth / clientHeight; camera.updateProjectionMatrix(); renderer.setSize(clientWidth, clientHeight); invalidateEntityConstellationSolve({ viewport: true }); entityPanelVisibilityRefreshPending = true; }
+function resize() { const { clientWidth, clientHeight } = ui.viewport; camera.aspect = clientWidth / clientHeight; camera.updateProjectionMatrix(); renderer.setSize(clientWidth, clientHeight); applyObserverCameraEnvelope(); invalidateEntityConstellationSolve({ viewport: true }); entityPanelVisibilityRefreshPending = true; }
 
 
 
@@ -10989,7 +11474,8 @@ function updateScentFields(elapsed = 1) {
 }
 
 function computeCapabilities(a, s) {
-  const ageFactor = a.lifeStage === "dependent" ? 0.42 : a.lifeStage === "juvenile" ? 0.65 : a.lifeStage === "subadult" ? 0.84 : a.lifeStage === "old" ? 0.72 : 1;
+  const ageFactor = a.lifeStage === "dependent" ? 0.42 : a.lifeStage === "juvenile" ? 0.65 : a.lifeStage === "subadult" ? 0.84 : 1;
+  const ageing = senescenceModifiers(a);
   const physical = movementCapability(a), fatigueFactor = enduranceSpeedFactor(100 - physical.endurance);
   const injuryFactor = (a.injuries || []).reduce((v, i) => v * (1 - i.severity * 0.35), 1);
   const pregnancyFactor = a.pregnant ? 0.82 : 1;
@@ -10999,16 +11485,16 @@ function computeCapabilities(a, s) {
   const muscleFactor = clamp(.9 + ((a.muscleMass || 0) / Math.max(.5, a.leanMass || 1) - .5) * .45, .82, 1.1);
   const dehydration = dehydrationState(a);
   return {
-    speed: (s.speed || 1) * ageFactor * fatigueFactor * injuryFactor * pregnancyFactor * fullnessFactor * traumaSpeedFactor * thermalFactor * muscleFactor * dehydration.speed,
-    canSprint: dehydration.canSprint && ageFactor > 0.55 && injuryFactor > 0.55 && (a.tempStress || 0) < 55 && physical.canSprint,
-    canMate: dehydration.canMate && mature(a) && !a.pregnant && !a.conception && a.energy > s.reproductionEnergy && a.health > 58 && (a.tempStress || 0) < 30 && (a.sex !== "F" || (fertilityCycle(a).fertile && reproductionReadiness(a, s, { dependentNeedsCare: dependentNeedsCare(a) }).ready)),
+    speed: (s.speed || 1) * ageFactor * ageing.mobility * fatigueFactor * injuryFactor * pregnancyFactor * fullnessFactor * traumaSpeedFactor * thermalFactor * muscleFactor * dehydration.speed,
+    canSprint: dehydration.canSprint && ageFactor > 0.55 && ageing.mobility > .58 && injuryFactor > 0.55 && (a.tempStress || 0) < 55 && physical.canSprint,
+    canMate: dehydration.canMate && currentReproductiveStatus(a).canMate && !a.conception && a.energy > s.reproductionEnergy && a.health > 58 && (a.tempStress || 0) < 30 && (a.sex !== "F" || reproductionReadiness(a, s, { dependentNeedsCare: false }).ready),
     canHunt: dehydration.canHunt && speciesCanHunt(a) && ageFactor > 0.6 && a.energy > 12 && feedingAppetiteFor(a).willing,
     optionalHunt: dehydration.optionalHunt,
-    recovery: (a.lifeStage === "old" ? 1.25 : a.lifeStage === "dependent" ? 2.8 : 2.2) * dehydration.enduranceRecovery,
+    recovery: (a.lifeStage === "dependent" ? 2.8 : 2.2) * ageing.recovery * dehydration.enduranceRecovery,
     endurance: physical.endurance,
     burst: physical.burst,
     canTravel: physical.canTravel,
-    perceptionScale: clamp(ageFactor * injuryFactor * dehydration.perception, 0.25, 1),
+    perceptionScale: clamp(ageFactor * ageing.perception * injuryFactor * dehydration.perception, 0.25, 1),
     dehydration: dehydration.key
   };
 }
@@ -11025,12 +11511,17 @@ function updateTrauma(a) {
 function updateInjuries(a, elapsedHours = 1) {
   if (!a.injuries) a.injuries = [];
   const fuelled = metabolicPresentation(a).blood > .3;
+  const ageingRecovery = senescenceModifiers(a).recovery;
+  let healthDamage = 0;
   for (const injury of a.injuries) {
-    const healing = (fuelled ? 0.003 : 0.001) * (a.lifeStage === "old" ? 0.45 : 1) * elapsedHours;
+    const healing = (fuelled ? 0.003 : 0.001) * ageingRecovery * elapsedHours;
     injury.severity -= healing;
     if (healing > 0) spendMetabolicEnergy(a, healing * 18, "healing");
-    a.health -= Math.max(0, injury.severity - 0.75) * 0.01 * elapsedHours;
+    const damage = Math.max(0, injury.severity - 0.75) * 0.01 * elapsedHours;
+    a.health -= damage;
+    healthDamage += damage;
   }
+  a.lastInjuryHealthDamage = healthDamage;
   a.injuries = a.injuries.filter((i) => i.severity > 0.05);
   clampAnimalHealth(a);
 }
@@ -11274,13 +11765,13 @@ function drawVegetationRegions(stride = 2, observer = null, dirtyKeys = null) {
     const batch = batchFor(chunkKey);
     for (const { cell: c, sampleX: x, sampleZ: z } of vegetationSampleCache.chunks.get(chunkKey) || []) {
       if (!(c.woodland || c.shrubland) || (observer && !visionResult(observer, c, visionForHex, 0.08).visible)) continue;
-      const n = variation(x, z), matureTree = c.plantType === "tree" && c.soilDepth > 0.58 && c.moisture > 0.48;
-      const hasTree = c.plantType === "tree" && (c.fallenTreeUntil > sim.ecologicalMinute || (matureTree && n > clamp(0.72 - (worldSetup.trees ?? 1) * 0.54, 0.04, 0.84)));
+      const n = variation(x, z), localDensity = clamp(c.habitatDensity ?? c.biomass, 0, 1), matureTree = c.plantType === "tree" && c.soilDepth > 0.58 && c.moisture > 0.48;
+      const hasTree = c.plantType === "tree" && (c.fallenTreeUntil > sim.ecologicalMinute || (matureTree && n > clamp(0.86 - (worldSetup.trees ?? 1) * 0.4 - localDensity * .38, 0.03, 0.92)));
       if (hasTree && c.fallenTreeUntil > sim.ecologicalMinute) batch.fallenTrees.push(c);
       else if (hasTree && leaflessTree(c)) batch.bareTrees.push(c);
       else if (hasTree) batch.trees.push(c);
       const hasBush = c.shrubland || (c.woodland && c.woodyStage !== "matureTree" && n > 0.54);
-      if (hasBush && n > clamp(0.78 - (worldSetup.bushes ?? 1) * 0.46, 0.04, 0.86)) batch.bushes.push({ ...c, sourceX: c.x, sourceZ: c.z, x: clamp(c.x + (variation(x + 4, z) - .5) * 1.35, -HALF + .8, HALF - 1.8), z: clamp(c.z + (variation(x, z + 9) - .5) * 1.35, -HALF + .8, HALF - 1.8) });
+      if (hasBush && n > clamp(0.88 - (worldSetup.bushes ?? 1) * 0.34 - localDensity * .42, 0.03, 0.92)) batch.bushes.push({ ...c, sourceX: c.x, sourceZ: c.z, x: clamp(c.x + (variation(x + 4, z) - .5) * 1.35, -HALF + .8, HALF - 1.8), z: clamp(c.z + (variation(x, z + 9) - .5) * 1.35, -HALF + .8, HALF - 1.8) });
     }
     for (const c of landscapeChunkCells.get(chunkKey) || []) if (c.water && !c.waterChannel && c.waterDepth > .025 && c.waterDepth <= .45 && c.temperature > 8 && c.shoreExposure < .62 && ((c.id * 17 + sim.seed) % 11 === 0)) batch.lilies.push(c);
   }
@@ -11300,7 +11791,7 @@ function drawVegetationRegions(stride = 2, observer = null, dirtyKeys = null) {
     for (let i = 0; i < items.length; i += 1) {
       const c = items[i], sx = c.sourceX ?? c.x, sz = c.sourceZ ?? c.z;
       const offsetX = (variation(sx + 17, sz + 31) - .5) * .24, offsetZ = (variation(sx + 53, sz + 7) - .5) * .24;
-      const yaw = variation(sx + 71, sz + 11) * Math.PI * 2, size = .82 + variation(sx + 29, sz + 47) * .24;
+      const yaw = variation(sx + 71, sz + 11) * Math.PI * 2, densityScale = .82 + clamp(c.habitatDensity ?? c.biomass, 0, 1) * .28, size = densityScale + variation(sx + 29, sz + 47) * .18;
       vegetationInstanceDummy.position.set(c.x + offsetX, terrainHeight(c.x, c.z) + height, c.z + offsetZ);
       vegetationInstanceDummy.rotation.set(fallen ? Math.PI / 2 : 0, yaw, fallen ? Math.PI / 2 : 0); vegetationInstanceDummy.scale.set(scale, scale * size, scale); vegetationInstanceDummy.updateMatrix(); mesh.setMatrixAt(i, vegetationInstanceDummy.matrix);
     }
@@ -11494,7 +11985,7 @@ function scavenge(a) {
   if (corpse.ownerId && corpse.ownerId !== a.id) corpse.displacements = (corpse.displacements || 0) + 1;
   corpse.ownerId = a.id;
   const foodPreference = carcassPreference(a, corpse);
-  const meal = Math.min(corpse.biomass, carcassMeal(a.bodyMass) * ecologicalMinutesThisTick() * clamp(foodPreference, .35, 1.2));
+  const meal = Math.min(corpse.biomass, carcassMeal(a.bodyMass) * ecologicalMinutesThisTick() * clamp(foodPreference, .35, 1.2) * senescenceModifiers(a).feeding);
   corpse.biomass -= meal;
   corpse.feedingMinutes = (corpse.feedingMinutes || 0) + 1;
   corpse.biomassConsumed = (corpse.biomassConsumed || 0) + meal;
@@ -11736,12 +12227,13 @@ function disposeFogBuffer() {
   fogMesh = null; fogPositionBuffer = null; fogPositionAttribute = null; fogExploredMesh = null; fogExploredPositionBuffer = null; fogExploredPositionAttribute = null; fogCacheKey = ""; currentVisionCells.clear();
 }
 function appendFogCell(buffer, cell) {
-  const surface = terrainSurfaceCache.get(cell.id);
-  if (!surface) return;
-  const lift = .075, centre = surface.centre, corners = surface.corners;
-  for (let index = 0; index < corners.length; index += 1) {
-    const left = corners[index], right = corners[(index + 1) % corners.length];
-    buffer.push(centre.x, centre.y + lift, centre.z); buffer.push(right.x, right.y + lift, right.z); buffer.push(left.x, left.y + lift, left.z);
+  if (!terrainSurfaceTable) return;
+  const { positions, offsets } = terrainSurfaceTable, baseVertex = offsets[cell.id], lift = .075, centreOffset = baseVertex * 3;
+  for (let index = 0; index < 6; index += 1) {
+    const leftOffset = (baseVertex + index + 1) * 3, rightOffset = (baseVertex + (index + 1) % 6 + 1) * 3;
+    buffer.push(positions[centreOffset], positions[centreOffset + 1] + lift, positions[centreOffset + 2]);
+    buffer.push(positions[rightOffset], positions[rightOffset + 1] + lift, positions[rightOffset + 2]);
+    buffer.push(positions[leftOffset], positions[leftOffset + 1] + lift, positions[leftOffset + 2]);
   }
 }
 function updateKnowledgeFog(a) {
@@ -11839,13 +12331,26 @@ function drawMinimapWork() {
   lastMinimapTick = sim.tick;
   const canvas = ui.minimap, c = canvas.getContext("2d"), size = canvas.width;
   const mode = minimapDisplayMode;
-  minimapStaticCanvas ||= document.createElement("canvas"); minimapStaticCanvas.width = minimapStaticCanvas.height = size;
+  if (!minimapStaticCanvas || minimapStaticCanvas.width !== size || minimapStaticCanvas.height !== size) {
+    minimapStaticCanvas = document.createElement("canvas"); minimapStaticCanvas.width = minimapStaticCanvas.height = size; minimapInvalidation.reset();
+  }
   const staticKey = `${WORLD}:${sim.seed}:${mode}:${landscapeDirtyState.versions.terrain}:${landscapeDirtyState.versions.water}:${landscapeDirtyState.versions.vegetation}`;
   if (minimapInvalidation.needsStatic(staticKey)) profiler.measure("UI.minimap.static", () => {
     const background = minimapStaticCanvas.getContext("2d"); background.fillStyle = "#152119"; background.fillRect(0, 0, size, size);
-    const stride = Math.max(2, Math.ceil(WORLD / size * 2));
-    const colour = (cell) => cell.water ? "#3d8fd1" : cell.terrainClass === "snow" ? "#dce9e7" : cell.rocky ? "#69716d" : cell.sandy ? "#bca35e" : cell.wetland ? "#416a4c" : cell.woodland ? "#24503a" : cell.shrubland ? "#376c3d" : cell.terrainClass === "dryGrass" ? "#96834e" : (cell.grassHeight || 0) > 0.68 ? "#3c7441" : cell.biomass > 0.12 ? "#4c8651" : "#765b3e";
-    if (mode !== "organisms") for (let z = -HALF; z < HALF; z += stride) for (let x = -HALF; x < HALF; x += stride) { const cell = cellAt(x, z); background.fillStyle = colour(cell); const px = (x + HALF) / WORLD * size, pz = (z + HALF) / WORLD * size, d = Math.ceil(stride / WORLD * size) + 1; background.fillRect(px, pz, d, d); }
+    if (mode !== "organisms") {
+      // A single pixel-buffer upload is substantially cheaper than thousands
+      // of tiny canvas fill calls on software renderers and large-map loads.
+      const image = background.createImageData(size, size), pixels = image.data, pixelStep = 2;
+      const colours = sim.cells.map(cell => habitatColourRgb(cell));
+      for (let py = 0; py < size; py += pixelStep) for (let px = 0; px < size; px += pixelStep) {
+        const x = (px + .5) / size * WORLD - HALF, z = (py + .5) / size * WORLD - HALF, cell = cellAt(x, z), colour = colours[cell?.id] || [21, 33, 25];
+        for (let oy = 0; oy < pixelStep && py + oy < size; oy += 1) for (let ox = 0; ox < pixelStep && px + ox < size; ox += 1) {
+          const offset = ((py + oy) * size + px + ox) * 4;
+          pixels[offset] = colour[0]; pixels[offset + 1] = colour[1]; pixels[offset + 2] = colour[2]; pixels[offset + 3] = 255;
+        }
+      }
+      background.putImageData(image, 0, 0);
+    }
     minimapInvalidation.markStatic(staticKey);
   });
   c.clearRect(0, 0, size, size); c.drawImage(minimapStaticCanvas, 0, 0);
@@ -12185,7 +12690,7 @@ function updateUIWork(force = false, now = performance.now()) {
   }
   if (recordsSurfaceVisible || menuSaveSlotsVisible) {
     const slots = savedSlotMetadata();
-    const slotMarkup = slots.length ? slots.map((slot) => `<div class="save-slot"><button type="button" data-save-slot="${escapeHtml(slot.name)}">${escapeHtml(slot.name)} <span>seed ${escapeHtml(String(slot.seed))} · day ${escapeHtml(String(slot.day))}</span></button><button type="button" data-delete-save="${escapeHtml(slot.name)}" aria-label="Delete ${escapeHtml(slot.name)}">Delete</button></div>`).join("") : `<span class="hint">No named saves yet. Use Save simulation state to preserve this world.</span>`;
+    const slotMarkup = slots.length ? slots.map((slot) => { const compatible = slot.worldSchema === WORLD_SCHEMA; return `<div class="save-slot"><button type="button" ${compatible ? `data-save-slot="${escapeHtml(slot.name)}"` : "disabled"}>${escapeHtml(slot.name)} <span>${compatible ? `seed ${escapeHtml(String(slot.seed))} · day ${escapeHtml(String(slot.day))}` : "incompatible · new 365-day world required"}</span></button><button type="button" data-delete-save="${escapeHtml(slot.name)}" aria-label="Delete ${escapeHtml(slot.name)}">Delete</button></div>`; }).join("") : `<span class="hint">No named saves yet. Use Save simulation state to preserve this world.</span>`;
     if (recordsSurfaceVisible) updateLaboratoryMarkup(ui.saveSlotList, slotMarkup);
     if (menuSaveSlotsVisible && menuSaveSlotList._laboratoryMarkup !== slotMarkup) { menuSaveSlotList.innerHTML = slotMarkup; menuSaveSlotList._laboratoryMarkup = slotMarkup; }
   }
@@ -12197,27 +12702,27 @@ function updateUIWork(force = false, now = performance.now()) {
     ui.lockEntity.disabled = !selected && !corpse && !selectedCollectiveMembers().length;
     ui.favouriteEntity.disabled = !selected;
   if (terrain && !selected && !corpse) {
-    const local = cachedWeatherAt(terrain);
+    const local = cachedWeatherAt(terrain), localHabitat = habitatProfile(terrain);
     ui.selectedName.textContent = `Terrain ${terrain.x}, ${terrain.z}`;
-    ui.selectedKind.textContent = terrain.terrainClass;
+    ui.selectedKind.textContent = `${localHabitat.label} · ${(terrain.landform || "rolling-ground").replaceAll("-", " ")} · ${terrain.terrainClass}`;
     ui.selectedSex.textContent = "-"; ui.selectedAge.textContent = "-";
-    ui.selectedStage.textContent = terrain.woodland ? "woodland cover" : terrain.water ? "water" : "open ground";
+    ui.selectedStage.textContent = `density ${localHabitat.densityLevel}/${HABITAT_DENSITY_BANDS}; canopy ${Math.round(localHabitat.canopy * 100)}%; understory ${Math.round(localHabitat.understory * 100)}%`;
     ui.selectedSize.textContent = `elevation ${terrain.elevation.toFixed(1)}m; slope ${(terrain.slope * 100).toFixed(0)}%`;
     ui.selectedPregnancy.textContent = "-";
-    ui.selectedClimate.textContent = `${local.temp.toFixed(1)}°C; rain ${(local.rain * 100).toFixed(0)}%`;
-    ui.selectedAction.textContent = terrain.channel ? `${terrain.waterChannel ? "flowing channel" : "dry channel"}; current flow ${terrain.discharge.toFixed(2)}` : terrain.water ? `water level ${terrain.waterLevel.toFixed(2)}` : `${terrain.plantType}; biomass ${terrain.biomass.toFixed(2)}`;
+    ui.selectedClimate.textContent = `${local.temp.toFixed(1)}°C (${localHabitat.temperatureLabel}); rain ${(local.rain * 100).toFixed(0)}%; ${localHabitat.humidityLabel} local humidity ${Math.round(localHabitat.humidity * 100)}%`;
+    ui.selectedAction.textContent = terrain.channel ? `${terrain.waterChannel ? "flowing" : "dry"} ${riverDescription(terrain)}; current flow ${terrain.discharge.toFixed(2)}` : terrain.water ? `water level ${terrain.waterLevel.toFixed(2)}` : `${localHabitat.plantCommunity.replaceAll("-", " ")}; ${terrain.plantType}; biomass ${terrain.biomass.toFixed(2)}`;
     ui.selectedEnergy.textContent = `soil ${(terrain.soilDepth * 100).toFixed(0)}%`;
-    ui.selectedHydration.textContent = `moisture ${(terrain.moisture * 100).toFixed(0)}%`;
-    ui.selectedFeeding.textContent = terrain.woodland ? "cover; not grazeable" : terrain.rocky ? "rocky footing" : terrain.sandy ? "sandy footing" : "open ground";
+    ui.selectedHydration.textContent = `soil moisture ${(terrain.moisture * 100).toFixed(0)}%; combined water availability ${Math.round(localHabitat.waterAvailability * 100)}%; groundwater ${Number(terrain.groundwater || 0).toFixed(1)}`;
+    ui.selectedFeeding.textContent = terrain.rocky ? "rocky footing" : terrain.sandy ? "sandy footing" : `${localHabitat.plantCommunity.replaceAll("-", " ")}; ${Math.round(localHabitat.canopy * 100)}% canopy and ${Math.round(localHabitat.understory * 100)}% understory`;
     ui.selectedDrive.textContent = terrain.channel ? `current ${terrain.discharge.toFixed(2)}; long-term ${terrain.meanDischarge.toFixed(2)}` : `flow ${Math.round(terrain.accumulation)}; drainage ${(terrain.drainage * 100).toFixed(0)}%`;
     ui.selectedExpression.textContent = "not applicable — terrain has no face";
     ui.selectedRelation.textContent = terrain.basinId ? "local basin" : terrain.channel ? "established drainage channel" : "hillslope";
     ui.selectedMemory.textContent = "laboratory-only terrain data";
     ui.selectedTarget.textContent = terrain.flowTo >= 0 ? `downhill index ${terrain.flowTo}` : terrain.outlet ? "map outlet" : "local low";
     ui.selectedAwareness.textContent = "not visible to organisms by default";
-    ui.priorityList.innerHTML = terrain.channel ? `<li>Raw channel width: ${terrain.channelWidthRaw.toFixed(2)}</li><li>Final channel width: ${terrain.channelWidth.toFixed(2)}</li><li>Current water width: ${terrain.waterWidth.toFixed(2)}</li><li>Upstream channel contributors: ${terrain.upstreamChannelCount}</li><li>State: ${terrain.waterChannel ? "wet" : "dry"}</li>` : `<li>Fertility: ${(terrain.fertility * 100).toFixed(0)}%</li><li>Rocky: ${terrain.rocky ? "yes" : "no"}</li>`;
+    ui.priorityList.innerHTML = terrain.channel ? `<li>Reach: ${escapeHtml(riverDescription(terrain))}</li><li>Natural bankfull width: ${terrain.channelWidthRaw.toFixed(2)}</li><li>Configured bankfull width: ${terrain.channelWidth.toFixed(2)}</li><li>Current water width: ${terrain.waterWidth.toFixed(2)}</li><li>Upstream channel contributors: ${terrain.upstreamChannelCount}</li><li>State: ${terrain.waterChannel ? "wet" : "dry"}</li>` : `<li>${escapeHtml(habitatSummary(terrain))}</li><li>Fertility: ${(terrain.fertility * 100).toFixed(0)}%</li><li>Rocky: ${terrain.rocky ? "yes" : "no"}</li>`;
     const riverStats = sim.hexWorld?.riverWidthStats;
-    ui.rssTrace.innerHTML = terrain.channel ? `<li>River diagnostics — current flow ${terrain.discharge.toFixed(3)}; effective flow ${terrain.meanDischarge.toFixed(3)}.</li><li>Cached world range: ${riverStats?.qLow?.toFixed(3) ?? "-"} to ${riverStats?.qHigh?.toFixed(3) ?? "-"}; hex diameter ${riverStats?.hexDiameter?.toFixed(2) ?? "-"}.</li><li>Join limit: ${riverStats?.miterLimit ?? "-"}× half-width.</li>` : "<li>Laboratory terrain inspection, not entity perception.</li>";
+    ui.rssTrace.innerHTML = terrain.channel ? `<li>River diagnostics — current flow ${terrain.discharge.toFixed(3)}; effective flow ${terrain.meanDischarge.toFixed(3)}.</li><li>Strahler order ${terrain.streamOrder}; ${escapeHtml(terrain.flowRegime)} flow; ${escapeHtml(String(terrain.riverPattern).replaceAll("-", " "))} planform.</li><li>Cached world range: ${riverStats?.qLow?.toFixed(3) ?? "-"} to ${riverStats?.qHigh?.toFixed(3) ?? "-"}; network maximum order ${riverStats?.maxOrder ?? "-"}; hex diameter ${riverStats?.hexDiameter?.toFixed(2) ?? "-"}.</li><li>Join limit: ${riverStats?.miterLimit ?? "-"}× half-width.</li>` : "<li>Laboratory terrain inspection, not entity perception.</li>";
     ui.entityIndicator.textContent = ui.physicalViability.textContent = ui.mismatch.textContent = ui.feedbackStatus.textContent = "-";
     ui.driftStatus.textContent = "Laboratory map data; entities receive only their permitted signals.";
     ui.driftStatus.className = "status";
@@ -12280,15 +12785,20 @@ function updateUIWork(force = false, now = performance.now()) {
   } else {
     const s = species[selected.speciesId];
     ui.selectedName.textContent = `${selected.id} ${s.label}`;
-    ui.selectedKind.textContent = guildOf(selected)[0].toUpperCase() + guildOf(selected).slice(1);
+    const identityBasis = s.scientificName ? `${s.scientificName} · simplified real-species model` : `${s.realLifeBasis} · retained generic model`;
+    ui.selectedKind.textContent = `${guildOf(selected)[0].toUpperCase() + guildOf(selected).slice(1)} · ${identityBasis} · ${s.lifeHistory.archetype}`;
     ui.selectedSex.textContent = selected.sex;
-    ui.selectedAge.textContent = `${selected.age.toFixed(1)} days; projected ${projectedMaximumAge(selected, s.maxAge).toFixed(0)} days (${lifespanMultiplier(selected).toFixed(2)}× life quality)`;
-    ui.selectedStage.textContent = selected.lifeStage;
-    ui.selectedSize.textContent = `${selected.bodyMass.toFixed(1)} kg; lean ${selected.leanMass.toFixed(1)} kg; muscle ${selected.muscleMass.toFixed(1)} kg; fat ${selected.fatMass.toFixed(1)} kg (${selected.bodyFatPercent.toFixed(1)}%); endurance conditioning ${Math.round((selected.enduranceFitness || 0) * 100)}%; spawn frame ${(selected.sizeTrait || 1).toFixed(2)}×`;
+    const ageing = senescenceSummary(selected, s.lifeHistory.development);
+    ui.selectedAge.textContent = `${selected.age.toFixed(1)} days; senescence reference ${ageing.onsetDay.toFixed(0)} days; observed longevity reference ${ageing.longevityReferenceDay.toFixed(0)} days (not a limit); lifetime condition ${Math.round(lifespanQuality(selected) * 100)}%`;
+    const currentHabitatCell = cellAt(selected.x, selected.z), currentHabitat = habitatProfile(currentHabitatCell), locomotionIdentity = speciesLocomotionProfile(selected), climbing = terrainMobilityAssessment(selected, currentHabitatCell);
+    ui.selectedStage.textContent = `${selected.lifeStage}; ${currentHabitat.label} density ${currentHabitat.densityLevel}/${HABITAT_DENSITY_BANDS}; visible gait: ${locomotionIdentity.label}; local suitability ${Math.round(habitatSuitability(selected, currentHabitatCell) * 100)}%; slope ${Math.round(climbing.slope * 100)}% (${climbing.reason})`;
+    ui.selectedSize.textContent = `${selected.bodyMass.toFixed(1)} kg; lean ${selected.leanMass.toFixed(1)} kg; muscle ${selected.muscleMass.toFixed(1)} kg; fat ${selected.fatMass.toFixed(1)} kg (${selected.bodyFatPercent.toFixed(1)}%); endurance conditioning ${Math.round((selected.enduranceFitness || 0) * 100)}%; climbing strength ${Math.round(climbing.strength * 100)}%; current maximum slope ${Math.round(climbing.effectiveMaximum * 100)}%; spawn frame ${(selected.sizeTrait || 1).toFixed(2)}×`;
     const matureEntity = mature(selected), cycle = matureEntity && selected.sex === "F" ? fertilityCycle(selected) : null;
-    const reproductionStatus = reproductionStage(selected, sim.tick);
-    const pregnancy = pregnancyPhysiology(selected.pregnant, s.gestation);
-    ui.selectedPregnancy.textContent = reproductionStatus === "birth" ? `in labour — ${selected.birthEvent.completesAt - sim.tick} steps remaining` : reproductionStatus === "mating" ? `mating — ${selected.mating.completesAt - sim.tick} steps remaining` : reproductionStatus === "accepted" ? `accepted ✓ — mating in ${selected.mating.startsAt - sim.tick} steps` : reproductionStatus.startsWith("courtship") ? `courtship ♥ — decision in ${Math.max(0, selected.courtship.decisionAt - sim.tick)} steps` : reproductionStatus === "rejected" ? "courtship rejected ×" : selected.sex === "F" && selected.pregnant ? `${selected.pregnant.age.toFixed(1)} / ${s.gestation} days; ${pregnancy.offspringCount} carried; ${pregnancy.hormoneCycle.phase}; needs ${pregnancy.needMultiplier.toFixed(2)}× (term ${pregnancy.termMultiplier.toFixed(2)}×)` : selected.sex === "F" && selected.conception ? `conception in ${Math.max(0, selected.conception.completesAt - sim.tick)} steps` : selected.sex === "F" && cycle ? (cycle.fertile ? `fertile — cycle day ${cycle.day.toFixed(1)} / ${cycle.period}` : `cycle day ${cycle.day.toFixed(1)} / ${cycle.period}`) : "not currently courting or mating";
+    const eventStage = reproductionStage(selected, sim.tick), biologyStatus = currentReproductiveStatus(selected), reproduction = s.reproduction;
+    const pregnancy = pregnancyPhysiology(selected.pregnant, s.gestation, s.reproduction.mode);
+    const termDays = reproduction.mode === "surface-eggs" ? reproduction.preLayDays : reproduction.gestationDays, remainingDays = selected.pregnant ? Math.max(0, termDays - selected.pregnant.age) : 0, observationEta = wallMinutesForEcologicalDays(remainingDays, observationSessionMinutes());
+    const cycleDetail = cycle?.period ? `; cycle day ${Number(cycle.day || 0).toFixed(1)} / ${cycle.period}` : "";
+    ui.selectedPregnancy.textContent = eventStage === "birth" ? `${reproduction.mode === "surface-eggs" ? "laying eggs" : "in labour"} — ${selected.birthEvent.completesAt - sim.tick} presentation steps remaining` : eventStage === "mating" ? `mating — ${selected.mating.completesAt - sim.tick} presentation steps remaining` : eventStage === "accepted" ? `accepted ✓ — mating in ${selected.mating.startsAt - sim.tick} presentation steps` : eventStage.startsWith("courtship") ? `courtship ♥ — decision in ${Math.max(0, selected.courtship.decisionAt - sim.tick)} presentation steps` : eventStage === "rejected" ? "courtship rejected ×" : selected.sex === "F" && selected.pregnant ? `${reproductiveStatusLabel(biologyStatus)} — ${selected.pregnant.age.toFixed(1)} / ${termDays} days; ${pregnancy.offspringCount} ${reproduction.mode === "surface-eggs" ? "eggs" : "offspring"}; ${remainingDays.toFixed(1)} days remaining (~${observationEta.toFixed(1)} real minutes at this pace); needs ${pregnancy.needMultiplier.toFixed(2)}×${pregnancy.hormoneCycle ? `; ${pregnancy.hormoneCycle.phase}` : ""}` : selected.sex === "F" && selected.conception ? `conception resolution in ${Math.max(0, ((selected.conception.completesAtMinute || sim.ecologicalMinute) - sim.ecologicalMinute) / MINUTES_PER_DAY).toFixed(1)} ecological days` : `${reproductiveStatusLabel(biologyStatus)}; ${reproduction.strategy.replaceAll("-", " ")}; ${reproduction.ovulation} ovulation${cycleDetail}`;
     const selectedWeather = regionalWeatherAt(selected);
     ui.selectedClimate.textContent = `body ${selected.bodyTemperature.toFixed(1)}°C (${selected.thermalStatus}); air ${selectedWeather.temp.toFixed(1)}°C; rain ${(selectedWeather.rain * 100).toFixed(0)}%; wind ${(selectedWeather.wind * 100).toFixed(0)}%`;
     ui.selectedAction.textContent = causalExplanation(selected);
@@ -12297,7 +12807,8 @@ function updateUIWork(force = false, now = performance.now()) {
     const recentHit = selected.lastHit && sim.tick - selected.lastHit.tick <= 48 ? `; last hit ${selected.lastHit.type}${selected.lastHit.attackerId ? ` by ${selected.lastHit.attackerId}` : ""} (−${selected.lastHit.damage})` : "";
     const cap = selected.healthCap ?? 100;
     const trauma = cap <= 60 ? "; critical permanent trauma — 60% recovery ceiling, 62.5% speed loss, longer rest" : cap <= 75 ? "; permanent trauma — 75% recovery ceiling, 25% speed loss" : "";
-    ui.selectedHealth.textContent = `${Math.max(0, selected.health).toFixed(0)} / ${cap}${recentHit}${trauma}`;
+    const ageingHealth = ageing.active ? `; organ reserve ${Math.round(ageing.organReserve * 100)}%; immune reserve ${Math.round(ageing.immuneReserve * 100)}%; dental function ${Math.round(ageing.dentalFunction * 100)}%; frailty ${Math.round(ageing.frailty * 100)}%; care protection ${Math.round(ageing.careProtection * 100)}%` : "; no active senescent decline";
+    ui.selectedHealth.textContent = `${Math.max(0, selected.health).toFixed(0)} / ${cap}${recentHit}${trauma}${ageingHealth}`;
     ui.selectedHydration.textContent = selected.hydration.toFixed(0);
     ui.selectedInjuries.textContent = (selected.injuries || []).length ? (selected.injuries || []).map((injury) => `${injury.type} ${(injury.severity * 100).toFixed(0)}%${injury.sourceId ? ` from ${injury.sourceId}` : ""}`).join("; ") : "none";
     const development = developmentalFeedingProfile(selected, s);
@@ -12339,14 +12850,21 @@ function updateUIWork(force = false, now = performance.now()) {
     const predictiveSummary = document.querySelector("#selected-predictive-summary"); if (predictiveSummary) predictiveSummary.innerHTML = entityPredictiveSummaryHtml(selected, { expanded: true, surface: "laboratory-entity" });
   }
   }
+  if (worldGenerationInProgress) traceWorldGeneration("ui-need-planning");
   renderLiveNeedPlanning(selected);
+  if (worldGenerationInProgress) traceWorldGeneration("ui-predictive-laboratory");
   renderPredictiveLaboratory(selected);
+  if (worldGenerationInProgress) traceWorldGeneration("ui-visual-language");
   renderVisualLanguageLaboratory();
+  if (worldGenerationInProgress) traceWorldGeneration("ui-ecology-laboratory");
   renderEcologyLaboratory(selected, corpse);
+  if (worldGenerationInProgress) traceWorldGeneration("ui-society-workspace");
   if (laboratorySurfaceVisible(document.querySelector("#society-workspace"))) renderOntologyWorkspaces(selected);
   ui.viewMode.textContent = selected ? "Entity awareness" : corpse ? "Carcass record" : selectedOrganization() ? "Herd overview" : selectedGroupMembers().length ? "Group overview" : terrain ? "Laboratory terrain" : "Laboratory map";
   updateObserverHud(selected, herb, carn, corpse);
+  if (worldGenerationInProgress) traceWorldGeneration("ui-reality");
   if (!ui.realityPanel.hidden) updateRealityPanel(force, now);
+  if (worldGenerationInProgress) traceWorldGeneration("ui-minimap");
   if (mapSurfaceVisible) drawMinimap(force, now);
   if (recordsSurfaceVisible) {
     const eventFilter = ui.eventFilter?.value || "all", eventLimit = Number(ui.eventLimit?.value || 12);
@@ -12524,7 +13042,7 @@ function observerDecisionChainHtml(animal, { expanded = false } = {}) {
 
 function observerHeaderHtml(animal) {
   const stage = observerLifeStageMark(animal.lifeStage), sex = animal.sex === "F" ? "♀" : "♂", label = species[animal.speciesId]?.label || animal.speciesId;
-  const gestation = species[animal.speciesId]?.gestation, pregnancyProgress = animal.pregnant ? pregnancyPhysiology(animal.pregnant, gestation)?.progress : 0;
+  const profile = species[animal.speciesId], gestation = profile?.gestation, pregnancyProgress = animal.pregnant ? pregnancyPhysiology(animal.pregnant, gestation, profile?.reproduction?.mode)?.progress : 0;
   const pregnancy = animal.pregnant ? `<span class="observer-header-pregnancy" title="Pregnant">P ${Math.round(clamp(Number(pregnancyProgress) || 0, 0, 1) * 100)}%</span>` : "";
   return `<span class="observer-header-species" role="img" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${isCarnivore(animal) ? "◆" : isOmnivore(animal) ? "◈" : "●"}</span><strong>${escapeHtml(animal.id)}</strong><span title="${animal.sex === "F" ? "Female" : "Male"}">${sex}</span><span title="${escapeHtml(animal.lifeStage)}">${stage}</span><span>${animal.age.toFixed(1)}<small>d</small></span>${pregnancy}`;
 }
@@ -12604,24 +13122,24 @@ function observerSocialVisualGuideHtml(animal) {
 
 function observerSocialVisualHtml(animal) {
   const guide = observerSocialVisualGuideHtml(animal), phenotype = biologicalPhenotype(animal);
-  const socialMemoryEntries = Object.entries(animal.socialMemory || {});
-  const relationships = (Array.isArray(animal.relationships) && animal.relationships.length ? animal.relationships : socialMemoryEntries.map(([targetId, record]) => ({ targetId, ...(record || {}) }))).slice(0, 6), socialMemories = socialMemoryEntries.map(([, record]) => record);
+  const graph = unifiedSocialGraph(animal, { animals: sim.animals, lineageRecords: sim.lineageRecords, relationships: sim.relationships });
+  const relationships = graph.nodes.slice(0, 18), hiddenRelationships = Math.max(0, graph.nodes.length - relationships.length);
   const groupMembers = animal.groupId ? sim.animals.filter((candidate) => candidate.alive && candidate.groupId === animal.groupId) : [];
   const groupName = animal.groupId ? groupDisplayName(sim.groupIdentities, animal.groupId) : "Independent";
   const socialRole = animal.groupLeaderId === animal.id ? "Leader" : animal.lifeStage === "dependent" ? "Dependent" : animal.groupId ? "Member" : "Independent";
   const roleSymbol = socialRole === "Leader" ? "♛" : socialRole === "Dependent" ? "◌" : socialRole === "Member" ? "◇" : "•";
   const central = `<span class="observer-network-center" title="Selected animal">${escapeHtml(animal.id)}</span>`;
   const nodes = relationships.map((relation, index) => {
-    const id = relation.targetId || relation.partnerId || relation.id || "?", kind = relation.kind || "remembered";
-    const kindClass = String(kind).toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
-    const symbol = kind.includes("offspring") ? "○" : kind.includes("mate") ? "△" : kind.includes("leader") ? "□" : "◇";
-    const angle = index * (360 / Math.max(1, relationships.length)), strength = clamp(Number(relation.strength ?? relation.affinity ?? .45), .15, 1);
-    return `<i class="observer-network-link is-${kindClass}" style="--network-angle:${angle}deg;--network-strength:${strength}" aria-hidden="true"></i><button type="button" data-social-node="${escapeHtml(id)}" class="observer-network-node is-${kindClass}" style="--network-angle:${angle}deg;--network-strength:${strength}" title="${escapeHtml(kind)} · ${escapeHtml(id)}"><span>${symbol}</span></button>`;
+    const id = relation.id, family = relation.sources.includes("family"), group = relation.sources.includes("group"), explicit = relation.sources.includes("relationship");
+    const symbol = family ? "○" : group ? "⌘" : explicit ? "◇" : "◌", outerRing = relationships.length > 9 && index >= 8, ringIndex = outerRing ? index - 8 : index, ringCount = relationships.length > 9 ? outerRing ? relationships.length - 8 : 8 : relationships.length;
+    const angle = ringIndex * (360 / Math.max(1, ringCount)), radius = relationships.length > 9 ? outerRing ? 6.35 : 4.15 : 5.5, strength = relation.strength;
+    const classes = [`is-${relation.primarySource}`, `is-${relation.status}`, ...relation.sources.map(source => `has-${source}`)].join(" "), description = `${relation.kinds.join(", ")} · ${relation.status.replace("-", " ")}`;
+    return `<i class="observer-network-link ${classes}" style="--network-angle:${angle}deg;--network-strength:${strength};--radius:${radius}rem" aria-hidden="true"></i><button type="button" data-social-node="${escapeHtml(id)}" class="observer-network-node ${classes}" style="--network-angle:${angle}deg;--network-strength:${strength};--radius:${radius}rem" title="${escapeHtml(description)} · ${escapeHtml(id)}" aria-label="${escapeHtml(id)} ${escapeHtml(description)}"${relation.alive ? "" : " disabled"}><span>${symbol}</span><small>${escapeHtml(id)}</small></button>`;
   }).join("");
-  const relatives = relationships.filter(item => ["parent", "offspring", "sibling", "kinship", "dependency"].includes(item.kind)).length;
   const messages = animal.receivedSignals?.length || 0, recognition = Math.round((phenotype.cognition.socialRecognition || 0) * 100);
-  const socialContext = `<section class="observer-social-context" aria-label="Current social life"><article class="is-group" title="Current organisation"><i aria-hidden="true">⌘</i><span><small>Group</small><strong>${escapeHtml(groupName)}</strong></span><b>${groupMembers.length || 1}</b></article><article class="is-role" title="Current social role"><i aria-hidden="true">${roleSymbol}</i><span><small>Role</small><strong>${escapeHtml(socialRole)}</strong></span></article><article class="is-recognition" title="Social recognition"><i aria-hidden="true">◉</i><span><small>Recognition</small><strong>${recognition}%</strong></span><em><b style="--observer-social-value:${clamp(recognition, 0, 100)}%"></b></em></article><article class="is-contacts" title="Remembered social contacts"><i aria-hidden="true">◎</i><span><small>Contacts</small><strong>${socialMemories.length}</strong></span></article></section>`;
-  return `<section class="observer-social-visual" data-observer-social-visual>${guide.visual}${socialContext}<div class="observer-social-network" aria-label="Local remembered social network">${central}${nodes || `<span class="observer-network-empty">◇</span>`}</div><div class="observer-social-counters"><span title="Known relatives">♧ <strong>${relatives}</strong></span><span title="Remembered relationships">◇ <strong>${relationships.length}</strong></span><span title="Messages received">↘ <strong>${messages}</strong></span><span title="Animals in current group">⌘ <strong>${groupMembers.length || 1}</strong></span></div>${observerLaboratoryLink("society", "Open social history in Laboratory")}</section>`;
+  const socialContext = `<section class="observer-social-context" aria-label="Current social life"><article class="is-group" title="Current organisation"><i aria-hidden="true">⌘</i><span><small>Group</small><strong>${escapeHtml(groupName)}</strong></span><b>${groupMembers.length || 1}</b></article><article class="is-role" title="Current social role"><i aria-hidden="true">${roleSymbol}</i><span><small>Role</small><strong>${escapeHtml(socialRole)}</strong></span></article><article class="is-recognition" title="Social recognition"><i aria-hidden="true">◉</i><span><small>Recognition</small><strong>${recognition}%</strong></span><em><b style="--observer-social-value:${clamp(recognition, 0, 100)}%"></b></em></article><article class="is-contacts" title="Remembered social contacts"><i aria-hidden="true">◎</i><span><small>Contacts</small><strong>${graph.counts.memory}</strong></span></article></section>`;
+  const legend = `<div class="observer-social-network-legend"><span class="is-family">○ family</span><span class="is-group">⌘ current group</span><span class="is-relationship">◇ explicit bond</span><span class="is-memory-only">◌ memory only</span><span class="is-deceased">† deceased</span></div>`;
+  return `<section class="observer-social-visual" data-observer-social-visual>${guide.visual}${socialContext}<div class="observer-social-network" aria-label="Family, group, relationship and remembered social network">${central}${nodes || `<span class="observer-network-empty">◇</span>`}</div>${hiddenRelationships ? `<p class="observer-network-overflow">+ ${hiddenRelationships} lower-priority remembered contacts in Laboratory</p>` : ""}${legend}<div class="observer-social-counters"><span title="Known relatives">♧ <strong>${graph.counts.family}</strong></span><span title="Explicit relationships">◇ <strong>${graph.counts.relationship}</strong></span><span title="Messages received">↘ <strong>${messages}</strong></span><span title="Animals in current group">⌘ <strong>${groupMembers.length || 1}</strong></span></div>${observerLaboratoryLink("society", "Open social history in Laboratory")}</section>`;
 }
 
 function observerCommitmentVisualHtml(animal) {
@@ -12813,11 +13331,16 @@ function updateRealityPanelWork() {
   const terrainKey = `${sim.seed}:${landscapeDirtyState.versions.terrain}:${landscapeDirtyState.versions.water}:${landscapeDirtyState.versions.vegetation}`;
   if (realityTerrainCache.key !== terrainKey) {
     const terrain = { shortGrass: 0, longGrass: 0, shrubland: 0, woodland: 0, water: 0, soil: 0, sand: 0, rock: 0, mud: 0, snow: 0 };
+    const habitats = new Map(), landforms = new Map();
     for (const cell of sim.cells) {
+      const habitatName = cell.habitatLabel || habitatProfile(cell).label; habitats.set(habitatName, (habitats.get(habitatName) || 0) + 1);
+      const landformName = (cell.landform || "rolling-ground").replaceAll("-", " "); landforms.set(landformName, (landforms.get(landformName) || 0) + 1);
       if (cell.water) terrain.water += 1; else if (cell.terrainClass === "snow") terrain.snow += 1; else if (cell.rocky) terrain.rock += 1; else if (cell.sandy) terrain.sand += 1; else if (cell.wetland) terrain.mud += 1;
       else if (cell.woodland && cell.plantType === "tree") terrain.woodland += 1; else if (cell.woodland || cell.shrubland) terrain.shrubland += 1; else if ((cell.grassHeight || 0) > 0.68) terrain.longGrass += 1; else if (cell.biomass > 0.2) terrain.shortGrass += 1; else terrain.soil += 1;
     }
-    realityTerrainCache = { key: terrainKey, html: [item("Short grass", terrain.shortGrass), item("Long grass", terrain.longGrass), item("Shrubland", terrain.shrubland), item("Tree woodland", terrain.woodland), item("Water", terrain.water), item("Soil / dirt", terrain.soil), item("Sand", terrain.sand), item("Rock", terrain.rock), item("Wetland / mud", terrain.mud), item("Snow", terrain.snow)].join("") };
+    const habitatRows = [...habitats].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, 10).map(([name, count]) => item(name.replace(/^./, letter => letter.toUpperCase()), count));
+    const landformRows = [...landforms].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).map(([name, count]) => item(`${name.replace(/^./, letter => letter.toUpperCase())} cells`, count));
+    realityTerrainCache = { key: terrainKey, html: [item("Density scale", `1–${HABITAT_DENSITY_BANDS}`), ...landformRows, ...habitatRows, item("Water", terrain.water), item("Sand", terrain.sand), item("Rock", terrain.rock), item("Snow", terrain.snow)].join("") };
   }
   mutateHTML(ui.realityTerrain, realityTerrainCache.html);
   mutateHTML(ui.realityPopulation, [item("All organisms", alive.length), item("Herbivores", population.herbivores), item("Carnivores", population.carnivores), item("Omnivores", population.omnivores), item("Dependent babies", population.dependent), item("Juveniles", population.juvenile), item("Adults", population.adult), item("Old", population.old), item("Pregnant", population.pregnant)].join(""));

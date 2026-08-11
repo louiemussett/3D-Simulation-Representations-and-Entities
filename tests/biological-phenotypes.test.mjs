@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { SPECIES_IDS } from "../src/species-registry.js";
 import { BIOLOGICAL_PHENOTYPES, digestiveEfficiency, directVisionRangeMultiplier, foodWaterEfficiency, phenotypeSummary, thermalPerformance, validateBiologicalPhenotypes } from "../src/biological-phenotypes.js";
 
-test("all 22 species have valid authoritative biological phenotypes", () => {
-  assert.equal(Object.keys(BIOLOGICAL_PHENOTYPES).length, 22);
+test("every catalogue species has a valid authoritative biological phenotype", () => {
+  assert.equal(Object.keys(BIOLOGICAL_PHENOTYPES).length, SPECIES_IDS.length);
   assert.deepEqual(validateBiologicalPhenotypes(SPECIES_IDS), []);
 });
 
@@ -17,7 +17,7 @@ test("original species retain their defining sensory and digestive biology", () 
 
 test("special sensory experiences remain bounded and ecologically distinct", () => {
   assert.ok(BIOLOGICAL_PHENOTYPES["sunscale-ambusher"].senses.infrared > 1);
-  assert.ok(BIOLOGICAL_PHENOTYPES["shieldback-colony"].senses.vibration > 1);
+  assert.ok(BIOLOGICAL_PHENOTYPES["shieldback-colony"].morphology.armour > .7);
   assert.ok(BIOLOGICAL_PHENOTYPES["brush-nibbler"].senses.ultraviolet > 0);
   assert.ok(directVisionRangeMultiplier("shieldback-colony") < directVisionRangeMultiplier("highland-prowler"));
 });

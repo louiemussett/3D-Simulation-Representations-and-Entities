@@ -1,8 +1,9 @@
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
-export function pregnancyTermMultiplier(offspringCount) {
+export function pregnancyTermMultiplier(offspringCount, mode = "live-birth") {
   const count = Math.max(1, Math.floor(Number(offspringCount) || 1));
-  return 1.5 ** count;
+  const additional = count - 1;
+  return mode === "surface-eggs" ? Math.min(1.6, 1 + additional * .06) : Math.min(2, 1 + additional * .18);
 }
 
 export function pregnancyProgress(pregnant, gestationDays) {
@@ -20,13 +21,13 @@ export function pregnancyHormonalCycle(pregnant, gestationDays) {
   return { phase: "pre-labour", progesterone: .58, estrogen: 1, prolactin: .94, oxytocin: .72 };
 }
 
-export function pregnancyPhysiology(pregnant, gestationDays) {
+export function pregnancyPhysiology(pregnant, gestationDays, mode = "live-birth") {
   if (!pregnant) return { offspringCount: 0, progress: 0, termMultiplier: 1, weightMultiplier: 1, needMultiplier: 1, bodyLinearScale: 1, hormoneCycle: null };
   const offspringCount = Math.max(1, Math.floor(Number(pregnant.offspringCount) || 1));
   const progress = pregnancyProgress(pregnant, gestationDays);
-  const termMultiplier = pregnancyTermMultiplier(offspringCount);
+  const termMultiplier = pregnancyTermMultiplier(offspringCount, mode);
   const currentMultiplier = 1 + (termMultiplier - 1) * progress;
-  return { offspringCount, progress, termMultiplier, weightMultiplier: currentMultiplier, needMultiplier: currentMultiplier, bodyLinearScale: Math.cbrt(currentMultiplier), hormoneCycle: pregnancyHormonalCycle(pregnant, gestationDays) };
+  return { offspringCount, progress, termMultiplier, weightMultiplier: currentMultiplier, needMultiplier: currentMultiplier, bodyLinearScale: Math.cbrt(currentMultiplier), hormoneCycle: mode === "surface-eggs" ? null : pregnancyHormonalCycle(pregnant, gestationDays) };
 }
 
 export function chooseOffspringCount(litterRange, randomValue) {
@@ -85,6 +86,6 @@ export function migratePregnancyState(animal, species) {
   animal.pregnant.averageMaternalCondition = clamp(Number.isFinite(animal.pregnant.averageMaternalCondition) ? animal.pregnant.averageMaternalCondition : animal.pregnant.conditionAtConception, 0, 1);
   animal.pregnant.conditionSamples = Math.max(1, Math.floor(Number(animal.pregnant.conditionSamples) || 1));
   animal.pregnant.lossChecksThroughDay = Number.isFinite(Number(animal.pregnant.lossChecksThroughDay)) ? Math.max(-1, Math.floor(Number(animal.pregnant.lossChecksThroughDay))) : -1;
-  animal.pregnancyHormones = pregnancyHormonalCycle(animal.pregnant, species?.gestation);
+  animal.pregnancyHormones = species?.reproduction?.mode === "surface-eggs" ? null : pregnancyHormonalCycle(animal.pregnant, species?.gestation);
   return animal;
 }

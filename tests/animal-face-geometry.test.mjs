@@ -21,9 +21,9 @@ test("eye placement scales with its head and remains symmetric", () => {
   assert.deepEqual(right, { x: .16, y: .14, z: .16 });
 });
 
-test("all 20 added species attach both eyes to their actual head surface", () => {
+test("every real species attaches both eyes to its actual head surface", () => {
   const addedSpecies = SPECIES_IDS.filter(id => !["grazer", "hunter"].includes(id));
-  assert.equal(addedSpecies.length, 20);
+  assert.equal(addedSpecies.length, SPECIES_IDS.length - 2);
   for (const speciesId of addedSpecies) {
     const profile = speciesProfile(speciesId), small = ["tiny", "small"].includes(profile.sizeClass), large = profile.sizeClass === "large";
     const tapered = canHunt(speciesId);

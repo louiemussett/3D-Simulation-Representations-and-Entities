@@ -11,7 +11,7 @@ test("starting dependants and juveniles receive a mother caregiver and family gr
   const juvenile = animal("J1", "F", "juvenile", { age: 12 });
   const animals = [pregnant, other, baby, juvenile];
   const placed = [];
-  const assignments = assignStartingCareFamilies(animals, { grazer: { dependency: 10 } }, (child, mother) => { child.x = mother.x + 1; placed.push([child.id, mother.id]); });
+  const assignments = assignStartingCareFamilies(animals, { grazer: { dependency: 10, lactationDays: 8 } }, (child, mother) => { child.x = mother.x + 1; placed.push([child.id, mother.id]); });
   assert.equal(assignments.length, 2);
   assert.equal(baby.motherId, "F1");
   assert.deepEqual(baby.caregiverIds, ["F1"]);
@@ -27,7 +27,7 @@ test("starting dependants and juveniles receive a mother caregiver and family gr
 test("existing starting mothers are retained and offspring links are deduplicated", () => {
   const mother = animal("F1", "F", "adult", { offspringIds: ["B1"] });
   const baby = animal("B1", "M", "dependent", { age: 3, motherId: "F1", caregiverIds: ["F1"] });
-  assignStartingCareFamilies([mother, baby], { grazer: { dependency: 10 } });
+  assignStartingCareFamilies([mother, baby], { grazer: { dependency: 10, lactationDays: 8 } });
   assert.deepEqual(mother.offspringIds, ["B1"]);
   assert.deepEqual(baby.parentIds, ["F1"]);
   assert.equal(baby.dependentUntil, 10);
@@ -35,6 +35,6 @@ test("existing starting mothers are retained and offspring links are deduplicate
 
 test("a population without young is not changed", () => {
   const female = animal("F1", "F", "adult");
-  assert.deepEqual(assignStartingCareFamilies([female], { grazer: { dependency: 10 } }), []);
+  assert.deepEqual(assignStartingCareFamilies([female], { grazer: { dependency: 10, lactationDays: 8 } }), []);
   assert.equal(female.groupId, undefined);
 });

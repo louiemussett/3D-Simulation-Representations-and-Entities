@@ -65,7 +65,10 @@ export function updateTerritoryClaims(priorClaims = {}, owners = [], speciesById
     const remainedLocal = previous && distance(previous, owner.centroid) <= profile.territoryRadius * .35;
     const stableTicks = remainedLocal ? (previous.stableTicks || 0) + 1 : 1;
     const establishment = clamp(stableTicks / Math.max(1, context.establishmentTicks || 3), 0, 1);
-    const seasonal = context.breedingSeason ? profile.breedingMultiplier : 1;
+    const breedingSeason = context.breedingSpecies instanceof Set ? context.breedingSpecies.has(owner.speciesId)
+      : Array.isArray(context.breedingSpecies) ? context.breedingSpecies.includes(owner.speciesId)
+        : Boolean(context.breedingSeason);
+    const seasonal = breedingSeason ? profile.breedingMultiplier : 1;
     const resource = context.resourceConcentration ? 1 + (profile.resourceMultiplier - 1) * clamp(context.resourceConcentration, 0, 1) : 1;
     const radius = profile.territoryRadius * (1 + Math.log2(Math.max(1, owner.count)) * .18) * seasonal;
     const established = establishment >= 1;

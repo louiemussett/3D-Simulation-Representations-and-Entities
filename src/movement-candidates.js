@@ -1,8 +1,8 @@
-export function traversableNeighbourCells(world, entity, occupied, occupancyKey) {
+export function traversableNeighbourCells(world, entity, occupied, occupancyKey, canTraverse = () => true) {
   const origin = world?.lookup(entity.x, entity.z);
   if (!origin) return [];
   return origin.neighbours.filter((cell) =>
-    cell.waterDepth <= .45 && cell.plantType !== "tree" && !occupied?.has(occupancyKey(cell))
+    cell.waterDepth <= .45 && cell.plantType !== "tree" && !occupied?.has(occupancyKey(cell)) && canTraverse(cell)
   );
 }
 

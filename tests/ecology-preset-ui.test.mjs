@@ -9,9 +9,13 @@ test("world setup exposes calculated food webs, five quick levels and an exact s
   for (const id of ["ridge-hunter-web", "brush-fox-web", "shadow-stalker-web", "pack-breaker-web", "waterline-ambusher-web", "highland-prowler-web", "sunscale-ambusher-web", "full"]) assert.match(index, new RegExp(`option value="${id}"`));
   for (const percent of [20, 50, 100, 150, 200]) assert.match(index, new RegExp(`<option value="${percent}"`));
   assert.match(index, /id="ecology-population-scale"[^>]*min="20"[^>]*max="200"[^>]*step="10"/);
-  assert.match(index, /option value="ridge-hunter-web" selected/);
-  assert.match(index, /id="start-herbivores"[^>]*value="149"/);
-  assert.match(index, /id="start-carnivores"[^>]*value="1"/);
+  assert.match(index, /option value="compact" selected>Compact world — 6 species/);
+  assert.match(index, /option value="expanded">Standard world — 20 species/);
+  assert.match(index, /option value="full">Vast world — 26 species/);
+  assert.match(index, /no fixed 22-species target/);
+  assert.match(index, /id="start-herbivores"[^>]*value="34"/);
+  assert.match(index, /id="start-carnivores"[^>]*value="11"/);
+  assert.match(app, /ecologyPresetForWorldScale\(ui\.worldSize\.value\)/);
 });
 
 test("world setup persists population scale while exact species editing remains available", () => {

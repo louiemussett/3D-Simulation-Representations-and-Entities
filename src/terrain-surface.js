@@ -18,6 +18,22 @@ export function fanSurfaceHeight(surface, x, z) {
   return centre.y;
 }
 
+/** Samples a seven-vertex (centre + six corners) fan stored in one typed array. */
+export function indexedFanSurfaceHeight(positions, vertexOffset, x, z) {
+  if (!positions || !Number.isInteger(vertexOffset) || vertexOffset < 0) return 0;
+  const centreOffset = vertexOffset * 3, ax = positions[centreOffset], ay = positions[centreOffset + 1], az = positions[centreOffset + 2];
+  for (let index = 0; index < 6; index += 1) {
+    const bOffset = (vertexOffset + index + 1) * 3, cOffset = (vertexOffset + (index + 1) % 6 + 1) * 3;
+    const bx = positions[bOffset], by = positions[bOffset + 1], bz = positions[bOffset + 2], cx = positions[cOffset], cy = positions[cOffset + 1], cz = positions[cOffset + 2];
+    const denominator = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+    if (Math.abs(denominator) < 1e-9) continue;
+    const wa = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / denominator;
+    const wb = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / denominator, wc = 1 - wa - wb;
+    if (wa >= -1e-5 && wb >= -1e-5 && wc >= -1e-5) return wa * ay + wb * by + wc * cy;
+  }
+  return ay;
+}
+
 export function stableGroundSupport(x, z, heading, surfaceHeight, options = {}) {
   const footprint = Math.max(0.05, options.footprint || 0.42);
   const maxTilt = Math.max(0, options.maxTilt ?? Math.PI / 7);
@@ -38,17 +54,23 @@ export function stableGroundSupport(x, z, heading, surfaceHeight, options = {}) 
   // inner ring and reserve enough height for the bounded group tilt. Without
   // this, the terrain can cover the torso and leave only the top of its back.
   let radialSupport = centre;
-  const tiltAllowance = Math.sin(maxTilt);
   for (const radius of [footprint * .55, footprint]) {
     for (let index = 0; index < 16; index += 1) {
       const angle = (heading || 0) + index / 16 * Math.PI * 2;
       const sample = surfaceHeight(x + Math.cos(angle) * radius, z + Math.sin(angle) * radius);
-      radialSupport = Math.max(radialSupport, sample - radius * tiltAllowance);
+      const localAngle = angle - (heading || 0);
+      const forwardDistance = Math.cos(localAngle) * radius;
+      const sideDistance = Math.sin(localAngle) * radius;
+      // Correct for the actual bounded pitch and roll at this point rather
+      // than assuming every radial sample lies on the maximum uphill face.
+      // This makes the resulting support plane clear all sampled terrain.
+      radialSupport = Math.max(radialSupport, sample + forwardDistance * Math.sin(pitch) + sideDistance * Math.sin(roll));
     }
   }
   const completeSupport = Math.max(requestedSupport, radialSupport);
   // Do not let a single cliff-side sample hoist the animal far above its
   // centre point. Traversability owns whether the animal may enter that cell.
-  const supportHeight = Math.min(completeSupport, centre + (options.maxLift ?? footprint * Math.tan(maxTilt) + 0.08));
+  const liftLimit = options.avoidClipping ? Infinity : options.maxLift ?? footprint * Math.tan(maxTilt) + 0.08;
+  const supportHeight = Math.min(completeSupport, centre + liftLimit);
   return { height: supportHeight, pitch, roll, rawPitch, rawRoll };
 }

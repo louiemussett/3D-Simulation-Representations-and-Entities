@@ -11,7 +11,7 @@ export function ecologyPreset(name = "opening") {
   const presets = {
     opening: { seeds: 20, minutes: 60 },
     population: { seeds: 12, minutes: 30 * 24 * 60 },
-    generational: { seeds: 8, minutes: 180 * 24 * 60 }
+    generational: { seeds: 8, minutes: 2 * 365 * 24 * 60 }
   };
   if (!presets[name]) throw new Error(`Unknown ecology preset: ${name}`);
   return { name, ...presets[name] };

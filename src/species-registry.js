@@ -1,43 +1,95 @@
 import { BIOLOGICAL_PHENOTYPES, biologicalPhenotype } from "./biological-phenotypes.js";
+import { LIFE_HISTORY, legacySpeciesTiming, lifeHistoryFor } from "./life-history-registry.js";
 
 const freeze = (value) => Object.freeze(value);
 
 const base = {
-  maxAge: 360, matureAge: 80, oldAge: 275, gestation: 65, dependency: 45, litter: [1, 2], speed: 1,
-  vision: 8, smell: 6, hearing: 7, energyCapacity: 130, enduranceMultiplier: 1, reproductionEnergy: 70,
+  speed: 1, vision: 8, smell: 6, hearing: 7, energyCapacity: 130, enduranceMultiplier: 1, reproductionEnergy: 70,
   femaleCriticalFat: 11, hungerRate: .16, thirstRate: .65, maternalCare: .82, herdTendency: .35, care: "maternal"
 };
 
-const entry = (id, values) => freeze({ ...base, id, symbol: values.symbol, ...values, biology: biologicalPhenotype(id), diet: values.guild === "herbivore" ? "plants" : values.guild === "omnivore" ? "mixed" : "meat" });
+const visualDesign = (bodyShape, bodyScale, headShape, headScale, headOffset, features = []) => freeze({
+  bodyShape, bodyScale: freeze(bodyScale), headShape, headScale: freeze(headScale), headOffset: freeze(headOffset),
+  features: freeze(features.map((feature) => freeze(feature)))
+});
+
+export const SPECIES_VISUAL_DESIGNS = freeze({
+  grazer: null,
+  hunter: null,
+  "meadow-nibbler": visualDesign("ellipsoid", [.62, .42, .72], "round", [.31, .33, .3], [0, .34, .48], [{ kind: "long-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
+  "great-plains-grazer": visualDesign("barrel", [.94, .62, 1.02], "block", [.48, .43, .48], [0, .5, .65], [{ kind: "shoulder-hump", attach: "body" }, { kind: "paired-horns", attach: "head" }]),
+  "woodland-browser": visualDesign("long", [.76, .58, 1.12], "long", [.34, .32, .5], [0, .55, .72], [{ kind: "broad-antlers", attach: "head" }, { kind: "large-ears", attach: "head" }]),
+  "brush-fox": visualDesign("slender", [.62, .34, .9], "tapered", [.34, .38, .4], [0, .35, .58], [{ kind: "pointed-ears", attach: "head" }, { kind: "bushy-tail", attach: "body" }]),
+  "shadow-stalker": visualDesign("compact", [.72, .44, .82], "round", [.39, .38, .38], [0, .42, .55], [{ kind: "tufted-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
+  "great-omnivore": visualDesign("barrel", [.98, .7, .94], "block", [.48, .45, .46], [0, .55, .62], [{ kind: "round-ears", attach: "head" }, { kind: "shoulder-hump", attach: "body" }]),
+  "dryland-runner": visualDesign("slender", [.62, .42, .98], "long", [.31, .32, .43], [0, .48, .64], [{ kind: "pronged-horns", attach: "head" }, { kind: "large-ears", attach: "head" }]),
+  "highland-grazer": visualDesign("barrel", [.76, .5, .88], "block", [.38, .36, .4], [0, .48, .58], [{ kind: "swept-horns", attach: "head" }, { kind: "short-tail", attach: "body" }]),
+  "armoured-browser": visualDesign("barrel", [1, .62, 1.08], "low", [.48, .36, .56], [0, .42, .72], [{ kind: "nasal-horns", attach: "head" }, { kind: "back-ridge", attach: "body" }]),
+  "pack-breaker": visualDesign("sloped", [.72, .5, .92], "block", [.42, .4, .46], [0, .46, .62], [{ kind: "round-ears", attach: "head" }, { kind: "shoulder-hump", attach: "body" }, { kind: "short-tail", attach: "body" }]),
+  "carrion-runner": visualDesign("teardrop", [.68, .44, .74], "small", [.27, .3, .3], [0, .46, .48], [{ kind: "folded-wings", attach: "body" }, { kind: "hooked-beak", attach: "head" }]),
+  "waterline-grazer": visualDesign("barrel", [.78, .5, .84], "block", [.42, .38, .42], [0, .42, .56], [{ kind: "small-ears", attach: "head" }]),
+  "brush-nibbler": visualDesign("slender", [.58, .38, .76], "round", [.29, .31, .29], [0, .35, .49], [{ kind: "long-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
+  "waterline-ambusher": visualDesign("low-long", [.82, .3, 1.28], "low", [.42, .25, .62], [0, .28, .86], [{ kind: "armoured-ridge", attach: "body" }, { kind: "long-tail", attach: "body" }]),
+  "northern-shaggy-grazer": visualDesign("barrel", [.92, .66, 1], "block", [.46, .43, .46], [0, .52, .64], [{ kind: "wide-horns", attach: "head" }, { kind: "shaggy-mantle", attach: "body" }]),
+  "highland-prowler": visualDesign("long", [.68, .42, .96], "round", [.38, .36, .39], [0, .42, .63], [{ kind: "round-ears", attach: "head" }, { kind: "long-tail", attach: "body" }]),
+  "little-opportunist": visualDesign("compact", [.66, .42, .76], "tapered", [.34, .35, .39], [0, .39, .52], [{ kind: "round-ears", attach: "head" }, { kind: "ringed-tail", attach: "body" }]),
+  "cold-country-scavenger": visualDesign("teardrop", [.72, .46, .8], "small", [.29, .31, .32], [0, .48, .52], [{ kind: "folded-wings", attach: "body" }, { kind: "hooked-beak", attach: "head" }, { kind: "head-crest", attach: "head" }]),
+  "sunscale-ambusher": visualDesign("coil", [.82, .24, .82], "wedge", [.3, .22, .42], [0, .24, .58], [{ kind: "heat-pits", attach: "head" }]),
+  "shieldback-colony": visualDesign("shell", [.9, .48, 1], "block", [.34, .28, .4], [0, .31, .66], [{ kind: "domed-shell", attach: "body" }]),
+  "wild-boar": visualDesign("barrel", [.76, .48, .9], "wedge", [.38, .34, .48], [0, .4, .62], [{ kind: "large-ears", attach: "head" }, { kind: "tusks", attach: "head" }, { kind: "bristle-ridge", attach: "body" }, { kind: "short-tail", attach: "body" }]),
+  "african-elephant": visualDesign("barrel", [1.08, .72, 1.08], "block", [.58, .52, .54], [0, .6, .74], [{ kind: "large-ears", attach: "head" }, { kind: "trunk", attach: "head" }, { kind: "tusks", attach: "head" }]),
+  dromedary: visualDesign("long", [.76, .62, 1.08], "long", [.34, .35, .52], [0, .72, .75], [{ kind: "single-hump", attach: "body" }, { kind: "small-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
+  "common-ostrich": visualDesign("teardrop", [.64, .72, .72], "small", [.24, .25, .3], [0, 1.18, .54], [{ kind: "neck-column", attach: "body" }, { kind: "folded-wings", attach: "body" }, { kind: "hooked-beak", attach: "head" }])
+});
+
+const entry = (id, values) => {
+  const lifeHistory = lifeHistoryFor(id);
+  return freeze({
+    ...base,
+    id,
+    symbol: values.symbol,
+    ...values,
+    ...legacySpeciesTiming(id),
+    lifeHistory,
+    reproduction: lifeHistory.reproduction,
+    biology: biologicalPhenotype(id),
+    visual: SPECIES_VISUAL_DESIGNS[id],
+    diet: values.guild === "herbivore" ? "plants" : values.guild === "omnivore" ? "mixed" : "meat"
+  });
+};
 
 export const SPECIES = freeze({
-  grazer: entry("grazer", { label: "Valley Grazer", symbol: "VG", guild: "herbivore", feeding: "grass", sizeClass: "medium", adultMass: 65, maxAge: 420, matureAge: 80, oldAge: 310, gestation: 60, dependency: 48, litter: [1, 1], speed: 1, vision: 8, smell: 5, hearing: 7, energyCapacity: 120, enduranceMultiplier: 1, reproductionEnergy: 70, femaleCriticalFat: 12, hungerRate: .18, thirstRate: .65, maternalCare: .9, herdTendency: .65, social: "stable-herd", habitat: "grassland", colour: 0xe6bc52, enabledByDefault: true, defaultPopulation: 18 }),
-  hunter: entry("hunter", { label: "Ridge Hunter", symbol: "RH", guild: "carnivore", feeding: "prey-carrion", sizeClass: "medium", adultMass: 42, maxAge: 360, matureAge: 95, oldAge: 275, gestation: 90, dependency: 65, litter: [2, 4], speed: 1, vision: 11, smell: 8, hearing: 7, energyCapacity: 360, enduranceMultiplier: 3, reproductionEnergy: 78, femaleCriticalFat: 10, hungerRate: .045, thirstRate: .65, maternalCare: .72, herdTendency: .22, social: "pack", hunting: "pursuit", preySizes: ["small", "medium"], habitat: "open", colour: 0xd96cff, enabledByDefault: true, defaultPopulation: 4 }),
-  "meadow-nibbler": entry("meadow-nibbler", { label: "Meadow Nibbler", symbol: "MN", guild: "herbivore", feeding: "grass", sizeClass: "tiny", adultMass: 4, maxAge: 120, matureAge: 20, oldAge: 85, gestation: 18, dependency: 14, litter: [3, 6], speed: 1.12, vision: 8, hearing: 10, energyCapacity: 55, hungerRate: .26, thirstRate: .52, herdTendency: .4, social: "colony", habitat: "cover-edge", colour: 0x66c98d, enabledByDefault: true, defaultPopulation: 12 }),
-  "great-plains-grazer": entry("great-plains-grazer", { label: "Great Plains Grazer", symbol: "PG", guild: "herbivore", feeding: "grass", sizeClass: "large", adultMass: 390, maxAge: 620, matureAge: 130, oldAge: 470, gestation: 110, dependency: 75, litter: [1, 1], speed: .78, energyCapacity: 250, hungerRate: .24, thirstRate: .82, maternalCare: .9, herdTendency: .85, social: "large-herd", habitat: "long-grass", defence: "mass", colour: 0x8b6949, enabledByDefault: true, defaultPopulation: 6 }),
-  "woodland-browser": entry("woodland-browser", { label: "Woodland Browser", symbol: "WB", guild: "herbivore", feeding: "shrub", sizeClass: "medium", adultMass: 54, maxAge: 440, matureAge: 88, oldAge: 325, gestation: 68, dependency: 62, litter: [1, 2], speed: .94, energyCapacity: 125, hungerRate: .16, thirstRate: .54, maternalCare: .96, herdTendency: .18, social: "family", habitat: "woodland", defence: "conceal", colour: 0x238a82, enabledByDefault: true, defaultPopulation: 7 }),
-  "brush-fox": entry("brush-fox", { label: "Brush Fox", symbol: "BF", guild: "carnivore", feeding: "prey-carrion", sizeClass: "small", adultMass: 9, maxAge: 210, matureAge: 42, oldAge: 155, gestation: 38, dependency: 35, litter: [2, 5], speed: 1.18, vision: 10, smell: 10, hearing: 11, energyCapacity: 155, enduranceMultiplier: 1.25, hungerRate: .08, thirstRate: .5, herdTendency: .08, social: "pair", hunting: "small-prey", preySizes: ["tiny", "small"], habitat: "cover-edge", colour: 0xc86d36, enabledByDefault: true, defaultPopulation: 4 }),
-  "shadow-stalker": entry("shadow-stalker", { label: "Shadow Stalker", symbol: "SS", guild: "carnivore", feeding: "prey-carrion", sizeClass: "medium", adultMass: 47, maxAge: 410, matureAge: 102, oldAge: 305, gestation: 82, dependency: 78, litter: [1, 3], speed: 1.16, vision: 12, smell: 7, hearing: 10, energyCapacity: 390, enduranceMultiplier: .72, hungerRate: .04, thirstRate: .5, maternalCare: .98, herdTendency: .03, social: "solitary", hunting: "ambush", preySizes: ["tiny", "small", "medium"], habitat: "woodland", colour: 0x5a365f, enabledByDefault: true, defaultPopulation: 3 }),
-  "great-omnivore": entry("great-omnivore", { label: "Great Omnivore", symbol: "GO", guild: "omnivore", feeding: "mixed", sizeClass: "large", adultMass: 260, maxAge: 650, matureAge: 140, oldAge: 490, gestation: 105, dependency: 90, litter: [1, 2], speed: .82, smell: 11, energyCapacity: 420, enduranceMultiplier: 1.2, hungerRate: .075, thirstRate: .75, maternalCare: .95, herdTendency: .02, social: "solitary", hunting: "opportunist", preySizes: ["tiny", "small"], habitat: "woodland-edge", defence: "mass", colour: 0x76513b, enabledByDefault: true, defaultPopulation: 2 }),
-  "dryland-runner": entry("dryland-runner", { label: "Dryland Runner", symbol: "DR", guild: "herbivore", feeding: "grass", sizeClass: "small", adultMass: 32, speed: 1.28, enduranceMultiplier: 1.7, thirstRate: .4, herdTendency: .65, social: "fluid-herd", habitat: "arid", colour: 0x3568c8, enabledByDefault: true, defaultPopulation: 7 }),
-  "highland-grazer": entry("highland-grazer", { label: "Highland Grazer", symbol: "HG", guild: "herbivore", feeding: "grass", sizeClass: "medium", adultMass: 72, speed: .9, thirstRate: .58, herdTendency: .55, social: "seasonal-herd", habitat: "alpine", coldAdapted: true, colour: 0x9ba7b2, enabledByDefault: false, defaultPopulation: 5 }),
-  "armoured-browser": entry("armoured-browser", { label: "Armoured Browser", symbol: "AB", guild: "herbivore", feeding: "mixed-plants", sizeClass: "large", adultMass: 520, maxAge: 720, matureAge: 155, oldAge: 540, gestation: 135, dependency: 95, litter: [1, 1], speed: .72, energyCapacity: 290, hungerRate: .22, thirstRate: .95, herdTendency: .05, social: "solitary", habitat: "scrub", defence: "armoured", colour: 0x747c75, enabledByDefault: true, defaultPopulation: 3 }),
-  "pack-breaker": entry("pack-breaker", { label: "Pack Breaker", symbol: "PB", guild: "carnivore", feeding: "prey-carrion", sizeClass: "large", adultMass: 92, speed: .98, energyCapacity: 520, enduranceMultiplier: 2.2, hungerRate: .06, thirstRate: .72, herdTendency: .7, social: "pack", hunting: "large-prey", preySizes: ["large", "giant"], habitat: "open", colour: 0x8b3344, enabledByDefault: true, defaultPopulation: 3 }),
-  "carrion-runner": entry("carrion-runner", { label: "Carrion Runner", symbol: "CR", guild: "scavenger", feeding: "carrion", sizeClass: "small", adultMass: 18, speed: 1.12, smell: 13, energyCapacity: 210, hungerRate: .065, thirstRate: .5, herdTendency: .35, social: "feeding-groups", habitat: "open", colour: 0xc49a4a, enabledByDefault: true, defaultPopulation: 3 }),
-  "waterline-grazer": entry("waterline-grazer", { label: "Waterline Grazer", symbol: "WG", guild: "herbivore", feeding: "grass", sizeClass: "medium", adultMass: 82, speed: .86, thirstRate: 1.05, herdTendency: .5, social: "small-herd", habitat: "riparian", colour: 0x4c9a9d, enabledByDefault: false, defaultPopulation: 5 }),
-  "brush-nibbler": entry("brush-nibbler", { label: "Brush Nibbler", symbol: "BN", guild: "herbivore", feeding: "shrub", sizeClass: "tiny", adultMass: 5, maxAge: 135, matureAge: 23, oldAge: 95, gestation: 21, dependency: 16, litter: [2, 5], speed: 1.05, hearing: 10, hungerRate: .24, thirstRate: .42, herdTendency: .08, social: "pair", habitat: "woodland", defence: "conceal", colour: 0x71a85b, enabledByDefault: false, defaultPopulation: 8 }),
-  "waterline-ambusher": entry("waterline-ambusher", { label: "Waterline Ambusher", symbol: "WA", guild: "carnivore", feeding: "prey-carrion", sizeClass: "large", adultMass: 78, speed: 1.05, energyCapacity: 430, enduranceMultiplier: .8, hearing: 9, hungerRate: .055, herdTendency: .02, social: "territorial", hunting: "water-ambush", preySizes: ["small", "medium"], habitat: "riparian", colour: 0x345d63, enabledByDefault: false, defaultPopulation: 2 }),
-  "northern-shaggy-grazer": entry("northern-shaggy-grazer", { label: "Northern Shaggy Grazer", symbol: "NG", guild: "herbivore", feeding: "mixed-plants", sizeClass: "large", adultMass: 430, speed: .74, energyCapacity: 270, hungerRate: .21, thirstRate: .58, herdTendency: .8, social: "seasonal-herd", habitat: "boreal", coldAdapted: true, colour: 0x685c55, enabledByDefault: false, defaultPopulation: 5 }),
-  "highland-prowler": entry("highland-prowler", { label: "Highland Prowler", symbol: "HP", guild: "carnivore", feeding: "prey-carrion", sizeClass: "medium", adultMass: 51, speed: 1.08, energyCapacity: 370, enduranceMultiplier: 1.15, hungerRate: .05, herdTendency: .02, social: "solitary", hunting: "terrain-ambush", preySizes: ["small", "medium"], habitat: "alpine", coldAdapted: true, colour: 0x697b91, enabledByDefault: false, defaultPopulation: 2 }),
-  "little-opportunist": entry("little-opportunist", { label: "Little Opportunist", symbol: "LO", guild: "omnivore", feeding: "mixed", sizeClass: "small", adultMass: 11, speed: 1.03, smell: 10, energyCapacity: 160, hungerRate: .09, thirstRate: .48, herdTendency: .12, social: "family", hunting: "opportunist", preySizes: ["tiny"], habitat: "cover-edge", colour: 0x9a6f59, enabledByDefault: false, defaultPopulation: 3 }),
-  "cold-country-scavenger": entry("cold-country-scavenger", { label: "Cold-country Scavenger", symbol: "CS", guild: "scavenger", feeding: "carrion", sizeClass: "medium", adultMass: 36, speed: .92, smell: 12, energyCapacity: 290, enduranceMultiplier: 1.4, hungerRate: .045, thirstRate: .42, herdTendency: .02, social: "solitary", habitat: "boreal", coldAdapted: true, colour: 0x8893a0, enabledByDefault: false, defaultPopulation: 2 }),
-  "sunscale-ambusher": entry("sunscale-ambusher", { label: "Sunscale Ambusher", symbol: "SA", guild: "carnivore", feeding: "prey", sizeClass: "small", adultMass: 13, maxAge: 330, matureAge: 70, oldAge: 250, gestation: 45, dependency: 10, litter: [3, 7], speed: 1.16, vision: 6, smell: 10, hearing: 5, energyCapacity: 245, enduranceMultiplier: .45, hungerRate: .025, thirstRate: .3, maternalCare: .45, herdTendency: 0, social: "territorial", hunting: "thermal-ambush", preySizes: ["tiny", "small"], habitat: "warm-open", colour: 0xd97732, enabledByDefault: false, defaultPopulation: 2 }),
-  "shieldback-colony": entry("shieldback-colony", { label: "Shieldback Colony", symbol: "SC", guild: "herbivore", feeding: "mixed-plants", sizeClass: "small", adultMass: 16, maxAge: 300, matureAge: 55, oldAge: 225, gestation: 40, dependency: 24, litter: [3, 6], speed: .72, vision: 4, smell: 8, hearing: 5, energyCapacity: 105, enduranceMultiplier: .75, hungerRate: .11, thirstRate: .48, maternalCare: .9, herdTendency: .95, social: "stable-colony", habitat: "cover-edge", defence: "shell", colour: 0x3f8f72, enabledByDefault: false, defaultPopulation: 8 })
+  grazer: entry("grazer", { label: "Valley Grazer", generic: true, realLifeBasis: "average deer", symbol: "VG", guild: "herbivore", feeding: "grass", sizeClass: "medium", adultMass: 65, speed: 1, vision: 8, smell: 5, hearing: 7, energyCapacity: 120, enduranceMultiplier: 1, reproductionEnergy: 70, femaleCriticalFat: 12, hungerRate: .18, thirstRate: .65, maternalCare: .9, herdTendency: .65, social: "stable-herd", habitat: "grassland", colour: 0xe6bc52, enabledByDefault: true, defaultPopulation: 18 }),
+  hunter: entry("hunter", { label: "Ridge Hunter", generic: true, realLifeBasis: "average grey wolf", symbol: "RH", guild: "carnivore", feeding: "prey-carrion", sizeClass: "medium", adultMass: 42, speed: 1, vision: 11, smell: 8, hearing: 7, energyCapacity: 360, enduranceMultiplier: 3, reproductionEnergy: 78, femaleCriticalFat: 10, hungerRate: .045, thirstRate: .65, maternalCare: .72, herdTendency: .22, social: "pack", hunting: "pursuit", preySizes: ["small", "medium"], habitat: "open", colour: 0xd96cff, enabledByDefault: true, defaultPopulation: 4 }),
+  "meadow-nibbler": entry("meadow-nibbler", { label: "European Rabbit", scientificName: "Oryctolagus cuniculus", symbol: "ER", guild: "herbivore", feeding: "grass", sizeClass: "tiny", adultMass: 4, speed: 1.12, vision: 8, hearing: 10, energyCapacity: 55, hungerRate: .26, thirstRate: .52, herdTendency: .4, social: "colony", habitat: "cover-edge", colour: 0x8d795e, enabledByDefault: true, defaultPopulation: 12 }),
+  "great-plains-grazer": entry("great-plains-grazer", { label: "American Bison", scientificName: "Bison bison", symbol: "BI", guild: "herbivore", feeding: "grass", sizeClass: "large", adultMass: 500, speed: .78, energyCapacity: 250, hungerRate: .24, thirstRate: .82, maternalCare: .9, herdTendency: .85, social: "large-herd", habitat: "long-grass", defence: "mass", colour: 0x6f4d32, enabledByDefault: true, defaultPopulation: 6 }),
+  "woodland-browser": entry("woodland-browser", { label: "Moose", scientificName: "Alces alces", symbol: "MO", guild: "herbivore", feeding: "shrub", sizeClass: "large", adultMass: 450, speed: .94, energyCapacity: 220, hungerRate: .19, thirstRate: .65, maternalCare: .96, herdTendency: .18, social: "family", habitat: "woodland", defence: "mass", colour: 0x66513d, enabledByDefault: true, defaultPopulation: 7 }),
+  "brush-fox": entry("brush-fox", { label: "Red Fox", scientificName: "Vulpes vulpes", symbol: "RF", guild: "carnivore", feeding: "prey-carrion", sizeClass: "small", adultMass: 9, speed: 1.18, vision: 10, smell: 10, hearing: 11, energyCapacity: 155, enduranceMultiplier: 1.25, hungerRate: .08, thirstRate: .5, herdTendency: .08, social: "pair", hunting: "small-prey", preySizes: ["tiny", "small"], habitat: "cover-edge", colour: 0xc86d36, enabledByDefault: true, defaultPopulation: 4 }),
+  "shadow-stalker": entry("shadow-stalker", { label: "Eurasian Lynx", scientificName: "Lynx lynx", symbol: "EL", guild: "carnivore", feeding: "prey-carrion", sizeClass: "medium", adultMass: 22, speed: 1.16, vision: 12, smell: 7, hearing: 10, energyCapacity: 300, enduranceMultiplier: .72, hungerRate: .05, thirstRate: .5, maternalCare: .98, herdTendency: .03, social: "solitary", hunting: "ambush", preySizes: ["tiny", "small", "medium"], habitat: "woodland", colour: 0x9b7655, enabledByDefault: true, defaultPopulation: 3 }),
+  "great-omnivore": entry("great-omnivore", { label: "Brown Bear", scientificName: "Ursus arctos", symbol: "BB", guild: "omnivore", feeding: "mixed", sizeClass: "large", adultMass: 260, speed: .82, smell: 11, energyCapacity: 420, enduranceMultiplier: 1.2, hungerRate: .075, thirstRate: .75, maternalCare: .95, herdTendency: .02, social: "solitary", hunting: "opportunist", preySizes: ["tiny", "small", "medium"], habitat: "woodland-edge", defence: "mass", colour: 0x76513b, enabledByDefault: true, defaultPopulation: 2 }),
+  "dryland-runner": entry("dryland-runner", { label: "Pronghorn", scientificName: "Antilocapra americana", symbol: "PR", guild: "herbivore", feeding: "grass", sizeClass: "medium", adultMass: 50, speed: 1.28, enduranceMultiplier: 1.7, thirstRate: .4, herdTendency: .65, social: "fluid-herd", habitat: "arid", colour: 0xc89b64, enabledByDefault: true, defaultPopulation: 7 }),
+  "highland-grazer": entry("highland-grazer", { label: "Alpine Ibex", scientificName: "Capra ibex", symbol: "AI", guild: "herbivore", feeding: "grass", sizeClass: "medium", adultMass: 72, speed: .9, thirstRate: .58, herdTendency: .55, social: "seasonal-herd", habitat: "alpine", coldAdapted: true, colour: 0x8d7e6b, enabledByDefault: false, defaultPopulation: 5 }),
+  "armoured-browser": entry("armoured-browser", { label: "Black Rhinoceros", scientificName: "Diceros bicornis", symbol: "BR", guild: "herbivore", feeding: "mixed-plants", sizeClass: "large", adultMass: 900, speed: .72, energyCapacity: 340, hungerRate: .22, thirstRate: .95, herdTendency: .05, social: "solitary", habitat: "scrub", defence: "armoured", colour: 0x747c75, enabledByDefault: true, defaultPopulation: 3 }),
+  "pack-breaker": entry("pack-breaker", { label: "Spotted Hyena", scientificName: "Crocuta crocuta", symbol: "SH", guild: "carnivore", feeding: "prey-carrion", sizeClass: "large", adultMass: 65, speed: .98, energyCapacity: 520, enduranceMultiplier: 2.2, hungerRate: .06, thirstRate: .72, herdTendency: .7, social: "pack", hunting: "large-prey", preySizes: ["large", "giant"], habitat: "open", colour: 0x9a7446, enabledByDefault: true, defaultPopulation: 3 }),
+  "carrion-runner": entry("carrion-runner", { label: "Turkey Vulture", scientificName: "Cathartes aura", symbol: "TV", guild: "scavenger", feeding: "carrion", sizeClass: "small", adultMass: 2, speed: 1.12, smell: 13, energyCapacity: 95, hungerRate: .065, thirstRate: .5, herdTendency: .35, social: "feeding-groups", habitat: "open", colour: 0x3f332e, enabledByDefault: true, defaultPopulation: 3 }),
+  "waterline-grazer": entry("waterline-grazer", { label: "Capybara", scientificName: "Hydrochoerus hydrochaeris", symbol: "CA", guild: "herbivore", feeding: "grass", sizeClass: "medium", adultMass: 55, speed: .86, thirstRate: 1.05, herdTendency: .5, social: "small-herd", habitat: "riparian", colour: 0x80664c, enabledByDefault: false, defaultPopulation: 5 }),
+  "brush-nibbler": entry("brush-nibbler", { label: "Snowshoe Hare", scientificName: "Lepus americanus", symbol: "SN", guild: "herbivore", feeding: "shrub", sizeClass: "tiny", adultMass: 2, speed: 1.05, hearing: 10, hungerRate: .24, thirstRate: .42, herdTendency: .08, social: "solitary", habitat: "woodland", defence: "conceal", colour: 0xb6aa95, enabledByDefault: false, defaultPopulation: 8 }),
+  "waterline-ambusher": entry("waterline-ambusher", { label: "Nile Crocodile", scientificName: "Crocodylus niloticus", symbol: "NC", guild: "carnivore", feeding: "prey-carrion", sizeClass: "large", adultMass: 350, speed: 1.05, energyCapacity: 500, enduranceMultiplier: .8, hearing: 9, hungerRate: .055, herdTendency: .02, social: "territorial", hunting: "water-ambush", preySizes: ["small", "medium", "large"], habitat: "riparian", colour: 0x42523a, enabledByDefault: false, defaultPopulation: 2 }),
+  "northern-shaggy-grazer": entry("northern-shaggy-grazer", { label: "Musk Ox", scientificName: "Ovibos moschatus", symbol: "MX", guild: "herbivore", feeding: "mixed-plants", sizeClass: "large", adultMass: 285, speed: .74, energyCapacity: 270, hungerRate: .21, thirstRate: .58, herdTendency: .8, social: "seasonal-herd", habitat: "boreal", coldAdapted: true, colour: 0x4f4037, enabledByDefault: false, defaultPopulation: 5 }),
+  "highland-prowler": entry("highland-prowler", { label: "Snow Leopard", scientificName: "Panthera uncia", symbol: "SL", guild: "carnivore", feeding: "prey-carrion", sizeClass: "medium", adultMass: 40, speed: 1.08, energyCapacity: 370, enduranceMultiplier: 1.15, hungerRate: .05, herdTendency: .02, social: "solitary", hunting: "terrain-ambush", preySizes: ["small", "medium"], habitat: "alpine", coldAdapted: true, colour: 0xb5b7b0, enabledByDefault: false, defaultPopulation: 2 }),
+  "little-opportunist": entry("little-opportunist", { label: "Raccoon", scientificName: "Procyon lotor", symbol: "RA", guild: "omnivore", feeding: "mixed", sizeClass: "small", adultMass: 8, speed: 1.03, smell: 10, energyCapacity: 160, hungerRate: .09, thirstRate: .48, herdTendency: .12, social: "family", hunting: "opportunist", preySizes: ["tiny"], habitat: "cover-edge", colour: 0x77736d, enabledByDefault: false, defaultPopulation: 3 }),
+  "cold-country-scavenger": entry("cold-country-scavenger", { label: "Bearded Vulture", scientificName: "Gypaetus barbatus", symbol: "BV", guild: "scavenger", feeding: "carrion", sizeClass: "small", adultMass: 6, speed: .92, smell: 12, energyCapacity: 170, enduranceMultiplier: 1.4, hungerRate: .045, thirstRate: .42, herdTendency: .02, social: "pair", habitat: "alpine", coldAdapted: true, colour: 0x8e7058, enabledByDefault: false, defaultPopulation: 2 }),
+  "sunscale-ambusher": entry("sunscale-ambusher", { label: "Ball Python", scientificName: "Python regius", symbol: "BP", guild: "carnivore", feeding: "prey", sizeClass: "small", adultMass: 2, speed: .72, vision: 6, smell: 10, hearing: 5, energyCapacity: 150, enduranceMultiplier: .45, hungerRate: .025, thirstRate: .3, maternalCare: .45, herdTendency: 0, social: "territorial", hunting: "thermal-ambush", preySizes: ["tiny", "small"], habitat: "warm-open", colour: 0x9b6b35, enabledByDefault: false, defaultPopulation: 2 }),
+  "shieldback-colony": entry("shieldback-colony", { label: "African Spurred Tortoise", scientificName: "Centrochelys sulcata", symbol: "AT", guild: "herbivore", feeding: "mixed-plants", sizeClass: "medium", adultMass: 70, speed: .45, vision: 4, smell: 8, hearing: 5, energyCapacity: 150, enduranceMultiplier: .75, hungerRate: .11, thirstRate: .48, maternalCare: 0, herdTendency: .08, social: "solitary", habitat: "arid", defence: "shell", colour: 0x9a855a, enabledByDefault: false, defaultPopulation: 4 }),
+  "wild-boar": entry("wild-boar", { label: "Wild Boar", scientificName: "Sus scrofa", symbol: "WB", guild: "omnivore", feeding: "mixed", sizeClass: "medium", adultMass: 90, speed: 1.02, vision: 7, smell: 12, hearing: 9, energyCapacity: 240, enduranceMultiplier: 1.05, hungerRate: .085, thirstRate: .72, maternalCare: .9, herdTendency: .55, social: "sounder", hunting: "opportunist", preySizes: ["tiny"], habitat: "woodland-edge", defence: "tusks", colour: 0x765b48, enabledByDefault: false, defaultPopulation: 5 }),
+  "african-elephant": entry("african-elephant", { label: "African Bush Elephant", scientificName: "Loxodonta africana", symbol: "AE", guild: "herbivore", feeding: "mixed-plants", sizeClass: "large", adultMass: 4500, speed: .58, vision: 7, smell: 13, hearing: 11, energyCapacity: 760, enduranceMultiplier: 1.2, hungerRate: .2, thirstRate: 1.25, maternalCare: 1, herdTendency: .88, social: "matriarchal-herd", habitat: "open-woodland", defence: "mass", colour: 0x85847d, enabledByDefault: false, defaultPopulation: 3 }),
+  dromedary: entry("dromedary", { label: "Dromedary", scientificName: "Camelus dromedarius", symbol: "DC", guild: "herbivore", feeding: "mixed-plants", sizeClass: "large", adultMass: 500, speed: .82, vision: 9, smell: 9, hearing: 8, energyCapacity: 360, enduranceMultiplier: 1.65, hungerRate: .14, thirstRate: .2, maternalCare: .92, herdTendency: .6, social: "fluid-herd", habitat: "arid", defence: "mass", colour: 0xb68b5f, enabledByDefault: false, defaultPopulation: 5 }),
+  "common-ostrich": entry("common-ostrich", { label: "Common Ostrich", scientificName: "Struthio camelus", symbol: "OS", guild: "herbivore", feeding: "mixed-plants", sizeClass: "large", adultMass: 110, speed: 1.38, vision: 13, smell: 5, hearing: 8, energyCapacity: 250, enduranceMultiplier: 1.4, hungerRate: .13, thirstRate: .42, maternalCare: .72, herdTendency: .48, social: "loose-flock", habitat: "open-arid", defence: "kick", colour: 0x403a35, enabledByDefault: false, defaultPopulation: 5 })
 });
 
 export const SPECIES_IDS = freeze(Object.keys(SPECIES));
 
-// Explicit trophic preferences keep the 22 species ecologically distinct.
+// Explicit trophic preferences keep every catalogue species ecologically distinct.
 // Values are relative choice/assimilation weights: >= 1 preferred, .2-.99
 // tolerated, and < .2 avoided except during genuine starvation.
 export const FOOD_ECOLOGY = freeze({
@@ -62,7 +114,11 @@ export const FOOD_ECOLOGY = freeze({
   "little-opportunist": freeze({ plants: freeze({ grass: .72, shrub: 1.05, tree: .25 }), carrion: freeze({ "meadow-nibbler": 1.15, "brush-nibbler": 1, grazer: .2, "great-plains-grazer": .08 }) }),
   "cold-country-scavenger": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "northern-shaggy-grazer": 1.3, "highland-grazer": 1.05, "highland-prowler": .65, "sunscale-ambusher": .15 }) }),
   "sunscale-ambusher": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "meadow-nibbler": 1.2, "brush-nibbler": 1.1, "shieldback-colony": .35, "great-plains-grazer": .05 }) }),
-  "shieldback-colony": freeze({ plants: freeze({ grass: .8, shrub: 1.05, tree: .18 }), carrion: freeze({}) })
+  "shieldback-colony": freeze({ plants: freeze({ grass: .8, shrub: 1.05, tree: .18 }), carrion: freeze({}) }),
+  "wild-boar": freeze({ plants: freeze({ grass: .58, shrub: 1.1, tree: .28 }), carrion: freeze({ "meadow-nibbler": 1.05, "brush-nibbler": 1, "common-ostrich": .2, grazer: .12 }) }),
+  "african-elephant": freeze({ plants: freeze({ grass: .88, shrub: 1.25, tree: .82 }), carrion: freeze({}) }),
+  dromedary: freeze({ plants: freeze({ grass: .78, shrub: 1.25, tree: .12 }), carrion: freeze({}) }),
+  "common-ostrich": freeze({ plants: freeze({ grass: 1.08, shrub: .72, tree: 0 }), carrion: freeze({}) })
 });
 
 // The supplied ethology source distinguishes defended territory from a home
@@ -79,8 +135,70 @@ export const SPATIAL_ECOLOGY = freeze({
   "brush-nibbler": freeze({ mode: "pair-core-range", territoriality: .32, radius: 7 }), "waterline-ambusher": freeze({ mode: "resource-territory", territoriality: .88, radius: 13 }),
   "northern-shaggy-grazer": freeze({ mode: "seasonal-home-range", territoriality: .1, radius: 16 }), "highland-prowler": freeze({ mode: "territory", territoriality: .8, radius: 15 }),
   "little-opportunist": freeze({ mode: "home-range", territoriality: .22, radius: 8 }), "cold-country-scavenger": freeze({ mode: "home-range", territoriality: .2, radius: 18 }),
-  "sunscale-ambusher": freeze({ mode: "mating-territory", territoriality: .84, radius: 8, breedingMultiplier: 1.4 }), "shieldback-colony": freeze({ mode: "colony-core", territoriality: .42, radius: 9 })
+  "sunscale-ambusher": freeze({ mode: "mating-territory", territoriality: .84, radius: 8, breedingMultiplier: 1.4 }), "shieldback-colony": freeze({ mode: "home-range", territoriality: .12, radius: 9 }),
+  "wild-boar": freeze({ mode: "core-range", territoriality: .3, radius: 12 }), "african-elephant": freeze({ mode: "seasonal-home-range", territoriality: .08, radius: 24 }),
+  dromedary: freeze({ mode: "seasonal-home-range", territoriality: .08, radius: 20 }), "common-ostrich": freeze({ mode: "home-range", territoriality: .14, radius: 16 })
 });
+
+const habitat = (preferred, tolerated, moisture, temperature, cover) => freeze({
+  preferred: freeze(preferred), tolerated: freeze(tolerated), moisture: freeze(moisture), temperature: freeze(temperature), cover: freeze(cover)
+});
+
+// Habitat is described by structure and climate rather than by a painted biome
+// name. These profiles let the same forest, grassland or dryland grade from
+// sparse to dense while still creating meaningful animal preferences.
+export const HABITAT_ECOLOGY = freeze({
+  grazer: habitat(["short-grassland", "tall-grassland"], ["open-woodland", "dry-grassland", "wet-meadow"], [.28, .7], [-8, 28], [0, .42]),
+  hunter: habitat(["open-woodland", "short-grassland", "boreal-forest"], ["tall-grassland", "temperate-forest", "dry-grassland"], [.2, .78], [-18, 28], [.08, .72]),
+  "meadow-nibbler": habitat(["short-grassland", "open-woodland"], ["tall-grassland", "shrubland", "dry-grassland"], [.25, .68], [-5, 28], [.12, .62]),
+  "great-plains-grazer": habitat(["tall-grassland", "short-grassland"], ["dry-grassland", "open-woodland"], [.2, .68], [-12, 30], [0, .34]),
+  "woodland-browser": habitat(["boreal-forest", "riparian-woodland", "shrub-swamp"], ["temperate-forest", "wooded-swamp", "riparian-thicket"], [.45, .92], [-20, 20], [.38, 1]),
+  "brush-fox": habitat(["open-woodland", "shrubland", "short-grassland"], ["temperate-forest", "dry-grassland", "riparian-thicket"], [.18, .76], [-15, 28], [.08, .72]),
+  "shadow-stalker": habitat(["temperate-forest", "boreal-forest"], ["open-woodland", "riparian-woodland", "shrubland"], [.28, .82], [-20, 24], [.34, 1]),
+  "great-omnivore": habitat(["temperate-forest", "boreal-forest", "riparian-woodland"], ["open-woodland", "shrubland", "wet-meadow"], [.28, .86], [-20, 28], [.25, 1]),
+  "dryland-runner": habitat(["dry-grassland", "short-grassland"], ["thorn-scrub", "cold-desert", "open-woodland"], [.08, .46], [-12, 34], [0, .3]),
+  "highland-grazer": habitat(["cold-grassland", "cold-scrub", "rock"], ["tundra", "boreal-forest", "cold-desert"], [.16, .62], [-24, 18], [0, .48]),
+  "armoured-browser": habitat(["thorn-scrub", "shrubland", "savanna"], ["dry-forest", "dry-grassland", "riparian-thicket"], [.14, .58], [10, 36], [.08, .68]),
+  "pack-breaker": habitat(["savanna", "dry-grassland", "short-grassland"], ["thorn-scrub", "open-woodland", "tall-grassland"], [.12, .58], [8, 36], [0, .48]),
+  "carrion-runner": habitat(["short-grassland", "dry-grassland", "savanna"], ["open-woodland", "thorn-scrub", "rock"], [.08, .62], [-5, 38], [0, .38]),
+  "waterline-grazer": habitat(["wet-meadow", "marsh", "riparian-thicket"], ["shrub-swamp", "riparian-woodland", "tall-grassland"], [.62, 1], [10, 36], [.08, .76]),
+  "brush-nibbler": habitat(["boreal-forest", "cold-scrub", "riparian-thicket"], ["temperate-forest", "shrubland", "open-woodland"], [.3, .82], [-24, 20], [.32, 1]),
+  "waterline-ambusher": habitat(["open-water", "marsh", "wooded-swamp"], ["shrub-swamp", "riparian-woodland", "wet-meadow"], [.72, 1], [18, 40], [.05, .9]),
+  "northern-shaggy-grazer": habitat(["tundra", "cold-grassland"], ["cold-scrub", "cold-desert", "boreal-forest"], [.12, .62], [-30, 14], [0, .42]),
+  "highland-prowler": habitat(["rock", "cold-desert", "cold-scrub"], ["cold-grassland", "tundra", "boreal-forest"], [.08, .5], [-28, 16], [0, .58]),
+  "little-opportunist": habitat(["riparian-woodland", "temperate-forest", "riparian-thicket"], ["open-woodland", "wooded-swamp", "shrubland"], [.35, .9], [-12, 30], [.28, 1]),
+  "cold-country-scavenger": habitat(["rock", "cold-desert", "cold-grassland"], ["tundra", "cold-scrub", "boreal-forest"], [.08, .58], [-24, 20], [0, .38]),
+  "sunscale-ambusher": habitat(["savanna", "open-woodland", "shrubland"], ["dry-grassland", "riparian-thicket", "thorn-scrub"], [.2, .68], [20, 38], [.16, .72]),
+  "shieldback-colony": habitat(["thorn-scrub", "dry-grassland", "hot-desert"], ["savanna", "shrubland", "short-grassland"], [.06, .42], [16, 42], [0, .44]),
+  "wild-boar": habitat(["temperate-forest", "riparian-woodland", "shrub-swamp"], ["wooded-swamp", "open-woodland", "riparian-thicket"], [.38, .92], [-8, 30], [.28, 1]),
+  "african-elephant": habitat(["savanna", "open-woodland", "riparian-woodland"], ["dry-forest", "tall-grassland", "shrubland"], [.22, .78], [14, 40], [.05, .7]),
+  dromedary: habitat(["hot-desert", "thorn-scrub", "dry-grassland"], ["savanna", "bare-ground", "short-grassland"], [.02, .34], [12, 44], [0, .34]),
+  "common-ostrich": habitat(["savanna", "dry-grassland", "short-grassland"], ["thorn-scrub", "hot-desert", "open-woodland"], [.08, .5], [10, 42], [0, .32])
+});
+
+const rangeScore = (value, [minimum, maximum]) => value >= minimum && value <= maximum ? 1 : value < minimum ? Math.max(0, 1 - (minimum - value) / Math.max(1, Math.abs(minimum) + 10)) : Math.max(0, 1 - (value - maximum) / Math.max(1, Math.abs(maximum) + 10));
+export function habitatSuitability(subject, cell = {}) {
+  const profile = HABITAT_ECOLOGY[typeof subject === "string" ? subject : subject?.speciesId];
+  if (!profile || !cell || cell.rocky && !profile.preferred.includes("rock") && !profile.tolerated.includes("rock")) return .05;
+  const type = cell.habitatType || cell.habitatLabel?.replaceAll(" ", "-") || "short-grassland";
+  const structural = profile.preferred.includes(type) ? 1 : profile.tolerated.includes(type) ? .72 : .22;
+  const moisture = Number(cell.waterAvailability ?? cell.ecoMoisture ?? cell.moisture) || 0;
+  const temperature = Number.isFinite(Number(cell.temperature)) ? Number(cell.temperature) : 15;
+  const cover = Math.max(Number(cell.canopyDensity ?? cell.canopyCover) || 0, Number(cell.understoryDensity) || 0);
+  return Math.max(.03, Math.min(1, structural * .52 + rangeScore(moisture, profile.moisture) * .2 + rangeScore(temperature, profile.temperature) * .18 + rangeScore(cover, profile.cover) * .1));
+}
+export function habitatPreferenceSummary(subject) {
+  const profile = HABITAT_ECOLOGY[typeof subject === "string" ? subject : subject?.speciesId];
+  return profile ? { ...profile, preferred: [...profile.preferred], tolerated: [...profile.tolerated] } : null;
+}
+export function selectHabitatWeighted(subject, candidates = [], roll = Math.random()) {
+  if (!candidates.length) return null;
+  const weighted = candidates.map(cell => ({ cell, weight: .08 + habitatSuitability(subject, cell) ** 2 }));
+  const total = weighted.reduce((sum, item) => sum + item.weight, 0);
+  let cursor = Math.max(0, Math.min(.999999999, Number(roll) || 0)) * total;
+  for (const item of weighted) { cursor -= item.weight; if (cursor <= 0) return item.cell; }
+  return weighted[weighted.length - 1].cell;
+}
 
 export const speciesProfile = (subject) => SPECIES[typeof subject === "string" ? subject : subject?.speciesId];
 export const foodEcology = (subject) => FOOD_ECOLOGY[typeof subject === "string" ? subject : subject?.speciesId] || freeze({ plants: freeze({}), carrion: freeze({}) });
@@ -98,7 +216,7 @@ export const needsPregnantPredatorFounder = (subject, population) => canHunt(sub
   && Number.isFinite(Number(population))
   && Number(population) > 0
   && Number(population) <= LOW_PREDATOR_FOUNDER_THRESHOLD;
-export { BIOLOGICAL_PHENOTYPES };
+export { BIOLOGICAL_PHENOTYPES, LIFE_HISTORY };
 export const plantPreference = (subject, plantType) => Number(foodEcology(subject).plants?.[plantType] ?? 0);
 export const carcassPreference = (consumer, corpseOrSpecies) => {
   const sourceId = typeof corpseOrSpecies === "string" ? corpseOrSpecies : corpseOrSpecies?.speciesId;
@@ -131,15 +249,30 @@ export const ECOLOGY_PRESETS = freeze({
   "highland-prowler-web": freeze(["highland-grazer", "highland-prowler"]),
   "sunscale-ambusher-web": freeze(["meadow-nibbler", "brush-nibbler", "sunscale-ambusher"]),
   original: freeze(["grazer", "hunter"]),
-  compact: freeze(["grazer", "hunter", "meadow-nibbler", "brush-fox", "great-plains-grazer", "woodland-browser", "shadow-stalker", "great-omnivore"]),
+  compact: freeze(["grazer", "hunter", "meadow-nibbler", "brush-fox", "carrion-runner", "shieldback-colony"]),
   "compact-large": freeze(["great-plains-grazer", "armoured-browser", "northern-shaggy-grazer", "dryland-runner", "hunter", "pack-breaker", "waterline-ambusher", "great-omnivore"]),
   "compact-small": freeze(["meadow-nibbler", "brush-nibbler", "dryland-runner", "shieldback-colony", "brush-fox", "sunscale-ambusher", "carrion-runner", "little-opportunist"]),
   "compact-open": freeze(["grazer", "meadow-nibbler", "great-plains-grazer", "dryland-runner", "hunter", "brush-fox", "pack-breaker", "carrion-runner"]),
   "compact-woodland": freeze(["woodland-browser", "brush-nibbler", "meadow-nibbler", "shieldback-colony", "brush-fox", "shadow-stalker", "great-omnivore", "little-opportunist"]),
-  balanced: freeze(["grazer", "hunter", "meadow-nibbler", "dryland-runner", "great-plains-grazer", "woodland-browser", "armoured-browser", "brush-fox", "shadow-stalker", "pack-breaker", "carrion-runner", "great-omnivore"]),
-  expanded: freeze(["grazer", "hunter", "meadow-nibbler", "dryland-runner", "great-plains-grazer", "woodland-browser", "armoured-browser", "brush-fox", "shadow-stalker", "pack-breaker", "carrion-runner", "great-omnivore", "brush-nibbler", "highland-grazer", "waterline-grazer", "waterline-ambusher"]),
+  balanced: freeze(["grazer", "hunter", "meadow-nibbler", "brush-fox", "carrion-runner", "shieldback-colony", "great-plains-grazer", "woodland-browser", "shadow-stalker", "great-omnivore", "waterline-grazer", "pack-breaker", "wild-boar", "common-ostrich"]),
+  expanded: freeze(["grazer", "hunter", "meadow-nibbler", "brush-fox", "carrion-runner", "shieldback-colony", "great-plains-grazer", "woodland-browser", "shadow-stalker", "great-omnivore", "waterline-grazer", "pack-breaker", "wild-boar", "common-ostrich", "dryland-runner", "highland-grazer", "armoured-browser", "waterline-ambusher", "northern-shaggy-grazer", "highland-prowler"]),
   full: SPECIES_IDS
 });
+
+export const WORLD_SCALE_ECOLOGY_PRESETS = freeze({ 1: "compact", 2: "balanced", 3: "expanded", 4: "full" });
+export const WORLD_SCALE_ECOLOGY_DESIGNS = freeze({
+  1: freeze({ label: "Compact", speciesCount: 6, factors: freeze(["two retained generic baselines", "small prey and predator", "carrion recycling", "live birth and unattended eggs"]) }),
+  2: freeze({ label: "Medium", speciesCount: 14, factors: freeze(["herd and solitary life", "ambush and social hunting", "omnivory", "riparian life", "attended and unattended eggs"]) }),
+  3: freeze({ label: "Standard", speciesCount: 20, factors: freeze(["arid, alpine, boreal and riparian specialists", "armour and megaherbivory", "endotherms and ectotherms", "seasonal and opportunistic reproduction"]) }),
+  4: freeze({ label: "Vast", speciesCount: SPECIES_IDS.length, factors: freeze(["the complete factor-based catalogue", "extreme lifespan and drought physiology", "specialist scavenging and thermal sensing", "all implemented social and reproductive forms"]) })
+});
+export function ecologyPresetForWorldScale(span = 1) {
+  const bounded = Math.max(1, Math.min(4, Math.round(Number(span) || 1)));
+  return WORLD_SCALE_ECOLOGY_PRESETS[bounded];
+}
+export function ecologyRosterForWorldScale(span = 1) {
+  return ECOLOGY_PRESETS[ecologyPresetForWorldScale(span)];
+}
 
 // Literal central populations derived from the predator/preferred-prey
 // calculations supplied for world setup. One entry always means one animal;
@@ -159,7 +292,8 @@ export const ECOLOGY_PRESET_POPULATIONS = freeze({
     "pack-breaker": 1, "carrion-runner": 1, "waterline-grazer": 127,
     "brush-nibbler": 456, "waterline-ambusher": 1, "northern-shaggy-grazer": 10,
     "highland-prowler": 1, "little-opportunist": 1, "cold-country-scavenger": 1,
-    "sunscale-ambusher": 1, "shieldback-colony": 1
+    "sunscale-ambusher": 1, "shieldback-colony": 1, "wild-boar": 5,
+    "african-elephant": 3, dromedary: 5, "common-ostrich": 5
   })
 });
 
@@ -187,7 +321,7 @@ export function ecologyWarnings(counts = {}, world = {}) {
   if (SPECIES_IDS.filter(id => active(id) && SPECIES[id].guild === "scavenger").length > 1 && totalPopulation < 30) warnings.push("Several carrion specialists are enabled in a low-population world.");
   if (SPECIES_IDS.some(id => active(id) && SPECIES[id].habitat === "woodland") && Number(world.woodland) <= .1) warnings.push("Woodland specialists are enabled with almost no woodland.");
   if (SPECIES_IDS.some(id => active(id) && SPECIES[id].habitat === "riparian") && Number(world.rivers) + Number(world.lakes) <= .5) warnings.push("Waterline specialists are enabled with little surface water.");
-  if (active("shieldback-colony") && exact["shieldback-colony"] < 4) warnings.push("Shieldback Colony needs at least four starting animals for communal defence and care.");
-  if (active("sunscale-ambusher") && !SPECIES_IDS.some(prey => active(prey) && preyCompatible("sunscale-ambusher", prey))) warnings.push("Sunscale Ambusher has no enabled tiny or small herbivore prey.");
+  if (active("shieldback-colony") && exact["shieldback-colony"] < 2) warnings.push("African Spurred Tortoise has only one founder; a second founder is recommended for reproduction.");
+  if (active("sunscale-ambusher") && !SPECIES_IDS.some(prey => active(prey) && preyCompatible("sunscale-ambusher", prey))) warnings.push("Ball Python has no enabled tiny or small herbivore prey.");
   return warnings;
 }

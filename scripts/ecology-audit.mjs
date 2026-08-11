@@ -1,13 +1,13 @@
-import { createReadStream } from "node:fs";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { createReadStream, existsSync } from "node:fs";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, extname, join, normalize } from "node:path";
 import { chromium } from "playwright";
 import { compatibleEcologyCheckpoint, parseEcologyAuditArguments } from "../src/ecology-audit-config.js";
 
 async function writeCheckpoint(path, report) {
-  await mkdir(dirname(path), { recursive: true }); const temporary = `${path}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`, "utf8"); await rename(temporary, path);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 }
 
 async function previousReport(options) {
@@ -48,7 +48,9 @@ async function runSeed(browser, seed, options, onProgress) {
 let browser;
 try {
   await new Promise((resolveListen, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", resolveListen); });
-  browser = await chromium.launch({ headless: true });
+  const installedChrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+  const executablePath = process.env.PLAYWRIGHT_CHROME_PATH || (existsSync(installedChrome) ? installedChrome : undefined);
+  browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
   const prior = await previousReport(options), completed = new Map((prior?.results || []).map((result) => [result.seed, result]));
   const report = { version: 3, status: "running", parameters: { preset: options.preset, minutes: options.minutes, observationMinutes: options.observationMinutes, seeds: options.seeds, setup: options.setup }, startedAt: prior?.startedAt || new Date().toISOString(), updatedAt: new Date().toISOString(), results: [...completed.values()] };
   const progress = new Map(), pending = options.seeds.filter((seed) => !completed.has(seed));

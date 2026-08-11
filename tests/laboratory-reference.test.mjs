@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { LABORATORY_REFERENCE_SECTIONS, laboratoryReferenceHtml } from "../src/laboratory-reference.js";
+import { SPECIES_IDS } from "../src/species-registry.js";
 import { PREDICTION_ABSTENTIONS, PREDICTION_AUTHORITIES, PREDICTION_FRAMEWORKS } from "../src/prediction-contract.js";
 import { PREDICTION_EMPTY_STATES, PREDICTION_INSIGHT_EFFECT_STATES, PREDICTION_INSIGHT_VARIANTS } from "../src/predictive-entity-presentation.js";
 import { PREDICTION_ABSTENTION_GUIDE, PREDICTION_AUTHORITY_GUIDE, PREDICTION_FRAMEWORK_GUIDE, PREDICTION_MODE_GUIDE } from "../src/predictive-language.js";
@@ -45,14 +46,14 @@ test("reference covers every major game-system family", () => {
   const ids = new Set(LABORATORY_REFERENCE_SECTIONS.map(section => section.id));
   for (const id of ["visual-atlas", "architecture", "simulation-clock", "world-generation", "terrain-hydrology", "plants-resources", "weather-seasons", "species-directory", "organism-design", "locomotion", "behaviour-ontology", "action-catalogue", "attention-memory", "symbols-communication", "predation", "relationships", "groups-leadership", "mate-choice", "traits-lifespan", "death-succession", "camera-interface", "settings", "saves-records", "diagnostics", "performance", "limits", "glossary"]) assert.ok(ids.has(id), id);
   const html = laboratoryReferenceHtml();
-  for (const term of ["Valley Grazer", "Shieldback Colony", "Maintain hydration", "Drink at confirmed shoreline", "authoritative simulated minute", "Ecological accounting", "Personal space", "Meta-group", "Surface nests", "deterministic time skip"]) assert.match(html, new RegExp(term, "i"));
+  for (const term of ["Valley Grazer", "African Spurred Tortoise", "Maintain hydration", "Drink at confirmed shoreline", "authoritative simulated minute", "Ecological accounting", "Personal space", "Meta-group", "Surface nests", "deterministic time skip"]) assert.match(html, new RegExp(term, "i"));
 });
 
 test("reference explains literal calculated ecology presets and manual overrides", () => {
   const section = LABORATORY_REFERENCE_SECTIONS.find(item => item.id === "species-directory");
   assert.ok(section);
-  for (const term of ["Literal predator-and-prey population presets", "Ridge Hunter food web", "Pack Breaker", "All 22 species", "20%", "200%", "one predator means one predator", "Custom selection"]) assert.match(section.html, new RegExp(term, "i"), term);
-  assert.match(section.html, /Pack Breaker[^]*Great Plains Grazer 11[^]*Armoured Browser 7[^]*Northern Shaggy Grazer 10/i);
+  for (const term of ["Literal predator-and-prey population presets", "world scale", "ecological function", "Spotted Hyena", `current ${SPECIES_IDS.length}-species catalogue`, "20%", "200%", "one predator means one predator", "Custom selection"]) assert.match(section.html, new RegExp(term, "i"), term);
+  assert.match(section.html, /pack breaker web[^]*American Bison 11[^]*Black Rhinoceros 7[^]*Spotted Hyena 1[^]*Musk Ox 10/i);
   assert.match(section.html, /data-reference-ecology-preset="full"/);
   assert.match(section.html, /Low-predator founder safeguard/i);
   assert.match(section.html, /only one or two literal animals[^]*adult female at 95% gestation/i);
@@ -404,8 +405,8 @@ test("reference contains a substantial visual atlas and the canonical complete s
 test("every implemented species directory entry has a distinct illustrated portrait", () => {
   const html = laboratoryReferenceHtml();
   const portraits = [...html.matchAll(/data-species-illustration="([^"]+)"/g)].map(match => match[1]);
-  assert.equal(portraits.length, 22);
-  assert.equal(new Set(portraits).size, 22);
+  assert.equal(portraits.length, SPECIES_IDS.length);
+  assert.equal(new Set(portraits).size, SPECIES_IDS.length);
   for (const id of ["grazer", "hunter", "great-plains-grazer", "armoured-browser", "waterline-ambusher", "sunscale-ambusher", "shieldback-colony"]) assert.ok(portraits.includes(id), id);
   assert.match(css, /\.reference-species-illustration/);
   assert.match(html, /class="reference-species-illustration original-grazer-portrait"/);

@@ -1,3 +1,9 @@
+import { applyHabitatProfile, habitatColourRgb } from './habitat-system.js';
+import { createTerrainRegionField } from './terrain-regions.js';
+import { classifyRiverNetwork } from './river-system.js';
+import { StableMinHeap } from './stable-min-heap.js';
+import { cooperativeYield } from './cooperative-yield.js';
+
 // One connected axial-hex world. Terrain, hydrology and ecology use these
 // same cells; there is no hidden square terrain authority.
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -8,9 +14,19 @@ const fbm = (x, z, seed) => smooth(x, z, seed, 75) * .55 + smooth(x, z, seed + 1
 const axialKey = (q, r) => `${q},${r}`;
 const dirs = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
 const windVector = (direction = 'west') => ({ west: [1, 0], southwest: [.707, -.707], south: [0, -1], southeast: [-.707, -.707], east: [-1, 0] }[direction] || [1, 0]);
+const DEFER_GENERATION = Symbol('defer-generation');
+const presentationCodes = new Map();
+const presentationCode = (value) => {
+  const key = value == null ? '' : String(value);
+  if (!presentationCodes.has(key)) presentationCodes.set(key, presentationCodes.size + 1);
+  return presentationCodes.get(key);
+};
+const mixCode = (hashValue, value) => Math.imul((hashValue ^ (value >>> 0)) >>> 0, 16777619) >>> 0;
+const clockNow = () => globalThis.performance?.now?.() ?? Date.now();
+const abortError = () => { const error = new Error('World generation was cancelled'); error.name = 'AbortError'; return error; };
 
 export class HexWorld {
-  constructor(seed, settings) {
+  constructor(seed, settings, generationMode = null) {
     this.seed = seed >>> 0; this.size = settings.size; this.half = settings.size / 2; this.settings = settings;
     this._seasonalTemperature = settings.startSeason === 'Winter' ? -7 : settings.startSeason === 'Summer' ? 5 : settings.startSeason === 'Autumn' ? -2 : 1;
     this.target = Math.max(500, Math.round((settings.hexDetail || 5000) * (settings.size / 300) ** 2));
@@ -18,7 +34,10 @@ export class HexWorld {
     this.cells = []; this.byAxial = new Map(); this.buckets = new Map(); this.basins = []; this.waterBodies = []; this.riverRoutes = []; this.riverWidthStats = null; this.riverDiagnostics = []; this.woodyInitialised = false;
     this.hexArea = 2.598076 * this.radius * this.radius;
     this.boundary = { id: 'boundary', dailyInflow: 0, exportedVolume: 0 };
-    this._makeCells(); this._elevate(); this._link(); this._deriveSubstrate(); this._deriveClimate(); this._prepareDrainage();
+    if (generationMode !== DEFER_GENERATION) this._generateSynchronously();
+  }
+  _generateSynchronously() {
+    this._makeCells(); this._elevate(); this._link(); this._prepareWindNeighbours(); this._deriveSubstrate(); this._deriveClimate(); this._prepareDrainage();
     // Warm the slow water and channel state before the first visible render.
     // The visible world is therefore a solved daily state, never a second pass.
     for (let i = 0; i < 120; i++) this._hydrologyStep(1, true);
@@ -26,26 +45,66 @@ export class HexWorld {
     this._hydrologyStep(1, false);
     this._seedPuddleSites();
     this._applyPuddles();
-    this._deriveEcology(); this._indexBuckets();
+    this._deriveEcology(); this._indexBuckets(); this._capturePresentationState(true);
+  }
+  static async createAsync(seed, settings, { signal = null, onProgress = null, yieldBudgetMs = 8 } = {}) {
+    const world = new HexWorld(seed, settings, DEFER_GENERATION), budget = Math.max(1, Number(yieldBudgetMs) || 8);
+    const progress = (phase, completed, total, percent) => onProgress?.({ phase, completed, total, percent: clamp(percent, 0, 1) });
+    const check = () => { if (signal?.aborted) throw abortError(); };
+    let lastYield = clockNow();
+    const phase = async (name, percent, work) => { check(); work(); progress(name, 1, 1, percent); if (clockNow() - lastYield >= budget) { await cooperativeYield(); lastYield = clockNow(); } };
+    progress('cells', 0, 1, 0);
+    await phase('cells', .08, () => world._makeCells());
+    await phase('terrain', .18, () => world._elevate());
+    await phase('topology', .25, () => { world._link(); world._prepareWindNeighbours(); });
+    await phase('substrate', .33, () => world._deriveSubstrate());
+    await phase('climate', .40, () => world._deriveClimate());
+    await phase('drainage', .52, () => world._prepareDrainage());
+    for (let index = 0; index < 120; index += 1) {
+      check();
+      world._hydrologyStep(1, true);
+      progress('hydrology warm-up', index + 1, 120, .52 + (index + 1) / 120 * .33);
+      // Warm-up days are the one deterministic inner phase whose individual
+      // iterations can expand as lakes fill and overflow. Yield after every
+      // solved day so a later, more expensive iteration cannot inherit the
+      // remainder of an already-consumed generation slice.
+      await cooperativeYield(); lastYield = clockNow();
+    }
+    await phase('rivers', .90, () => { world._finaliseChannels(); world._cacheRiverWidths(); world._hydrologyStep(1, false); world._seedPuddleSites(); world._applyPuddles(); });
+    await phase('ecology', .98, () => world._deriveEcology());
+    await phase('spatial index', 1, () => { world._indexBuckets(); world._capturePresentationState(true); });
+    check(); return world;
   }
   _makeCells() {
     const r = this.radius, row = 1.5 * r, col = Math.sqrt(3) * r, rows = Math.ceil(this.size / row) + 4, cols = Math.ceil(this.size / col) + 4;
     for (let rr = -rows; rr <= rows; rr++) for (let q = -cols; q <= cols; q++) {
       const x = col * (q + rr / 2), z = row * rr;
       if (x < -this.half - r || x > this.half + r || z < -this.half - r || z > this.half + r) continue;
-      const c = { id: this.cells.length, q, r: rr, x, z, elevation: 0, slope: 0, soilDepth: 0, baseSoilDepth: 0, soilRetention: .6, aeolianPotential: 0, windExposure: 0, windShelter: 0, windChannel: 0, parentMaterial: 'loam', fertility: 0, moisture: 0, ecoMoisture: 0, humidity: 0, temperature: 0, baseTemperature: 0, snowPack: 0, soilWater: 55, groundwater: 38, runoff: 0, discharge: 0, meanDischarge: 0, peakDischarge: 0, channelStrength: 0, channel: false, channelWidthRaw: 0, channelWidth: 0, waterWidth: 0, upstreamChannelCount: 0, routingRank: 0, incoming: 0, localRunoff: 0, accumulation: 1, drainage: 0, waterDepth: 0, waterLevel: 0, waterSurface: null, waterBodyId: null, terrainClass: 'grassland', landCover: 'shortGrass', plantType: 'grass', biomass: 0, grassBiomass: 0, grassHeight: 0, shrubBiomass: 0, woodyCover: 0, canopyCover: 0, shrubland: false, woodland: false, woodlandSuitability: 0, woodyStage: 'none', vegetationAgeDays: 0, vegetationStage: 'bare', leaflessTreeUntil: 0, fallenTreeUntil: 0, wetland: false, rocky: false, sandy: false, drinkable: false, scent: null, neighbours: [], flowTo: null, filled: 0, basinId: null, lakeBasin: false, permanentWater: false, water: false, waterChannel: false, dryChannel: false, floodplain: false, riparian: false, sediment: 'loam', shoreExposure: 0, floodFrequency: 0, daysWet: 0, daysDry: 0, vegetationStability: .5, plantAge: 0, plantStage: 'mature', seedStore: 0, substrate: 'loam' };
+      const c = { id: this.cells.length, q, r: rr, x, z, elevation: 0, slope: 0, soilDepth: 0, baseSoilDepth: 0, soilRetention: .6, aeolianPotential: 0, windExposure: 0, windShelter: 0, windChannel: 0, parentMaterial: 'loam', fertility: 0, moisture: 0, ecoMoisture: 0, humidity: 0, temperature: 0, baseTemperature: 0, snowPack: 0, soilWater: 55, groundwater: 38, runoff: 0, discharge: 0, meanDischarge: 0, peakDischarge: 0, channelStrength: 0, channel: false, channelWidthRaw: 0, channelWidth: 0, waterWidth: 0, upstreamChannelCount: 0, streamOrder: 0, riverSizeScore: 0, riverSizeClass: 'none', flowRegime: 'none', riverPattern: 'none', riverBend: 0, routingRank: 0, incoming: 0, localRunoff: 0, accumulation: 1, drainage: 0, waterDepth: 0, waterLevel: 0, waterSurface: null, waterBodyId: null, terrainClass: 'grassland', landCover: 'shortGrass', plantType: 'grass', biomass: 0, grassBiomass: 0, grassHeight: 0, shrubBiomass: 0, woodyCover: 0, canopyCover: 0, shrubland: false, woodland: false, woodlandSuitability: 0, woodyStage: 'none', vegetationAgeDays: 0, vegetationStage: 'bare', leaflessTreeUntil: 0, fallenTreeUntil: 0, wetland: false, rocky: false, sandy: false, drinkable: false, scent: null, neighbours: [], flowTo: null, filled: 0, basinId: null, lakeBasin: false, permanentWater: false, water: false, waterChannel: false, dryChannel: false, floodplain: false, riparian: false, sediment: 'loam', shoreExposure: 0, floodFrequency: 0, daysWet: 0, daysDry: 0, vegetationStability: .5, plantAge: 0, plantStage: 'mature', seedStore: 0, substrate: 'loam' };
       this.cells.push(c); this.byAxial.set(axialKey(q, rr), c);
     }
   }
   _elevate() {
-    const s = this.settings, relief = s.relief || 0, rng = (i) => hash(this.seed ^ Math.imul(i + 1, 2654435761)), features = [];
-    const count = Math.max(1, Math.round((s.mountains + s.hills + s.valleys) * 2.4));
-    for (let i = 0; i < count; i++) { const kind = i % 3 === 0 ? 'mountain' : i % 3 === 1 ? 'hill' : 'valley'; const angle = rng(i * 3) * Math.PI, cx = (rng(i * 3 + 1) - .5) * this.size * .78, cz = (rng(i * 3 + 2) - .5) * this.size * .78; features.push({ kind, cx, cz, angle, length: this.size * (.12 + rng(i + 48) * .23), width: this.size * (.055 + rng(i + 91) * .12), amp: kind === 'mountain' ? 34 * s.mountains : kind === 'hill' ? 11 * s.hills : -15 * s.valleys }); }
-    for (const c of this.cells) { let e = ((c.x / this.size) * 3.3 + fbm(c.x, c.z, this.seed) * 7 - 3.5) * relief; for (const f of features) { const dx = c.x - f.cx, dz = c.z - f.cz, ca = Math.cos(f.angle), sa = Math.sin(f.angle), u = (dx * ca + dz * sa) / f.length, v = (-dx * sa + dz * ca) / f.width; e += f.amp * Math.exp(-(u * u + v * v) * 2.2) * relief; } c.elevation = relief === 0 ? 0 : e; }
+    this.terrainRegions = createTerrainRegionField(this.seed, this.size, this.settings);
+    for (const c of this.cells) { const terrain = this.terrainRegions.sampleAt(c.x, c.z); c.elevation = terrain.elevation; c.landform = terrain.landform; c.landformContribution = terrain.featureContribution; }
   }
   _link() {
     for (const c of this.cells) c.neighbours = dirs.map(([dq, dr]) => this.byAxial.get(axialKey(c.q + dq, c.r + dr))).filter(Boolean);
     for (const c of this.cells) { const avg = c.neighbours.reduce((n, other) => n + other.elevation, 0) / Math.max(1, c.neighbours.length); c.slope = clamp(Math.abs(c.elevation - avg) / Math.max(1, this.radius * .9), 0, 1); }
+  }
+  _prepareWindNeighbours() {
+    const [windX, windZ] = windVector(this.settings.windDirection), count = this.cells.length;
+    this._windwardCellIds = new Int32Array(count); this._leewardCellIds = new Int32Array(count); this._nextHumidity = new Float64Array(count);
+    this._windwardCellIds.fill(-1); this._leewardCellIds.fill(-1);
+    for (const c of this.cells) {
+      let windward = null, leeward = null, minimum = Infinity, maximum = -Infinity;
+      for (const neighbour of c.neighbours) {
+        const projection = (neighbour.x - c.x) * windX + (neighbour.z - c.z) * windZ;
+        if (projection < minimum) { minimum = projection; windward = neighbour; }
+        if (projection > maximum) { maximum = projection; leeward = neighbour; }
+      }
+      this._windwardCellIds[c.id] = windward?.id ?? -1; this._leewardCellIds[c.id] = leeward?.id ?? -1;
+    }
   }
   _deriveSubstrate() {
     // Parent material is fixed at world generation. It controls the soil which
@@ -109,10 +168,10 @@ export class HexWorld {
   _prepareDrainage() {
     // Priority flood is auxiliary routing geometry. It never alters elevation.
     const edge = c => Math.abs(c.x) > this.half - this.radius * 2 || Math.abs(c.z) > this.half - this.radius * 2;
-    const queue = [], seen = new Set(); let rank = 0;
-    const push = (c, h, parent = null) => { queue.push({ c, h, parent }); queue.sort((a, b) => a.h - b.h || a.c.id - b.c.id); };
+    const queue = new StableMinHeap((a, b) => a.h - b.h || a.c.id - b.c.id), seen = new Set(); let rank = 0;
+    const push = (c, h) => queue.push({ c, h });
     for (const c of this.cells.filter(edge)) { seen.add(c.id); c.filled = c.elevation; c.routingRank = rank++; c.routingParent = null; push(c, c.filled); }
-    while (queue.length) { const { c, h } = queue.shift(); for (const n of c.neighbours) if (!seen.has(n.id)) { seen.add(n.id); n.filled = Math.max(n.elevation, h); n.routingRank = rank++; n.routingParent = c; push(n, n.filled, c); } }
+    while (queue.size) { const { c, h } = queue.pop(); for (const n of c.neighbours) if (!seen.has(n.id)) { seen.add(n.id); n.filled = Math.max(n.elevation, h); n.routingRank = rank++; n.routingParent = c; push(n, n.filled); } }
     const candidates = new Set(this.cells.filter(c => c.filled > c.elevation + .12).map(c => c.id)); let n = 0;
     while (candidates.size) {
       const first = this.cells[candidates.values().next().value], stack = [first], cells = []; candidates.delete(first.id);
@@ -147,19 +206,19 @@ export class HexWorld {
     if (basin.dailyOverflow) this._routeOverflow(basin.spillOutside, basin.dailyOverflow);
   }
   _hydrologyStep(days, warming = false, weather = null) {
-    const s = this.settings, rainfallScale = Math.max(.1, s.rainfall || 1), seasonTemp = warming ? 0 : (this._seasonalTemperature || 0), [windX, windZ] = windVector(s.windDirection), windStrength = s.windStrength ?? 1, rainShadow = s.rainShadow ?? 1, stormFactor = weather?.stormFactor ?? 0; this._resetDaily();
+    const s = this.settings, rainfallScale = Math.max(.1, s.rainfall || 1), seasonTemp = warming ? 0 : (this._seasonalTemperature || 0), windStrength = s.windStrength ?? 1, rainShadow = s.rainShadow ?? 1, stormFactor = weather?.stormFactor ?? 0;
+    this._resetDaily();
     let rainMm = 0, evapMm = 0;
-    const transportedHumidity = new Map();
     for (const c of this.cells) {
-      const upwind = c.neighbours.slice().sort((a, b) => ((a.x - c.x) * windX + (a.z - c.z) * windZ) - ((b.x - c.x) * windX + (b.z - c.z) * windZ))[0];
+      const upwindId = this._windwardCellIds[c.id], upwind = upwindId >= 0 ? this.cells[upwindId] : null;
       const carried = upwind ? upwind.humidity : c.humidity;
-      transportedHumidity.set(c.id, clamp(c.humidity * (1 - .22 * windStrength) + carried * (.22 * windStrength), .03, .98));
+      this._nextHumidity[c.id] = clamp(c.humidity * (1 - .22 * windStrength) + carried * (.22 * windStrength), .03, .98);
     }
     for (const c of this.cells) {
-      c.humidity = transportedHumidity.get(c.id);
+      c.humidity = this._nextHumidity[c.id];
       c.temperature = c.baseTemperature + seasonTemp;
-      const upwind = c.neighbours.slice().sort((a, b) => ((a.x - c.x) * windX + (a.z - c.z) * windZ) - ((b.x - c.x) * windX + (b.z - c.z) * windZ))[0];
-      const downwind = c.neighbours.slice().sort((a, b) => ((b.x - c.x) * windX + (b.z - c.z) * windZ) - ((a.x - c.x) * windX + (a.z - c.z) * windZ))[0];
+      const upwindId = this._windwardCellIds[c.id], downwindId = this._leewardCellIds[c.id];
+      const upwind = upwindId >= 0 ? this.cells[upwindId] : null, downwind = downwindId >= 0 ? this.cells[downwindId] : null;
       const uplift = Math.max(0, c.elevation - (upwind?.elevation ?? c.elevation)) / Math.max(1, this.radius);
       const leeDrop = Math.max(0, c.elevation - (downwind?.elevation ?? c.elevation)) / Math.max(1, this.radius);
       const precipitation = clamp((1.5 + c.humidity * 6.2 + uplift * 6.5 * rainShadow + stormFactor * 11) * rainfallScale * days, .05, 24);
@@ -177,7 +236,13 @@ export class HexWorld {
     this._applyChannelWater();
   }
   _finaliseChannels() {
-    const scale = Math.max(.15, this.settings.rivers || 1);
+    const requestedScale = Number(this.settings.rivers ?? 1);
+    if (requestedScale <= 0) {
+      for (const cell of this.cells) { cell.channel = false; cell.channelStrength = 0; }
+      this.riverRoutes = [];
+      return;
+    }
+    const scale = Math.max(.15, requestedScale);
     const land = this.cells.filter(c => !c.lakeBasin && c.flowTo && c.flowTo !== this.boundary);
     const indexAt = (c) => {
       const resistance = 1 + c.slope * 2.2 + (c.rocky ? .7 : 0);
@@ -204,15 +269,27 @@ export class HexWorld {
     }
   }
   _cacheRiverWidths() {
-    const flows = this.cells.filter(c => c.channel && Number.isFinite(c.meanDischarge) && c.meanDischarge > 0).map(c => c.meanDischarge).sort((a, b) => a - b);
-    const pick = (q) => flows[Math.min(flows.length - 1, Math.max(0, Math.floor((flows.length - 1) * q)))] || 1;
-    const qLow = pick(.10), qHigh = Math.max(qLow * 1.001, pick(.95));
-    this.riverWidthStats = { qLow, qHigh, hexDiameter: this.radius * 2, miterLimit: 2.5 };
+    const network = classifyRiverNetwork(this.cells, {
+      hexDiameter: this.radius * 2,
+      widthVariation: this.settings.riverWidthVariation ?? 1,
+      patternDiversity: this.settings.riverPatternDiversity ?? 1,
+      settings: this.settings,
+      seed: this.seed
+    });
+    this.riverWidthStats = network.stats;
     for (const c of this.cells) if (c.channel) {
-      const t = clamp(Math.log(Math.max(c.meanDischarge, qLow) / qLow) / Math.log(qHigh / qLow), 0, 1);
-      c.channelWidthRaw = this.riverWidthStats.hexDiameter * (.05 + .27 * Math.pow(t, .75));
-      c.channelWidth = c.channelWidthRaw;
-      c.upstreamChannelCount = c.neighbours.filter(n => n.channel && n.flowTo === c).length;
+      const classification = network.classifications.get(c.id);
+      if (!classification) continue;
+      c.channelWidthRaw = classification.naturalWidth;
+      c.channelWidth = classification.channelWidth;
+      c.upstreamChannelCount = classification.upstreamChannelCount;
+      c.streamOrder = classification.streamOrder;
+      c.riverSizeScore = classification.sizeScore;
+      c.riverSizeClass = classification.sizeClass;
+      c.riverClass = classification.sizeClass.replace('-', ' ');
+      c.flowRegime = classification.flowRegime;
+      c.riverPattern = classification.pattern;
+      c.riverBend = classification.bend;
     }
   }
   _applyChannelWater() {
@@ -220,15 +297,15 @@ export class HexWorld {
     for (const route of this.riverRoutes) {
       const dryGaps = []; let wetBefore = false, dryStart = -1;
       for (let i = 0; i < route.cells.length; i++) {
-        const c = route.cells[i], visible = c.discharge > this.hexArea * .00045;
+        const c = route.cells[i], visibilityThreshold = c.flowRegime === 'perennial' ? .00012 : c.flowRegime === 'ephemeral' ? .0011 : .00045, visible = c.discharge > this.hexArea * visibilityThreshold;
         c.dryChannel = !visible; const bankfull = Math.max(this.riverWidthStats?.qLow || 1, c.meanDischarge * 1.15); const flowRatio = clamp(c.discharge / bankfull, 0, 1);
         c.waterWidth = visible ? c.channelWidth * (.25 + .75 * Math.sqrt(flowRatio)) : 0;
         if (!visible) { if (wetBefore && dryStart < 0) dryStart = i; continue; }
         if (dryStart >= 0) { dryGaps.push({ from: dryStart, to: i - 1 }); dryStart = -1; }
         wetBefore = true; if (c.water) continue;
-        c.water = c.waterChannel = true; c.waterBodyId = route.id; c.waterDepth = clamp(.025 + Math.sqrt(c.discharge / Math.max(1, this.hexArea)) * .07, .025, .22); c.waterLevel = c.waterDepth; c.waterSurface = c.elevation + .016;
+        c.water = c.waterChannel = true; c.waterBodyId = route.id; c.waterDepth = clamp(.018 + c.riverSizeScore * .16 + Math.sqrt(c.discharge / Math.max(1, this.hexArea)) * .045, .018, .32); c.waterLevel = c.waterDepth; c.waterSurface = c.elevation + .016;
       }
-      this.riverDiagnostics.push({ id: route.id, dryGaps, cells: route.cells.map(c => ({ id: c.id, currentDischarge: c.discharge, effectiveDischarge: c.meanDischarge, rawChannelWidth: c.channelWidthRaw, channelWidth: c.channelWidth, waterWidth: c.waterWidth, upstreamChannelCount: c.upstreamChannelCount, wet: c.waterChannel })) });
+      this.riverDiagnostics.push({ id: route.id, dryGaps, cells: route.cells.map(c => ({ id: c.id, currentDischarge: c.discharge, effectiveDischarge: c.meanDischarge, rawChannelWidth: c.channelWidthRaw, channelWidth: c.channelWidth, waterWidth: c.waterWidth, upstreamChannelCount: c.upstreamChannelCount, streamOrder: c.streamOrder, sizeClass: c.riverSizeClass, flowRegime: c.flowRegime, pattern: c.riverPattern, wet: c.waterChannel })) });
     }
   }
   _seedPuddleSites() {
@@ -256,11 +333,26 @@ export class HexWorld {
   _deriveEcology() {
     const s = this.settings;
     const initialiseWoody = !this.woodyInitialised, woodlandCandidates = [], shrubCandidates = [];
+    const finaliseCell = (c) => {
+      if (initialiseWoody && !c.woodland && !c.shrubland) c.plantType = 'grass';
+      if (initialiseWoody) c.biomass = c.water || c.rocky || c.sandy ? 0 : clamp(.12 + c.soilDepth * .42 + c.moisture * .45, 0, c.woodland ? 1.2 : 1);
+      else if (c.water || c.rocky || c.sandy) c.biomass = 0;
+      c.shrubBiomass = c.plantType === 'shrub' ? c.biomass : 0;
+      c.grassBiomass = c.plantType === 'grass' ? c.biomass : 0;
+      c.vegetationAgeDays = c.plantAge;
+      c.vegetationStage = c.water || c.rocky || c.sandy ? 'bare' : c.woodland && c.woodyStage === 'matureTree' ? 'matureForest' : c.woodland ? 'youngWoodland' : c.shrubland ? 'scrub' : c.biomass > .12 ? 'grass' : 'bare';
+      c.woodyCover = c.woodland ? (c.plantType === 'tree' ? .78 : .48) : c.shrubland ? .36 : 0;
+      c.canopyCover = c.woodland && c.plantType === 'tree' && c.woodyStage === 'matureTree' ? .8 : c.plantType === 'tree' ? .42 : 0;
+      if (initialiseWoody) c.grassHeight = c.woodland ? 0 : clamp(c.biomass * s.longGrass, 0, 1);
+      c.drinkable = c.water;
+      const snowy = c.snowPack > .12 || c.temperature < -3;
+      c.terrainClass = c.water ? (c.waterDepth > .45 ? 'deepWater' : 'shallowWater') : snowy ? 'snow' : c.rocky ? 'rock' : c.sandy ? 'sand' : c.dryChannel && c.daysDry < 14 ? (c.sediment === 'silt' ? 'dirt' : 'sand') : c.wetland ? 'wetland' : c.woodland ? 'woodland' : c.shrubland ? 'shrubland' : c.temperature > 28 && c.ecoMoisture < .42 ? 'dirt' : c.temperature > 22 && c.ecoMoisture < .58 ? 'dryGrass' : c.biomass < .18 ? 'dirt' : 'grassland';
+      c.landCover = c.water ? (c.waterDepth > .45 ? 'deepLake' : c.waterChannel ? 'river' : 'shallowPond') : snowy ? 'snow' : c.rocky ? (c.elevation > 12 ? 'alpineRock' : 'rock') : c.wetland ? (c.woodland ? 'woodedSwamp' : c.shrubland ? 'shrubSwamp' : c.floodFrequency > .55 ? 'marsh' : 'wetMeadow') : c.lakeBasin && c.daysDry < 18 ? 'mudflat' : c.sandy ? 'sand' : c.woodland ? (c.canopyCover > .65 ? 'matureForest' : 'youngWoodland') : c.shrubland ? (c.ecoMoisture < .48 ? 'dryScrub' : 'bushland') : c.soilDepth < .28 && c.ecoMoisture < .38 ? 'heath' : c.grassHeight > .68 ? 'longGrass' : c.biomass < .18 ? 'bareDirt' : 'shortGrass';
+      applyHabitatProfile(c);
+    };
     for (const c of this.cells) {
-      const waterNeighbours = c.neighbours.filter(n => n.water);
-      const adjacentWater = waterNeighbours.length > 0;
-      const lakeAdjacent = waterNeighbours.some(n => n.waterBodyId?.startsWith('lake-'));
-      const localFlow = c.waterChannel ? c.discharge : Math.max(0, ...waterNeighbours.map(n => n.discharge || 0));
+      let adjacentWater = false, lakeAdjacent = false, localFlow = c.waterChannel ? c.discharge : 0;
+      for (const neighbour of c.neighbours) if (neighbour.water) { adjacentWater = true; if (neighbour.waterBodyId?.startsWith('lake-')) lakeAdjacent = true; if (!c.waterChannel) localFlow = Math.max(localFlow, neighbour.discharge || 0); }
       const windExposure = clamp(c.windExposure + c.windChannel * .28 - c.windShelter * .22, 0, 1);
       const waterNow = c.water || adjacentWater;
       c.daysWet = c.water ? c.daysWet + 1 : 0;
@@ -297,7 +389,8 @@ export class HexWorld {
       // areas while unsuitable land remains grassland.
       const climateSuitability = clamp(1 - Math.abs(c.temperature - 12) / 18, 0, 1);
       const seedSuitability = fbm(c.x + 900, c.z - 700, this.seed + 67);
-      const suitable = !c.water && !c.rocky && !c.sandy && !c.wetland && c.slope < .21 && c.soilDepth > .46 && c.ecoMoisture > .42 && c.vegetationStability >= .5 && climateSuitability > .42;
+      const wetWoodlandSuitable = c.wetland && c.floodFrequency < .62 && c.temperature > 4 && c.soilDepth > .5 && c.vegetationStability >= .5;
+      const suitable = !c.water && !c.rocky && !c.sandy && (( !c.wetland && c.slope < .21 && c.soilDepth > .46 && c.ecoMoisture > .42 && c.vegetationStability >= .5 && climateSuitability > .42) || wetWoodlandSuitable);
       c.woodlandSuitability = suitable ? (.31 * c.ecoMoisture + .24 * c.soilDepth + .18 * climateSuitability + .17 * c.vegetationStability + .10 * seedSuitability) : -Infinity;
       if (initialiseWoody && suitable) woodlandCandidates.push(c);
       // Scrub has a wider ecological niche than forest: it can persist on
@@ -306,6 +399,7 @@ export class HexWorld {
       const scrubSuitable = !c.water && !c.rocky && !c.sandy && !c.wetland && c.slope < .34 && c.soilDepth > .22 && c.ecoMoisture > .20 && climateSuitability > .24;
       if (initialiseWoody && scrubSuitable) shrubCandidates.push(c);
       if (initialiseWoody) c.woodland = false;
+      else finaliseCell(c);
     }
 
     // Default cover is 15% of land; the setup value spans 0%–30%.  Select the
@@ -334,24 +428,60 @@ export class HexWorld {
       this.woodyInitialised = true;
     }
 
-    for (const c of this.cells) {
-      if (initialiseWoody && !c.woodland && !c.shrubland) c.plantType = 'grass';
-      if (initialiseWoody) c.biomass = c.water || c.rocky || c.sandy ? 0 : clamp(.12 + c.soilDepth * .42 + c.moisture * .45, 0, c.woodland ? 1.2 : 1);
-      else if (c.water || c.rocky || c.sandy) c.biomass = 0;
-      c.shrubBiomass = c.plantType === 'shrub' ? c.biomass : 0;
-      c.grassBiomass = c.plantType === 'grass' ? c.biomass : 0;
-      c.vegetationAgeDays = c.plantAge;
-      c.vegetationStage = c.water || c.rocky || c.sandy ? 'bare' : c.woodland && c.woodyStage === 'matureTree' ? 'matureForest' : c.woodland ? 'youngWoodland' : c.shrubland ? 'scrub' : c.biomass > .12 ? 'grass' : 'bare';
-      c.woodyCover = c.woodland ? (c.plantType === 'tree' ? .78 : .48) : c.shrubland ? .36 : 0;
-      c.canopyCover = c.woodland && c.plantType === 'tree' && c.woodyStage === 'matureTree' ? .8 : c.plantType === 'tree' ? .42 : 0;
-      if (initialiseWoody) c.grassHeight = c.woodland ? 0 : clamp(c.biomass * s.longGrass, 0, 1);
-      c.drinkable = c.water;
-      const snowy = c.snowPack > .12 || c.temperature < -3;
-      c.terrainClass = c.water ? (c.waterDepth > .45 ? 'deepWater' : 'shallowWater') : snowy ? 'snow' : c.rocky ? 'rock' : c.sandy ? 'sand' : c.dryChannel && c.daysDry < 14 ? (c.sediment === 'silt' ? 'dirt' : 'sand') : c.wetland ? 'wetland' : c.woodland ? 'woodland' : c.shrubland ? 'shrubland' : c.temperature > 28 && c.ecoMoisture < .42 ? 'dirt' : c.temperature > 22 && c.ecoMoisture < .58 ? 'dryGrass' : c.biomass < .18 ? 'dirt' : 'grassland';
-      c.landCover = c.water ? (c.waterDepth > .45 ? 'deepLake' : c.waterChannel ? 'river' : 'shallowPond') : snowy ? 'snow' : c.rocky ? (c.elevation > 12 ? 'alpineRock' : 'rock') : c.wetland ? (c.floodFrequency > .55 ? 'swamp' : 'wetMeadow') : c.lakeBasin && c.daysDry < 18 ? 'mudflat' : c.sandy ? 'sand' : c.woodland ? (c.canopyCover > .65 ? 'matureForest' : 'youngWoodland') : c.shrubland ? (c.ecoMoisture < .48 ? 'dryScrub' : 'bushland') : c.soilDepth < .28 && c.ecoMoisture < .38 ? 'heath' : c.grassHeight > .68 ? 'longGrass' : c.biomass < .18 ? 'bareDirt' : 'shortGrass';
-    }
+    if (initialiseWoody) for (const c of this.cells) finaliseCell(c);
   }
-  update(day, season, weather = null) { this._seasonalTemperature = season === 'Winter' ? -7 : season === 'Summer' ? 5 : season === 'Autumn' ? -2 : 1; this._hydrologyStep(1, false, weather); this._applyPuddles(); this._deriveEcology(); this._indexBuckets(); }
+  _cellPresentationCode(c) {
+    const [red, green, blue] = habitatColourRgb(c);
+    let code = 2166136261;
+    for (const value of [
+      red | green << 8 | blue << 16,
+      presentationCode(c.terrainClass), presentationCode(c.landCover), presentationCode(c.habitatType),
+      presentationCode(c.plantCommunity), presentationCode(c.plantType), presentationCode(c.woodyStage),
+      c.habitatDensityBand || 0, c.habitatHumidityBand || 0,
+      Math.floor(Math.max(0, c.biomass || 0) / .08), Math.floor(Math.max(0, c.grassHeight || 0) / .1),
+      (c.water ? 1 : 0) | (c.waterChannel ? 2 : 0) | (c.woodland ? 4 : 0) | (c.shrubland ? 8 : 0) | (c.wetland ? 16 : 0) | (c.rocky ? 32 : 0) | (c.sandy ? 64 : 0),
+      presentationCode(c.waterBodyId)
+    ]) code = mixCode(code, value);
+    return code;
+  }
+  _capturePresentationState(initialise = false) {
+    const count = this.cells.length;
+    if (!this._cellPresentationCodes || this._cellPresentationCodes.length !== count) {
+      this._cellPresentationCodes = new Uint32Array(count);
+      this._presentationWaterDepth = new Float64Array(count);
+      this._presentationWaterSurface = new Float64Array(count);
+      this._presentationWaterWidth = new Float64Array(count);
+      this._riverRouteIndexByCell = new Int32Array(count); this._riverRouteIndexByCell.fill(-1);
+      for (let routeIndex = 0; routeIndex < this.riverRoutes.length; routeIndex += 1) for (const cell of this.riverRoutes[routeIndex].cells) this._riverRouteIndexByCell[cell.id] = routeIndex;
+      this._basinIndexById = new Map(this.basins.map((basin, index) => [basin.id, index]));
+      this._presentationBasinLevels = new Float64Array(this.basins.length);
+      initialise = true;
+    }
+    const cellIds = [], routeChanged = new Uint8Array(this.riverRoutes.length), basinChanged = new Uint8Array(this.basins.length), waterCellIds = [];
+    for (const c of this.cells) {
+      const id = c.id, code = this._cellPresentationCode(c), depth = c.waterDepth || 0, surface = Number.isFinite(c.waterSurface) ? c.waterSurface : NaN, width = c.waterWidth || 0;
+      const changed = !initialise && (code !== this._cellPresentationCodes[id] || depth !== this._presentationWaterDepth[id] || !Object.is(surface, this._presentationWaterSurface[id]) || width !== this._presentationWaterWidth[id]);
+      if (changed) {
+        cellIds.push(id);
+        const routeIndex = this._riverRouteIndexByCell[id]; if (routeIndex >= 0) routeChanged[routeIndex] = 1;
+        const basinIndex = this._basinIndexById.get(c.basinId); if (basinIndex != null) basinChanged[basinIndex] = 1;
+      }
+      this._cellPresentationCodes[id] = code; this._presentationWaterDepth[id] = depth; this._presentationWaterSurface[id] = surface; this._presentationWaterWidth[id] = width;
+      if (c.water) waterCellIds.push(id);
+    }
+    for (let index = 0; index < this.basins.length; index += 1) {
+      const level = this.basins[index].level;
+      if (!initialise && level !== this._presentationBasinLevels[index]) basinChanged[index] = 1;
+      this._presentationBasinLevels[index] = level;
+    }
+    this.waterCellIds = waterCellIds;
+    return {
+      cellIds,
+      lakeBasinIds: this.basins.filter((_, index) => basinChanged[index]).map(basin => basin.id),
+      riverRouteIds: this.riverRoutes.filter((_, index) => routeChanged[index]).map(route => route.id)
+    };
+  }
+  update(day, season, weather = null) { void day; this._seasonalTemperature = season === 'Winter' ? -7 : season === 'Summer' ? 5 : season === 'Autumn' ? -2 : 1; this._hydrologyStep(1, false, weather); this._applyPuddles(); this._deriveEcology(); return this._capturePresentationState(false); }
   _indexBuckets() { this.buckets.clear(); const step = Math.max(2, this.radius * 2.2); this.bucketStep = step; for (const c of this.cells) { const k = `${Math.floor((c.x + this.half) / step)},${Math.floor((c.z + this.half) / step)}`; if (!this.buckets.has(k)) this.buckets.set(k, []); this.buckets.get(k).push(c); } }
   lookup(x, z) { const bx = Math.floor((x + this.half) / this.bucketStep), bz = Math.floor((z + this.half) / this.bucketStep); let best = null, bestD = Infinity; for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) for (const c of this.buckets.get(`${bx + dx},${bz + dz}`) || []) { const d = (c.x - x) ** 2 + (c.z - z) ** 2; if (d < bestD) { bestD = d; best = c; } } return best || this.cells[0]; }
   corners(c) { const out = []; for (let i = 0; i < 6; i++) { const a = Math.PI / 180 * (60 * i - 30); out.push({ x: c.x + this.radius * Math.cos(a), z: c.z + this.radius * Math.sin(a) }); } return out; }

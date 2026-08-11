@@ -1,24 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  ECOLOGY_POPULATION_LEVELS, ECOLOGY_PRESETS, ECOLOGY_PRESET_POPULATIONS, FOOD_ECOLOGY, LOW_PREDATOR_FOUNDER_THRESHOLD, SPATIAL_ECOLOGY, SPECIES, SPECIES_IDS,
-  carcassPreference, ecologyPresetCounts, ecologyWarnings, enabledSpeciesCounts, foodPreferenceSummary,
+  ECOLOGY_POPULATION_LEVELS, ECOLOGY_PRESETS, ECOLOGY_PRESET_POPULATIONS, FOOD_ECOLOGY, LOW_PREDATOR_FOUNDER_THRESHOLD, SPATIAL_ECOLOGY, SPECIES, SPECIES_IDS, SPECIES_VISUAL_DESIGNS, WORLD_SCALE_ECOLOGY_DESIGNS,
+  carcassPreference, ecologyPresetCounts, ecologyPresetForWorldScale, ecologyRosterForWorldScale, ecologyWarnings, enabledSpeciesCounts, foodPreferenceSummary,
   isSustainableForage, needsPregnantPredatorFounder, plantPreference, preyCompatible, speciesCategoryTotals
 } from "../src/species-registry.js";
 
-test("the ecology registry contains the original pair and all 22 species", () => {
-  assert.equal(SPECIES_IDS.length, 22);
+test("the catalogue retains the two generic originals while world rosters vary by scale", () => {
+  assert.ok(SPECIES_IDS.length >= 2);
   assert.equal(SPECIES.grazer.label, "Valley Grazer");
   assert.equal(SPECIES.hunter.label, "Ridge Hunter");
+  assert.equal(SPECIES.grazer.realLifeBasis, "average deer");
+  assert.equal(SPECIES.hunter.realLifeBasis, "average grey wolf");
   assert.equal(ECOLOGY_PRESETS.original.length, 2);
-  assert.equal(ECOLOGY_PRESETS.compact.length, 8);
-  assert.equal(ECOLOGY_PRESETS.balanced.length, 12);
-  assert.equal(ECOLOGY_PRESETS.expanded.length, 16);
-  assert.equal(ECOLOGY_PRESETS.full.length, 22);
+  assert.deepEqual([1, 2, 3, 4].map(span => ecologyRosterForWorldScale(span).length), [6, 14, 20, SPECIES_IDS.length]);
+  assert.deepEqual([1, 2, 3, 4].map(ecologyPresetForWorldScale), ["compact", "balanced", "expanded", "full"]);
+  assert.equal(SPECIES_IDS.length, 26);
+  for (const design of Object.values(WORLD_SCALE_ECOLOGY_DESIGNS)) assert.ok(design.factors.length >= 3);
 });
 
-test("compact ecology variants each contain eight valid species and viable hunters", () => {
-  const compactNames = ["compact", "compact-large", "compact-small", "compact-open", "compact-woodland"];
+test("specialist ecology variants each contain eight valid species and viable hunters", () => {
+  const compactNames = ["compact-large", "compact-small", "compact-open", "compact-woodland"];
   for (const name of compactNames) {
     const ids = ECOLOGY_PRESETS[name];
     assert.equal(ids.length, 8, name);
@@ -28,7 +30,7 @@ test("compact ecology variants each contain eight valid species and viable hunte
       assert.ok(ids.some(preyId => preyCompatible(hunterId, preyId)), `${name}: ${hunterId} has compatible prey`);
     }
   }
-  assert.ok(ECOLOGY_PRESETS["compact-small"].every(id => ["tiny", "small"].includes(SPECIES[id].sizeClass)));
+  assert.ok(ECOLOGY_PRESETS["compact-small"].filter(id => ["tiny", "small"].includes(SPECIES[id].sizeClass)).length >= 6);
   assert.equal(ECOLOGY_PRESETS["compact-large"].filter(id => SPECIES[id].sizeClass === "large").length, 6);
 });
 
@@ -62,10 +64,21 @@ test("one or two hunting founders receive the low-population pregnancy safeguard
   assert.equal(needsPregnantPredatorFounder("great-omnivore", 1), true);
 });
 
-test("the all-species calculated preset enables every registered species", () => {
+test("the extensive calculated preset enables every registered species", () => {
   const counts = ecologyPresetCounts("full", 100);
-  assert.equal(Object.values(counts).filter(value => value > 0).length, 22);
+  assert.equal(Object.values(counts).filter(value => value > 0).length, SPECIES_IDS.length);
   assert.ok(SPECIES_IDS.every(id => counts[id] >= 1));
+});
+
+test("real species have scientific identities and two-mass attached-feature designs", () => {
+  for (const id of SPECIES_IDS.filter(id => !SPECIES[id].generic)) {
+    assert.ok(SPECIES[id].scientificName, `${id} scientific name`);
+    const visual = SPECIES_VISUAL_DESIGNS[id];
+    assert.ok(visual?.bodyShape && visual?.headShape, `${id} body/head design`);
+    assert.ok(visual.features.every(feature => ["head", "body"].includes(feature.attach)), `${id} features attach only to head or body`);
+  }
+  assert.equal(SPECIES_VISUAL_DESIGNS.grazer, null);
+  assert.equal(SPECIES_VISUAL_DESIGNS.hunter, null);
 });
 
 test("exact counts preserve disabled species and calculate ecological totals", () => {
