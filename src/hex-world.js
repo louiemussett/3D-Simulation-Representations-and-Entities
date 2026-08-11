@@ -80,7 +80,7 @@ export class HexWorld {
     for (let rr = -rows; rr <= rows; rr++) for (let q = -cols; q <= cols; q++) {
       const x = col * (q + rr / 2), z = row * rr;
       if (x < -this.half - r || x > this.half + r || z < -this.half - r || z > this.half + r) continue;
-      const c = { id: this.cells.length, q, r: rr, x, z, elevation: 0, slope: 0, soilDepth: 0, baseSoilDepth: 0, soilRetention: .6, aeolianPotential: 0, windExposure: 0, windShelter: 0, windChannel: 0, parentMaterial: 'loam', fertility: 0, moisture: 0, ecoMoisture: 0, humidity: 0, temperature: 0, baseTemperature: 0, snowPack: 0, soilWater: 55, groundwater: 38, runoff: 0, discharge: 0, meanDischarge: 0, peakDischarge: 0, channelStrength: 0, channel: false, channelWidthRaw: 0, channelWidth: 0, waterWidth: 0, upstreamChannelCount: 0, streamOrder: 0, riverSizeScore: 0, riverSizeClass: 'none', flowRegime: 'none', riverPattern: 'none', riverBend: 0, routingRank: 0, incoming: 0, localRunoff: 0, accumulation: 1, drainage: 0, waterDepth: 0, waterLevel: 0, waterSurface: null, waterBodyId: null, terrainClass: 'grassland', landCover: 'shortGrass', plantType: 'grass', biomass: 0, grassBiomass: 0, grassHeight: 0, shrubBiomass: 0, woodyCover: 0, canopyCover: 0, shrubland: false, woodland: false, woodlandSuitability: 0, woodyStage: 'none', vegetationAgeDays: 0, vegetationStage: 'bare', leaflessTreeUntil: 0, fallenTreeUntil: 0, wetland: false, rocky: false, sandy: false, drinkable: false, scent: null, neighbours: [], flowTo: null, filled: 0, basinId: null, lakeBasin: false, permanentWater: false, water: false, waterChannel: false, dryChannel: false, floodplain: false, riparian: false, sediment: 'loam', shoreExposure: 0, floodFrequency: 0, daysWet: 0, daysDry: 0, vegetationStability: .5, plantAge: 0, plantStage: 'mature', seedStore: 0, substrate: 'loam' };
+      const c = { id: this.cells.length, q, r: rr, x, z, elevation: 0, slope: 0, soilDepth: 0, baseSoilDepth: 0, soilRetention: .6, aeolianPotential: 0, windExposure: 0, windShelter: 0, windChannel: 0, parentMaterial: 'loam', fertility: 0, moisture: 0, ecoMoisture: 0, humidity: 0, temperature: 0, baseTemperature: 0, snowPack: 0, soilWater: 55, groundwater: 38, runoff: 0, discharge: 0, meanDischarge: 0, peakDischarge: 0, channelStrength: 0, channel: false, channelWidthRaw: 0, channelWidth: 0, waterWidth: 0, upstreamChannelCount: 0, streamOrder: 0, riverSizeScore: 0, riverSizeClass: 'none', flowRegime: 'none', riverPattern: 'none', riverBend: 0, routingRank: 0, incoming: 0, localRunoff: 0, accumulation: 1, drainage: 0, waterDepth: 0, waterLevel: 0, waterSurface: null, waterBodyId: null, terrainClass: 'grassland', landCover: 'shortGrass', plantType: 'grass', biomass: 0, grassBiomass: 0, grassHeight: 0, shrubBiomass: 0, woodyCover: 0, canopyCover: 0, shrubland: false, woodland: false, woodlandSuitability: 0, woodlandDensity: 0, woodyStage: 'none', vegetationAgeDays: 0, vegetationStage: 'bare', leaflessTreeUntil: 0, fallenTreeUntil: 0, wetland: false, rocky: false, sandy: false, drinkable: false, scent: null, neighbours: [], flowTo: null, filled: 0, basinId: null, lakeBasin: false, permanentWater: false, water: false, waterChannel: false, dryChannel: false, floodplain: false, riparian: false, sediment: 'loam', shoreExposure: 0, floodFrequency: 0, daysWet: 0, daysDry: 0, vegetationStability: .5, plantAge: 0, plantStage: 'mature', seedStore: 0, substrate: 'loam' };
       this.cells.push(c); this.byAxial.set(axialKey(q, rr), c);
     }
   }
@@ -341,8 +341,9 @@ export class HexWorld {
       c.grassBiomass = c.plantType === 'grass' ? c.biomass : 0;
       c.vegetationAgeDays = c.plantAge;
       c.vegetationStage = c.water || c.rocky || c.sandy ? 'bare' : c.woodland && c.woodyStage === 'matureTree' ? 'matureForest' : c.woodland ? 'youngWoodland' : c.shrubland ? 'scrub' : c.biomass > .12 ? 'grass' : 'bare';
-      c.woodyCover = c.woodland ? (c.plantType === 'tree' ? .78 : .48) : c.shrubland ? .36 : 0;
-      c.canopyCover = c.woodland && c.plantType === 'tree' && c.woodyStage === 'matureTree' ? .8 : c.plantType === 'tree' ? .42 : 0;
+      const woodlandDensity = clamp(Number(c.woodlandDensity) || (c.woodland ? .55 : c.shrubland ? .24 : 0), 0, 1);
+      c.woodyCover = c.woodland ? c.plantType === 'tree' ? clamp(.18 + woodlandDensity * .76, 0, .94) : clamp(.18 + woodlandDensity * .52, 0, .72) : c.shrubland ? clamp(.22 + woodlandDensity * .44, 0, .58) : 0;
+      c.canopyCover = c.plantType === 'tree' ? c.woodyStage === 'matureTree' ? clamp(.22 + woodlandDensity * .7, 0, .92) : clamp(.12 + woodlandDensity * .5, 0, .62) : 0;
       if (initialiseWoody) c.grassHeight = c.woodland ? 0 : clamp(c.biomass * s.longGrass, 0, 1);
       c.drinkable = c.water;
       const snowy = c.snowPack > .12 || c.temperature < -3;
@@ -424,6 +425,25 @@ export class HexWorld {
       });
       for (let i = 0; i < Math.min(shrubTarget, scrub.length); i++) {
         const c = scrub[i]; c.shrubland = true; c.woodyStage = 'shrub'; c.plantType = 'shrub'; c.plantAge = 30 + hash(c.id ^ (this.seed + 101)) * 420;
+      }
+      // Preserve a continuous structural value rather than throwing away the
+      // suitability field after the global woodland quota is selected. Local
+      // forest cover feathers the edge; site quality differentiates sparse
+      // edge woodland from dense interior canopy. Adjacent non-forest cells
+      // retain a small transition value so their ground colour does not jump
+      // directly from dense forest to ordinary grass.
+      let minimumSuitability = Infinity, maximumSuitability = -Infinity;
+      for (const candidate of woodlandCandidates) if (Number.isFinite(candidate.woodlandSuitability)) { minimumSuitability = Math.min(minimumSuitability, candidate.woodlandSuitability); maximumSuitability = Math.max(maximumSuitability, candidate.woodlandSuitability); }
+      if (!Number.isFinite(minimumSuitability)) { minimumSuitability = 0; maximumSuitability = 1; }
+      const suitabilityRange = Math.max(.0001, maximumSuitability - minimumSuitability);
+      for (const c of this.cells) {
+        const localCells = [c, ...c.neighbours], localForestCover = localCells.filter(cell => cell.woodland).length / Math.max(1, localCells.length);
+        const suitability = Number.isFinite(c.woodlandSuitability) ? clamp((c.woodlandSuitability - minimumSuitability) / suitabilityRange, 0, 1) : 0;
+        c.woodlandDensity = c.woodland
+          ? clamp(.22 + suitability * .34 + localForestCover * .44, .24, 1)
+          : c.shrubland
+            ? clamp(.12 + suitability * .16 + localForestCover * .12, .12, .38)
+            : clamp(suitability * localForestCover * .22, 0, .22);
       }
       this.woodyInitialised = true;
     }

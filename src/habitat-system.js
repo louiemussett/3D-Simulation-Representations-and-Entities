@@ -86,9 +86,10 @@ export function habitatProfile(cell = {}) {
   const waterAvailability = clamp(soilMoisture * .46 + groundwater * .24 + atmosphericHumidity * .16 + surfaceInfluence * .14);
   const maxBiomass = cell.plantType === "tree" ? 1.2 : cell.plantType === "shrub" ? .8 : 1;
   const biomass = clamp((cell.biomass || 0) / maxBiomass);
-  const canopy = clamp(cell.canopyCover ?? (cell.woodland && cell.plantType === "tree" ? .72 : cell.woodland ? .38 : 0));
+  const woodlandDensity = clamp(cell.woodlandDensity ?? (cell.woodland ? .55 : cell.shrubland ? .24 : 0));
+  const canopy = clamp(cell.canopyCover ?? (cell.woodland && cell.plantType === "tree" ? .22 + woodlandDensity * .7 : cell.woodland ? woodlandDensity * .32 : 0));
   const understory = clamp(cell.understoryDensity ?? (cell.shrubland ? .62 : cell.plantType === "shrub" ? biomass * .75 : (cell.grassHeight || 0) * (1 - canopy * .7)));
-  const density = cell.water ? 0 : clamp(biomass * .52 + canopy * .32 + understory * .16);
+  const density = cell.water ? 0 : clamp(biomass * .44 + canopy * .27 + understory * .14 + woodlandDensity * .15);
   const habitatType = classifyHabitat(cell, temperature, waterAvailability, canopy, understory, density);
   const humidity = clamp(atmosphericHumidity * .38 + waterAvailability * .44 + canopy * .12 + (cell.wetland ? .12 : 0) - (cell.windExposure || 0) * .08);
   const densityBand = band(density, HABITAT_DENSITY_BANDS);
@@ -109,7 +110,8 @@ export function habitatProfile(cell = {}) {
     waterAvailability,
     aridity: clamp(1 - waterAvailability),
     canopy,
-    understory
+    understory,
+    woodlandDensity
   };
   return Object.freeze(result);
 }
@@ -128,7 +130,8 @@ export function applyHabitatProfile(cell = {}) {
     waterAvailability: profile.waterAvailability,
     aridity: profile.aridity,
     canopyDensity: profile.canopy,
-    understoryDensity: profile.understory
+    understoryDensity: profile.understory,
+    woodlandDensity: profile.woodlandDensity
   });
   return profile;
 }

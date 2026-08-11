@@ -11765,13 +11765,13 @@ function drawVegetationRegions(stride = 2, observer = null, dirtyKeys = null) {
     const batch = batchFor(chunkKey);
     for (const { cell: c, sampleX: x, sampleZ: z } of vegetationSampleCache.chunks.get(chunkKey) || []) {
       if (!(c.woodland || c.shrubland) || (observer && !visionResult(observer, c, visionForHex, 0.08).visible)) continue;
-      const n = variation(x, z), localDensity = clamp(c.habitatDensity ?? c.biomass, 0, 1), matureTree = c.plantType === "tree" && c.soilDepth > 0.58 && c.moisture > 0.48;
-      const hasTree = c.plantType === "tree" && (c.fallenTreeUntil > sim.ecologicalMinute || (matureTree && n > clamp(0.86 - (worldSetup.trees ?? 1) * 0.4 - localDensity * .38, 0.03, 0.92)));
+      const n = variation(x, z), localDensity = clamp(c.woodlandDensity ?? c.habitatDensity ?? c.biomass, 0, 1), matureTree = c.plantType === "tree" && c.soilDepth > 0.58 && c.moisture > 0.48;
+      const hasTree = c.plantType === "tree" && (c.fallenTreeUntil > sim.ecologicalMinute || (matureTree && n > clamp(1.03 - (worldSetup.trees ?? 1) * .34 - localDensity * .65, .04, .96)));
       if (hasTree && c.fallenTreeUntil > sim.ecologicalMinute) batch.fallenTrees.push(c);
       else if (hasTree && leaflessTree(c)) batch.bareTrees.push(c);
       else if (hasTree) batch.trees.push(c);
       const hasBush = c.shrubland || (c.woodland && c.woodyStage !== "matureTree" && n > 0.54);
-      if (hasBush && n > clamp(0.88 - (worldSetup.bushes ?? 1) * 0.34 - localDensity * .42, 0.03, 0.92)) batch.bushes.push({ ...c, sourceX: c.x, sourceZ: c.z, x: clamp(c.x + (variation(x + 4, z) - .5) * 1.35, -HALF + .8, HALF - 1.8), z: clamp(c.z + (variation(x, z + 9) - .5) * 1.35, -HALF + .8, HALF - 1.8) });
+      if (hasBush && n > clamp(.96 - (worldSetup.bushes ?? 1) * .3 - localDensity * .54, .04, .94)) batch.bushes.push({ ...c, sourceX: c.x, sourceZ: c.z, x: clamp(c.x + (variation(x + 4, z) - .5) * 1.35, -HALF + .8, HALF - 1.8), z: clamp(c.z + (variation(x, z + 9) - .5) * 1.35, -HALF + .8, HALF - 1.8) });
     }
     for (const c of landscapeChunkCells.get(chunkKey) || []) if (c.water && !c.waterChannel && c.waterDepth > .025 && c.waterDepth <= .45 && c.temperature > 8 && c.shoreExposure < .62 && ((c.id * 17 + sim.seed) % 11 === 0)) batch.lilies.push(c);
   }
@@ -11791,7 +11791,7 @@ function drawVegetationRegions(stride = 2, observer = null, dirtyKeys = null) {
     for (let i = 0; i < items.length; i += 1) {
       const c = items[i], sx = c.sourceX ?? c.x, sz = c.sourceZ ?? c.z;
       const offsetX = (variation(sx + 17, sz + 31) - .5) * .24, offsetZ = (variation(sx + 53, sz + 7) - .5) * .24;
-      const yaw = variation(sx + 71, sz + 11) * Math.PI * 2, densityScale = .82 + clamp(c.habitatDensity ?? c.biomass, 0, 1) * .28, size = densityScale + variation(sx + 29, sz + 47) * .18;
+      const yaw = variation(sx + 71, sz + 11) * Math.PI * 2, densityScale = .78 + clamp(c.woodlandDensity ?? c.habitatDensity ?? c.biomass, 0, 1) * .34, size = densityScale + variation(sx + 29, sz + 47) * .18;
       vegetationInstanceDummy.position.set(c.x + offsetX, terrainHeight(c.x, c.z) + height, c.z + offsetZ);
       vegetationInstanceDummy.rotation.set(fallen ? Math.PI / 2 : 0, yaw, fallen ? Math.PI / 2 : 0); vegetationInstanceDummy.scale.set(scale, scale * size, scale); vegetationInstanceDummy.updateMatrix(); mesh.setMatrixAt(i, vegetationInstanceDummy.matrix);
     }

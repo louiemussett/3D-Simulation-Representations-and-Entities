@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { HABITAT_DENSITY_BANDS, applyHabitatProfile, habitatColourRgb, habitatProfile } from "../src/habitat-system.js";
+import { HexWorld } from "../src/hex-world.js";
 import { HABITAT_ECOLOGY, SPECIES_IDS, habitatSuitability, selectHabitatWeighted } from "../src/species-registry.js";
 
 const cell = overrides => ({ temperature: 16, humidity: .52, ecoMoisture: .52, groundwater: 55, biomass: .65, grassHeight: .45, plantType: "grass", canopyCover: 0, floodFrequency: 0, ...overrides });
@@ -25,6 +26,24 @@ test("eight density levels and colour darkening expose gradual vegetation transi
   const mutable = denseCell; applyHabitatProfile(mutable);
   assert.equal(mutable.habitatDensityBand, dense.densityBand);
   assert.equal(mutable.plantCommunity, dense.plantCommunity);
+});
+
+test("woodland structure phases canopy and colour instead of using one forest value", () => {
+  const sparseCell = cell({ woodland: true, plantType: "tree", woodlandDensity: .25, canopyCover: undefined, biomass: .42 });
+  const denseCell = cell({ woodland: true, plantType: "tree", woodlandDensity: .92, canopyCover: undefined, biomass: .9 });
+  const sparse = habitatProfile(sparseCell), dense = habitatProfile(denseCell);
+  assert.ok(sparse.canopy < dense.canopy);
+  assert.ok(sparse.densityBand < dense.densityBand);
+  assert.ok(habitatColourRgb(sparseCell).reduce((sum, value) => sum + value, 0) > habitatColourRgb(denseCell).reduce((sum, value) => sum + value, 0));
+});
+
+test("generated forests have lighter edges and multiple structural density bands", () => {
+  const world = new HexWorld(1337, { size: 48, hexDetail: 500, startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, relief: .15, mountains: 1, hills: 1, valleys: 1, ridges: .55, plateaus: .35, roughness: .3, rivers: 1.25, riverWidthVariation: 1, riverPatternDiversity: 1, lakes: 1.25, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1.2, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36, temperatureVariation: 1, climate: 1 });
+  const forest = world.cells.filter(item => item.woodland), edges = forest.filter(item => item.neighbours.some(neighbour => !neighbour.woodland)), interiors = forest.filter(item => item.neighbours.length && item.neighbours.every(neighbour => neighbour.woodland));
+  const meanDensity = items => items.reduce((sum, item) => sum + item.woodlandDensity, 0) / items.length;
+  assert.ok(new Set(forest.map(item => item.habitatDensityBand)).size >= 3);
+  assert.ok(edges.length && interiors.length);
+  assert.ok(meanDensity(edges) < meanDensity(interiors));
 });
 
 test("every species has a bounded structural habitat profile", () => {
