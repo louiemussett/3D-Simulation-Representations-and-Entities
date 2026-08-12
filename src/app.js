@@ -338,6 +338,8 @@ const mats = {
 };
 // High-contrast facial features make a body's front readable at close range.
 mats.eye = new THREE.MeshBasicMaterial({ color: 0x1a1420 });
+mats.animalDark = new THREE.MeshLambertMaterial({ color: 0x211d20 });
+mats.animalLight = new THREE.MeshLambertMaterial({ color: 0xd8d0bb, roughness: .78 });
 mats.trunk = new THREE.MeshLambertMaterial({ color: 0x5a3a22 });
 // A leafless crown is deliberately a different material from a living canopy:
 // it remains useful cover, but is visibly not a dense sight-blocking tree.
@@ -360,6 +362,30 @@ function createGroundPatternTexture() {
   const texture = new THREE.CanvasTexture(canvas); texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.colorSpace = THREE.SRGBColorSpace; return texture;
 }
 const groundPatternTexture = createGroundPatternTexture();
+const animalPatternTextures = new Map();
+function animalPatternTexture(kind) {
+  if (animalPatternTextures.has(kind)) return animalPatternTextures.get(kind);
+  const canvas = document.createElement("canvas"); canvas.width = canvas.height = 128;
+  const context = canvas.getContext("2d"); context.fillStyle = "#ffffff"; context.fillRect(0, 0, 128, 128);
+  const dark = kind === "snake-patches" ? "#5c3a20" : kind === "shell-panels" ? "#766342" : "#514a43";
+  context.fillStyle = dark; context.strokeStyle = dark;
+  if (kind === "spots") for (const [x, y, radius] of [[18,18,8],[52,31,6],[91,17,9],[116,48,5],[25,70,5],[67,76,9],[104,99,7],[38,113,6]]) { context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill(); }
+  else if (kind === "snake-patches") for (const [x, y, rx, ry] of [[19,20,15,8],[62,17,11,15],[105,31,17,9],[34,65,13,18],[82,72,18,10],[116,93,10,17],[53,112,17,9]]) { context.beginPath(); context.ellipse(x, y, rx, ry, .35, 0, Math.PI * 2); context.fill(); }
+  else if (kind === "shell-panels") { context.lineWidth = 5; for (const y of [0, 42, 84, 126]) { context.beginPath(); context.moveTo(0, y); context.lineTo(128, y); context.stroke(); } for (const x of [0, 43, 86, 128]) { context.beginPath(); context.moveTo(x, 0); context.lineTo(x, 128); context.stroke(); } }
+  else if (kind === "dark-mantle") { context.fillRect(0, 0, 128, 55); context.beginPath(); context.moveTo(0, 55); for (let x = 0; x <= 128; x += 16) context.lineTo(x, 55 + (x / 16 % 2 ? 9 : 0)); context.lineTo(128, 0); context.closePath(); context.fill(); }
+  else if (kind === "tail-bands") for (let y = 10; y < 128; y += 28) context.fillRect(0, y, 128, 12);
+  const texture = new THREE.CanvasTexture(canvas); texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.colorSpace = THREE.SRGBColorSpace;
+  if (["spots", "snake-patches"].includes(kind)) texture.repeat.set(1.6, 1.35);
+  animalPatternTextures.set(kind, texture); return texture;
+}
+const patternedCoatMaterialCache = new Map();
+function patternedAnimalMaterial(baseMaterial, kinds = []) {
+  const kind = kinds.find(value => ["spots", "snake-patches", "shell-panels", "dark-mantle", "tail-bands"].includes(value));
+  if (!kind) return baseMaterial;
+  const key = `${baseMaterial.uuid}:${kind}`;
+  if (!patternedCoatMaterialCache.has(key)) { const material = baseMaterial.clone(); material.map = animalPatternTexture(kind); material.needsUpdate = true; markResource(material, RESOURCE_OWNERSHIP.shared); patternedCoatMaterialCache.set(key, material); }
+  return patternedCoatMaterialCache.get(key);
+}
 const groundLandMaterial = mats.groundBase.clone();
 groundLandMaterial.map = groundPatternTexture; groundLandMaterial.color.set(0xffffff); groundLandMaterial.vertexColors = true; groundLandMaterial.roughness = .92;
 let groundMesh = null;
@@ -378,9 +404,71 @@ geos.eye = new THREE.SphereGeometry(0.05, 10, 8);
 geos.animalBlock = new THREE.BoxGeometry(.7, .58, .76, 2, 2, 2);
 geos.animalWedge = new THREE.ConeGeometry(.42, .78, 5);
 geos.animalCoil = new THREE.TorusGeometry(.3, .14, 10, 24);
+function createTaperedSerpentGeometry() {
+  const path = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0, .64), new THREE.Vector3(-.24, 0, .42),
+    new THREE.Vector3(.22, 0, .14), new THREE.Vector3(-.25, 0, -.16),
+    new THREE.Vector3(.18, 0, -.43), new THREE.Vector3(0, 0, -.72)
+  ]);
+  const rings = 18, sides = 7, positions = [], uvs = [], indices = [];
+  for (let ring = 0; ring <= rings; ring += 1) {
+    const t = ring / rings, centre = path.getPointAt(t), tangent = path.getTangentAt(t).normalize();
+    const side = new THREE.Vector3().crossVectors(tangent, new THREE.Vector3(0, 1, 0)).normalize();
+    const up = new THREE.Vector3().crossVectors(side, tangent).normalize();
+    const radius = .055 + .105 * Math.sin(Math.PI * Math.pow(t, .82));
+    for (let segment = 0; segment < sides; segment += 1) {
+      const angle = segment / sides * Math.PI * 2;
+      const point = centre.clone().addScaledVector(side, Math.cos(angle) * radius).addScaledVector(up, Math.sin(angle) * radius * .72);
+      positions.push(point.x, point.y, point.z);
+      uvs.push(segment / sides, t);
+    }
+  }
+  for (let ring = 0; ring < rings; ring += 1) for (let segment = 0; segment < sides; segment += 1) {
+    const next = (segment + 1) % sides, a = ring * sides + segment, b = ring * sides + next, c = (ring + 1) * sides + segment, d = (ring + 1) * sides + next;
+    indices.push(a, c, b, b, c, d);
+  }
+  const geometry = new THREE.BufferGeometry(); geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3)); geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2)); geometry.setIndex(indices); geometry.computeVertexNormals(); return geometry;
+}
+geos.animalSerpent = createTaperedSerpentGeometry();
 geos.animalDome = new THREE.SphereGeometry(.44, 16, 10, 0, Math.PI * 2, 0, Math.PI * .62);
-geos.featureWing = new THREE.SphereGeometry(.32, 10, 6);
-geos.featureBeak = new THREE.ConeGeometry(.1, .32, 5);
+geos.markingDisc = new THREE.SphereGeometry(.16, 10, 6);
+geos.markingRing = new THREE.TorusGeometry(.16, .025, 6, 12);
+function createSilhouetteProfileGeometry(profile, head = false) {
+  if (profile === "curved-tube") return geos.animalSerpent;
+  if (profile === "dome") return geos.animalDome;
+  const geometry = new THREE.SphereGeometry(.42, 16, 10), positions = geometry.attributes.position;
+  for (let index = 0; index < positions.count; index += 1) {
+    let x = positions.getX(index), y = positions.getY(index), z = positions.getZ(index);
+    const nz = z / .42, front = Math.max(0, nz), rear = Math.max(0, -nz);
+    if (["pear", "lean-pear"].includes(profile)) { const width = 1 + rear * .34 - front * .1; x *= width; y *= 1 + rear * .22; }
+    if (profile === "front-heavy") { const weight = 1 + front * .38 - rear * .12; x *= weight; y *= weight; }
+    if (profile === "elevated-deep") { x *= .9; y *= 1.18; }
+    if (profile === "long-oval") { x *= .9; y *= .82; }
+    if (profile === "compact-loaf") { y *= .86; z *= .94; }
+    if (profile === "slim-loaf") { x *= .82; y *= .86; }
+    if (profile === "low-loaf") y *= .7;
+    if (profile === "deep-barrel") { x *= 1.08; y *= 1.12; }
+    if (profile === "sloped-wedge") { y *= .82 + front * .35; x *= 1 + front * .12; }
+    if (profile === "teardrop") { const weight = 1 + rear * .28 - front * .18; x *= weight; y *= weight; }
+    if (profile === "flattened-taper") { y *= .48; x *= .9 + front * .16 - rear * .22; z *= 1.12; }
+    if (profile === "humped") { y *= 1 + .46 * Math.exp(-Math.pow((nz + .05) * 2.6, 2)); x *= .92; }
+    if (head) {
+      if (["pointed", "tapered", "bird", "serpent"].includes(profile)) {
+        const taper = Math.max(.16, 1 - front * (profile === "bird" ? .88 : .72)); x *= taper; y *= taper;
+        z += front * front * .24;
+      }
+      if (profile === "elongated") { z *= 1.28; x *= .88; }
+      if (profile === "blunt") { z *= 1.08; x *= 1.08; }
+      if (profile === "broad") { x *= 1.22; y *= 1.04; }
+      if (profile === "flat") { y *= .55; x *= 1.2; z *= 1.2; }
+      if (profile === "downturned") { z *= 1.2; y -= front * .12; }
+    }
+    positions.setXYZ(index, x, y, z);
+  }
+  positions.needsUpdate = true; geometry.computeVertexNormals(); return geometry;
+}
+const silhouetteBodyGeometries = Object.fromEntries(["pear", "lean-pear", "front-heavy", "elevated-deep", "long-oval", "compact-loaf", "slim-loaf", "sloped-wedge", "teardrop", "low-loaf", "flattened-taper", "curved-tube", "dome", "deep-barrel", "humped"].map(profile => [profile, createSilhouetteProfileGeometry(profile)]));
+const silhouetteHeadGeometries = Object.fromEntries(["rounded", "blunt", "elongated", "pointed", "tapered", "downturned", "bird", "flat", "serpent", "broad"].map(profile => [profile, createSilhouetteProfileGeometry(profile, true)]));
 geos.contactShadow = new THREE.CircleGeometry(.55, 20); geos.contactShadow.rotateX(-Math.PI / 2);
 const pregnancyMat = new THREE.MeshBasicMaterial({ color: 0xff6fae, transparent: true, opacity: 0.9 });
 const attackRingMat = new THREE.MeshBasicMaterial({ color: 0xff4d4d, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
@@ -4449,7 +4537,7 @@ window.addEventListener("resize", resize);
 window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") saveProgress(true); });
 window.addEventListener("pagehide", () => { saveProgress(true); if (documentarySystem.active) documentarySystem.stopBestEffort("page-unload"); });
 
-let lastGraphicsFrame = 0;
+let lastGraphicsFrame = 0, animalMotionTimeMs = 0;
 function loop(now) {
   const minimumFrameInterval = graphicsSettings.frameCap ? 1000 / graphicsSettings.frameCap : 0;
   if (minimumFrameInterval && now - lastGraphicsFrame < minimumFrameInterval - .5) return;
@@ -4457,6 +4545,10 @@ function loop(now) {
   const frameStarted = profiler.enabled ? performance.now() : 0;
   const delta = Math.min(80, now - last || 16);
   last = now;
+  // Procedural animal movement has its own clock. Camera, interface and
+  // overlays can continue updating while paused, but bodies and heads retain
+  // the exact pose they held when ecological playback stopped.
+  if (running) animalMotionTimeMs += delta;
   completedTicksLastFrame = 0;
   if (worldGenerationInProgress) {
     renderer.render(scene, camera);
@@ -4511,7 +4603,7 @@ function loop(now) {
   // Project ownership panels only after the camera has accepted this frame's
   // orbit/pan/tilt. Camera motion can therefore admit or remove a panel from
   // the viewport without borrowing any of the ground-distance LOD state.
-  profiler.measure("frame presentation update", () => syncAnimalVisuals(now));
+  profiler.measure("frame presentation update", () => syncAnimalVisuals(now, animalMotionTimeMs));
   updateSelectionIndicator(now);
   const adjustedScale = adaptiveResolution.observe(delta, now, { ceiling: graphicsSettings.adaptiveResolution ? graphicsSettings.adaptiveMaxScale : graphicsSettings.renderScale, minimum: graphicsSettings.adaptiveMinScale, targetFps: graphicsSettings.frameCap || 60, enabled: graphicsSettings.adaptiveResolution && !TEST_MODE });
   if (adjustedScale !== null && adjustedScale !== effectiveRenderScale) { effectiveRenderScale = adjustedScale; renderer.setPixelRatio(Math.min(2, window.devicePixelRatio * effectiveRenderScale)); renderer.setSize(ui.viewport.clientWidth, ui.viewport.clientHeight, false); syncGraphicsControls(); }
@@ -7765,6 +7857,27 @@ function poseOnTerrain(object, visual, clearance = .015) {
   // Bounded pitch and roll prevent a single rough triangle from flipping a
   // complete animal group while retaining a clear relationship to the slope.
   object.rotation.set(support.pitch, Math.PI / 2 - visual.orientation, support.roll, "YXZ");
+  return support;
+}
+const animalGroundingWorldBox = new THREE.Box3(), animalGroundingPartBox = new THREE.Box3();
+function correctAnimalGroundPenetration(object, supportHeight, margin = .012) {
+  const meshes = object.userData.groundingMeshes || [];
+  if (!meshes.length || !Number.isFinite(supportHeight)) return 0;
+  object.updateMatrixWorld(true);
+  animalGroundingWorldBox.makeEmpty();
+  for (const mesh of meshes) {
+    if (!mesh?.isMesh || !mesh.visible || !mesh.geometry) continue;
+    mesh.geometry.computeBoundingBox();
+    if (!mesh.geometry.boundingBox) continue;
+    animalGroundingPartBox.copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrixWorld);
+    animalGroundingWorldBox.union(animalGroundingPartBox);
+  }
+  if (animalGroundingWorldBox.isEmpty()) return 0;
+  const correction = supportHeight + margin - animalGroundingWorldBox.min.y;
+  if (correction <= 0) return 0;
+  object.position.y += correction;
+  object.updateMatrixWorld(true);
+  return correction;
 }
 function committedPriority(a) { return a.priorities?.[0]?.drive || a.drive || null; }
 function currentPriority(a) { return committedPriority(a) || "explore"; }
@@ -8989,7 +9102,7 @@ function refreshFrameMovement(state, a, now) {
   const delta = state.movement.movementDirection === null ? 0 : Math.atan2(Math.sin(state.movement.movementDirection - state.movement.facingDirection), Math.cos(state.movement.movementDirection - state.movement.facingDirection));
   state.movement.movingBackward = Math.abs(delta) > Math.PI * .65;
 }
-function syncAnimalVisuals(now) {
+function syncAnimalVisuals(now, motionNow = animalMotionTimeMs) {
   let contactShadowCount = 0; const visibleEntries = [];
   for (const [id, rendered] of animalRenderCache) {
     const a = animalById(id);
@@ -9003,14 +9116,18 @@ function syncAnimalVisuals(now) {
     const groundRestProgress = groundedPostureProgress(rendered, a, state.action.posture, now);
     const scale = animalVisualScale(a), standingClearance = animalGroundOffset(scale, "idle"), restingClearance = animalGroundOffset(scale, "rest");
     const movementMedium = terrainMobilityAssessment(a, cellAt(visual.x, visual.z)).medium, flightLift = movementMedium === "flight" && !state.movement.stationary ? scale * 1.35 : 0;
-    poseOnTerrain(rendered, visual, standingClearance + (restingClearance - standingClearance) * groundRestProgress + flightLift);
+    const terrainSupport = poseOnTerrain(rendered, visual, standingClearance + (restingClearance - standingClearance) * groundRestProgress + flightLift);
     if (graphicsSettings.contactShadows && contactShadowCount < 1024) {
       contactShadowDummy.position.set(visual.x, terrainRenderHeight(visual.x, visual.z) + .025, visual.z);
       contactShadowDummy.quaternion.copy(frameScratch.slope);
       contactShadowDummy.scale.set(scale * .95, scale * .72, scale * .95);
       contactShadowDummy.updateMatrix(); animalContactShadows.setMatrixAt(contactShadowCount++, contactShadowDummy.matrix);
     }
-    updateEntityPosture(rendered, a, state, now, visual, groundRestProgress);
+    updateEntityPosture(rendered, a, state, motionNow, visual, groundRestProgress);
+    // Posture animation can lower a head or body after the initial terrain
+    // pose. Correct against the completed visible anatomy, not a species-wide
+    // guessed offset, so every silhouette and life-stage remains above land.
+    correctAnimalGroundPenetration(rendered, terrainSupport.height);
     visibleEntries.push({ rendered, a, state, visual, channels });
   }
   resolveVisibleEntityConstellations(visibleEntries);
@@ -9827,25 +9944,23 @@ function applyPresentationTier(group, tier, channels) {
 }
 
 function realSpeciesBodyGeometry(kind) {
-  if (kind === "coil") return geos.animalCoil;
-  if (["block", "low"].includes(kind)) return geos.animalBlock;
-  return geos.herbivore;
+  return silhouetteBodyGeometries[kind] || geos.herbivore;
 }
+
 function realSpeciesHeadGeometry(kind) {
-  if (["block", "low"].includes(kind)) return geos.animalBlock;
-  if (["tapered", "wedge", "small"].includes(kind)) return geos.animalWedge;
-  return geos.herbivore;
+  return silhouetteHeadGeometries[kind] || geos.herbivore;
 }
 function addRealSpeciesFeatures(design, head, body, material, scale) {
-  const parts = [];
-  const addHead = (geometry, position, featureScale, rotation = [0, 0, 0]) => {
-    const mesh = new THREE.Mesh(geometry, material); mesh.position.set(...position.map(value => value * scale)); mesh.scale.set(...featureScale.map(value => value * scale)); mesh.rotation.set(...rotation); head.add(mesh); parts.push(mesh); return mesh;
+  const parts = [], groups = [], roots = new Map(); let root = null;
+  const addHead = (geometry, position, featureScale, rotation = [0, 0, 0], partMaterial = material) => {
+    const mesh = new THREE.Mesh(geometry, partMaterial); mesh.position.set(...position.map(value => value * scale)); mesh.scale.set(...featureScale.map(value => value * scale)); mesh.rotation.set(...rotation); root.add(mesh); parts.push(mesh); return mesh;
   };
-  const addBody = (geometry, position, featureScale, rotation = [0, 0, 0]) => {
-    const mesh = new THREE.Mesh(geometry, material); mesh.position.set(...position); mesh.scale.set(...featureScale); mesh.rotation.set(...rotation); body.add(mesh); parts.push(mesh); return mesh;
+  const addBody = (geometry, position, featureScale, rotation = [0, 0, 0], partMaterial = material) => {
+    const mesh = new THREE.Mesh(geometry, partMaterial); mesh.position.set(...position); mesh.scale.set(...featureScale); mesh.rotation.set(...rotation); root.add(mesh); parts.push(mesh); return mesh;
   };
-  for (const feature of design.features || []) {
-    const kind = feature.kind;
+  for (const feature of design.featureGroups || design.features || []) {
+    const kind = feature.kind, parent = feature.attach === "head" ? head : body;
+    root = new THREE.Group(); root.userData.featureKind = kind; parent.add(root); groups.push(root); roots.set(kind, root);
     if (["long-ears", "large-ears", "pointed-ears", "tufted-ears", "round-ears", "small-ears"].includes(kind)) {
       const length = kind === "long-ears" ? .34 : kind === "large-ears" ? .25 : kind === "small-ears" ? .12 : .18;
       for (const side of [-1, 1]) addHead(kind.includes("round") || kind === "small-ears" ? geos.eye : geos.horn, [side * .19, .23, -.02], [kind.includes("round") ? 1.5 : 1, length / .26, kind.includes("round") ? 1.2 : .8], [0, 0, side * (kind === "large-ears" ? .5 : .22)]);
@@ -9854,31 +9969,42 @@ function addRealSpeciesFeatures(design, head, body, material, scale) {
     if (["paired-horns", "pronged-horns", "swept-horns", "wide-horns", "broad-antlers"].includes(kind)) {
       const wide = kind === "wide-horns" || kind === "broad-antlers", swept = kind === "swept-horns";
       for (const side of [-1, 1]) {
-        addHead(geos.horn, [side * (wide ? .23 : .16), .2, .04], [wide ? 1.15 : .85, swept ? 1.9 : wide ? 1.55 : 1.25, wide ? 1.15 : .85], [swept ? -.45 : 0, 0, side * (wide ? .65 : .25)]);
-        if (kind === "broad-antlers" || kind === "pronged-horns") addHead(geos.horn, [side * .25, .31, .02], [.65, .9, .65], [0, 0, side * .75]);
+        const segments = swept ? 3 : 1;
+        for (let segment = 0; segment < segments; segment += 1) addHead(geos.horn, [side * ((wide ? .23 : .16) + segment * .045), .2 + segment * .1, .04 - segment * .025], [(wide ? 1.15 : .85) * (1 - segment * .2), swept ? .9 : wide ? 1.55 : 1.25, (wide ? 1.15 : .85) * (1 - segment * .2)], [swept ? -.38 - segment * .16 : 0, 0, side * (wide ? .65 : .25)]);
+        if (kind === "broad-antlers") {
+          addHead(geos.animalBlock, [side * .29, .32, .01], [.32, .42, .12], [0, 0, side * .28]);
+          for (let tine = 0; tine < 3; tine += 1) addHead(geos.horn, [side * (.28 + tine * .055), .42 + tine * .025, 0], [.48, .7, .48], [0, 0, side * (.18 + tine * .18)]);
+        } else if (kind === "pronged-horns") addHead(geos.horn, [side * .25, .31, .02], [.65, .9, .65], [0, 0, side * .75]);
       }
       continue;
     }
     if (kind === "nasal-horns") { addHead(geos.horn, [0, .03, .34], [1.2, 1.75, 1.2], [Math.PI / 2, 0, 0]); addHead(geos.horn, [0, .11, .18], [.75, 1.05, .75], [Math.PI / 2, 0, 0]); continue; }
     if (kind === "tusks") { for (const side of [-1, 1]) addHead(geos.horn, [side * .15, -.11, .3], [.62, 1.35, .62], [Math.PI / 2, 0, side * .12]); continue; }
-    if (kind === "trunk") { addHead(geos.horn, [0, -.32, .25], [1.2, 2.7, 1.2], [0, 0, 0]); continue; }
-    if (["hooked-beak", "heat-pits", "head-crest"].includes(kind)) {
-      if (kind === "hooked-beak") addHead(geos.featureBeak, [0, -.02, .28], [1, 1.25, 1], [Math.PI / 2, 0, 0]);
-      else if (kind === "head-crest") addHead(geos.horn, [0, .24, -.05], [.75, 1.15, .75], [0, 0, -.2]);
-      else for (const side of [-1, 1]) addHead(geos.eye, [side * .12, -.06, .29], [.42, .32, .32]);
-      continue;
-    }
-    if (["shoulder-hump", "single-hump", "back-ridge", "armoured-ridge", "bristle-ridge", "shaggy-mantle", "domed-shell"].includes(kind)) {
-      const dome = kind === "domed-shell";
-      addBody(dome ? geos.animalDome : geos.herbivore, [0, ["armoured-ridge", "bristle-ridge"].includes(kind) ? .42 : .34, ["shoulder-hump", "single-hump", "shaggy-mantle"].includes(kind) ? .2 : -.05], dome ? [.9, .52, .92] : ["armoured-ridge", "bristle-ridge"].includes(kind) ? [.62, kind === "bristle-ridge" ? .12 : .18, .82] : kind === "single-hump" ? [.58, .58, .52] : [.72, .35, .55]);
-      continue;
-    }
-    if (kind === "neck-column") { addBody(geos.animalBlock, [0, .72, .43], [.2, .92, .22], [-.08, 0, 0]); continue; }
-    if (kind === "folded-wings") { for (const side of [-1, 1]) addBody(geos.featureWing, [side * .34, .04, -.04], [.42, .18, .76], [0, 0, side * .12]); continue; }
+    if (kind === "curved-trunk") { for (let segment = 0; segment < 4; segment += 1) addHead(geos.horn, [0, -.2 - segment * .12, .22 - segment * .035], [1.15 - segment * .16, 1.15, 1.15 - segment * .16], [segment * .18, 0, 0]); continue; }
+    if (kind === "ear-plates") { for (const side of [-1, 1]) addHead(geos.herbivore, [side * .31, .02, -.05], [.14, .72, .7], [0, 0, side * .08]); continue; }
+    if (kind === "head-crest") { addHead(geos.horn, [0, .24, -.05], [.75, 1.15, .75], [0, 0, -.2]); continue; }
+    if (["armoured-ridge", "bristle-ridge"].includes(kind)) { addBody(geos.herbivore, [0, .42, -.05], [.62, kind === "bristle-ridge" ? .12 : .18, .82]); continue; }
+    if (kind === "feather-tail") { for (let feather = -1; feather <= 1; feather += 1) addBody(geos.animalWedge, [feather * .08, .02, -.54 - Math.abs(feather) * .03], [.18, 1.8 - Math.abs(feather) * .25, .18], [-Math.PI / 2, 0, feather * .08]); continue; }
     if (["short-tail", "bushy-tail", "long-tail", "ringed-tail"].includes(kind)) {
       const long = ["long-tail", "ringed-tail", "bushy-tail"].includes(kind);
-      addBody(geos.horn, [0, .02, -.58], [kind === "bushy-tail" ? 1.8 : .85, long ? 3.1 : 1.25, kind === "bushy-tail" ? 1.8 : .85], [-Math.PI / 2, 0, 0]);
+      const tailPattern = kind === "ringed-tail" ? ["tail-bands"] : (design.markings || []).some(marking => marking.kind === "spots") ? ["spots"] : [];
+      addBody(geos.horn, [0, .02, -.58], [kind === "bushy-tail" || kind === "ringed-tail" ? 1.8 : .85, long ? 3.1 : 1.25, kind === "bushy-tail" || kind === "ringed-tail" ? 1.8 : .85], [-Math.PI / 2, 0, 0], patternedAnimalMaterial(material, tailPattern));
     }
+  }
+  return { parts, groups, roots };
+}
+function addRealSpeciesMarkings(design, head, body, featureRoots, scale, headMesh) {
+  const parts = [];
+  const add = (parent, geometry, material, position, markingScale, rotation = [0, 0, 0]) => {
+    const mesh = new THREE.Mesh(geometry, material); mesh.position.set(...position); mesh.scale.set(...markingScale); mesh.rotation.set(...rotation); mesh.userData.isSpeciesMarking = true; parent.add(mesh); parts.push(mesh); return mesh;
+  };
+  for (const marking of design.markings || []) {
+    if (marking.kind === "robber-mask") for (const side of [-1, 1]) {
+      const eye = attachedAnimalEyePosition({ side, headScale: headMesh.scale, headKind: "rounded" });
+      add(head, geos.markingDisc, mats.animalLight, [eye.x, eye.y, eye.z - .012 * scale], [1.22 * scale, .82 * scale, .16 * scale]);
+      add(head, geos.markingDisc, mats.animalDark, [eye.x, eye.y, eye.z - .005 * scale], [1.02 * scale, .66 * scale, .14 * scale]);
+    }
+    if (marking.kind === "neck-ring") add(head, geos.markingRing, mats.animalLight, [0, -.02 * scale, -.16 * scale], [1.25 * scale, 1.25 * scale, 1.25 * scale], [Math.PI / 2, 0, 0]);
   }
   return parts;
 }
@@ -9889,21 +10015,20 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
   if (cached) removeAnimalVisual(a.id);
   const group = new THREE.Group();
   resourceCounters.animalRootsCreated += 1;
-  let head = null, headMesh = null, tail = null, feature = null, youngMarker = null; const eyes = []; let featureParts = [];
+  let head = null, headMesh = null, tail = null, feature = null, youngMarker = null; const eyes = []; let featureParts = [], featureGroups = [], markingParts = [];
   const scale = animalVisualScale(a);
   // The hunter muzzle and grazer head extend beyond the torso ellipsoid.
   // Ground support must cover that entire length on slopes and hill crests.
   group.userData.groundFootprint = scale * (a.speciesId === "hunter" ? 1.18 : speciesCanHunt(a) ? 1.14 : 1.08);
-  const bodyMat = animalMaterial(a);
+  const shape = speciesProfile(a), design = shape.visual, small = ["tiny", "small"].includes(shape.sizeClass), bodyLength = shape.sizeClass === "small" ? .7 : shape.sizeClass === "large" ? 1.02 : .84;
+  const bodyMat = animalMaterial(a), surfaceMarkings = design?.markings?.map(marking => marking.kind) || [], bodySurfaceMat = patternedAnimalMaterial(bodyMat, surfaceMarkings), headSurfaceMat = patternedAnimalMaterial(bodyMat, surfaceMarkings.filter(kind => ["spots", "snake-patches"].includes(kind)));
   // Both silhouettes face local +Z. Group rotation then makes the head point
   // exactly along the organism's actual orientation.
-  const shape = speciesProfile(a), design = shape.visual, small = ["tiny", "small"].includes(shape.sizeClass), bodyLength = shape.sizeClass === "small" ? .7 : shape.sizeClass === "large" ? 1.02 : .84;
-  if (design) group.userData.groundFootprint = scale * Math.max(1.02, design.bodyScale[2] + design.headOffset[2] * .45);
-  const body = new THREE.Mesh(design ? realSpeciesBodyGeometry(design.bodyShape) : geos.herbivore, bodyMat);
+  if (design) group.userData.groundFootprint = scale * Math.max(1.02, design.bodyScale[2] + design.headOffset[2] * .45) * (design.footprint || 1);
+  const body = new THREE.Mesh(design ? realSpeciesBodyGeometry(design.bodyShape) : geos.herbivore, design ? bodySurfaceMat : bodyMat);
   if (design) {
     body.scale.set(...design.bodyScale.map(value => value * scale));
-    body.position.y = (["coil", "low-long"].includes(design.bodyShape) ? .22 : design.bodyScale[1] * .72) * scale;
-    if (design.bodyShape === "coil") body.rotation.x = Math.PI / 2;
+    body.position.y = (design.bodyElevation ?? (["curved-tube", "flattened-taper"].includes(design.bodyShape) ? .22 : design.bodyScale[1] * .72)) * scale;
   } else {
     body.scale.set(a.speciesId === "hunter" ? scale * 0.66 : speciesCanHunt(a) ? scale * .68 : scale * (shape.sizeClass === "large" ? .9 : .76), a.speciesId === "hunter" ? scale * 0.34 : scale * (shape.sizeClass === "large" ? .55 : speciesCanHunt(a) ? .36 : .45), a.speciesId === "hunter" ? scale * 1.05 : scale * bodyLength);
     body.position.y = a.speciesId === "hunter" ? 0.28 * scale : shape.sizeClass === "large" ? .46 * scale : 0.38 * scale;
@@ -9950,19 +10075,18 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
       head.add(eye); eyes.push(eye);
     }
   } else {
-    // Every real species retains exactly two primary masses: body and head.
-    // Horns, ears, wings, shells, crests and tails are subordinate features
-    // attached to one of those masses and never become independent roots.
+    // Real species retain two primary masses: body and head. Recognising
+    // details remain small, non-limb features attached to those masses.
     const carnivore = speciesCanHunt(a);
     head = new THREE.Group(); head.position.set(...design.headOffset.map(value => value * scale)); group.add(head);
-    headMesh = new THREE.Mesh(realSpeciesHeadGeometry(design.headShape), bodyMat);
-    if (["tapered", "wedge", "small"].includes(design.headShape)) headMesh.rotation.x = Math.PI / 2;
+    headMesh = new THREE.Mesh(realSpeciesHeadGeometry(design.headShape), headSurfaceMat);
+    if (design.headShape === "downturned") headMesh.rotation.x = .2;
     headMesh.scale.set(...design.headScale.map(value => value * scale)); head.add(headMesh);
-    featureParts = addRealSpeciesFeatures(design, head, body, bodyMat, scale); feature = featureParts[0] || null;
+    const featureBuild = addRealSpeciesFeatures(design, head, body, bodyMat, scale); featureParts = featureBuild.parts; featureGroups = featureBuild.groups;
+    markingParts = addRealSpeciesMarkings(design, head, body, featureBuild.roots, scale, headMesh); feature = featureGroups[0] || featureParts[0] || null;
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(geos.eye, mats.eye), eyeScale = clamp(scale * (small ? .7 : .82), .36, .82);
-      const headKind = ["tapered", "wedge", "small"].includes(design.headShape) ? "tapered" : "rounded";
-      const eyePosition = attachedAnimalEyePosition({ side, headScale: headMesh.scale, headKind });
+      const eyePosition = attachedAnimalEyePosition({ side, headScale: headMesh.scale, headKind: "rounded" });
       eye.position.set(eyePosition.x, eyePosition.y, eyePosition.z); eye.scale.setScalar(eyeScale); head.add(eye); eyes.push(eye);
     }
   }
@@ -9990,7 +10114,8 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
   group.userData.presentationTier = tier;
   group.userData.presentationChannels = channels;
   group.userData.constellation = constellationParts.constellationRoot;
-  group.userData.parts = { body, head, headMesh, eyes, tail, feature, features: featureParts, youngMarker, ...constellationParts, ...transientParts };
+  group.userData.parts = { body, head, headMesh, eyes, tail, feature, features: featureParts, featureGroups, markings: markingParts, youngMarker, ...constellationParts, ...transientParts };
+  group.userData.groundingMeshes = [body, headMesh, tail, ...eyes, ...featureParts, ...markingParts].filter(part => part?.isMesh);
   for (const part of [constellationParts.identityPanel, ...Object.values(constellationParts.ownershipNotches), transientParts.pregnantIcon, ...transientParts.courtshipHearts, transientParts.rejection, transientParts.acceptance, transientParts.attackIcon, transientParts.injuryAlert, transientParts.signal, transientParts.face]) if (part) part.userData.ownerEntityId = a.id;
   for (const part of [body, head, tail]) if (part) part.userData.restTransform = { position: part.position.clone(), rotation: part.rotation.clone(), scale: part.scale.clone() };
   updateAnimalTransientParts(group, a, state);
@@ -10030,7 +10155,14 @@ function animalVisualScale(a) {
   const stage = a.lifeStage === "dependent" ? 0.55 : a.lifeStage === "juvenile" ? 0.72 : a.lifeStage === "subadult" ? 0.88 : a.lifeStage === "old" ? 0.92 : 1;
   const sex = a.sex === "M" && a.lifeStage !== "dependent" ? 1.08 : 1;
   const health = a.health < 45 ? 0.86 : 1;
-  return base * stage * sex * health * (a.sizeTrait || 1);
+  // The original two silhouettes keep their established display size. Real
+  // species use a softened cube-root mass scale: recognisably different in
+  // stature without letting elephants obscure whole hexes.
+  const massScale = ["grazer", "hunter"].includes(a.speciesId)
+    ? 1
+    : clamp(Math.pow(Math.max(.2, species[a.speciesId].adultMass) / 65, .29), .4, 2.25);
+  const silhouetteScale = species[a.speciesId].visual?.displayScale || 1;
+  return base * massScale * silhouetteScale * stage * sex * health * (a.sizeTrait || 1);
 }
 
 function selectedAnimal() { return sim.animals.find((a) => a.id === selectedId && a.alive) || null; }

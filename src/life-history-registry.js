@@ -86,9 +86,9 @@ export const LIFE_HISTORY = deepFreeze({
     mode: "live-birth", strategy: "continuous-polyestrous", ovulation: "spontaneous", activeSeasons: allSeasons, cycleDays: 21, receptiveDays: 5,
     broodRange: [1, 3], gestationDays: 110, implantationDelayDays: 0, preLayDays: null, incubationDays: null, postpartumDays: 450, minimumRebreedDays: 0, maxBroodsPerYear: null, environmentTrigger: "none", nestCare: "none"
   }),
-  "carrion-runner": profile("turkey vulture", development(2190, 5475, 7592, 0, 150), {
+  "carrion-runner": profile("southern ground hornbill", development(1460, 5475, 18250, 0, 180), {
     mode: "surface-eggs", strategy: "annual-clutch", ovulation: "spontaneous", activeSeasons: ["Spring", "Summer"], cycleDays: null, receptiveDays: null,
-    broodRange: [1, 3], gestationDays: null, implantationDelayDays: 0, preLayDays: 30, incubationDays: 40, postpartumDays: 0, minimumRebreedDays: 0, maxBroodsPerYear: 1, environmentTrigger: "calendar", nestCare: "attended"
+    broodRange: [1, 2], gestationDays: null, implantationDelayDays: 0, preLayDays: 30, incubationDays: 40, postpartumDays: 0, minimumRebreedDays: 0, maxBroodsPerYear: 1, environmentTrigger: "calendar", nestCare: "attended"
   }),
   "waterline-grazer": profile("capybara", development(548, 2190, 5512, 90, 365), {
     mode: "live-birth", strategy: "opportunistic-polyestrous", ovulation: "spontaneous", activeSeasons: allSeasons, cycleDays: 20, receptiveDays: 5,
@@ -114,9 +114,9 @@ export const LIFE_HISTORY = deepFreeze({
     mode: "live-birth", strategy: "annual-monoestrous", ovulation: "spontaneous", activeSeasons: ["Winter", "Spring"], cycleDays: null, receptiveDays: 7,
     broodRange: [3, 5], gestationDays: 64, implantationDelayDays: 0, preLayDays: null, incubationDays: null, postpartumDays: 70, minimumRebreedDays: 0, maxBroodsPerYear: 1, environmentTrigger: "calendar", nestCare: "none"
   }),
-  "cold-country-scavenger": profile("bearded vulture", development(2920, 7665, 16425, 0, 180), {
+  "cold-country-scavenger": profile("common pheasant", development(365, 1460, 6570, 0, 80), {
     mode: "surface-eggs", strategy: "annual-clutch", ovulation: "spontaneous", activeSeasons: ["Winter", "Spring"], cycleDays: null, receptiveDays: null,
-    broodRange: [1, 2], gestationDays: null, implantationDelayDays: 0, preLayDays: 60, incubationDays: 58, postpartumDays: 0, minimumRebreedDays: 0, maxBroodsPerYear: 1, environmentTrigger: "calendar", nestCare: "obligate"
+    broodRange: [7, 15], gestationDays: null, implantationDelayDays: 0, preLayDays: 14, incubationDays: 24, postpartumDays: 0, minimumRebreedDays: 0, maxBroodsPerYear: 1, environmentTrigger: "calendar", nestCare: "attended"
   }),
   "sunscale-ambusher": profile("ball python", development(1095, 3650, 17338, 0, 0), {
     mode: "surface-eggs", strategy: "annual-clutch", ovulation: "spontaneous", activeSeasons: allSeasons, cycleDays: null, receptiveDays: null,

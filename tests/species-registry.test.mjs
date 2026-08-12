@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  ECOLOGY_POPULATION_LEVELS, ECOLOGY_PRESETS, ECOLOGY_PRESET_POPULATIONS, FOOD_ECOLOGY, LOW_PREDATOR_FOUNDER_THRESHOLD, SPATIAL_ECOLOGY, SPECIES, SPECIES_IDS, SPECIES_VISUAL_DESIGNS, WORLD_SCALE_ECOLOGY_DESIGNS,
+  ALLOWED_SILHOUETTE_BODY_PROFILES, ALLOWED_SILHOUETTE_HEAD_PROFILES, ECOLOGY_POPULATION_LEVELS, ECOLOGY_PRESETS, ECOLOGY_PRESET_POPULATIONS, FOOD_ECOLOGY, LOW_PREDATOR_FOUNDER_THRESHOLD, SPATIAL_ECOLOGY, SPECIES, SPECIES_IDS, SPECIES_VISUAL_DESIGNS, WORLD_SCALE_ECOLOGY_DESIGNS,
   carcassPreference, ecologyPresetCounts, ecologyPresetForWorldScale, ecologyRosterForWorldScale, ecologyWarnings, enabledSpeciesCounts, foodPreferenceSummary,
-  isSustainableForage, needsPregnantPredatorFounder, plantPreference, preyCompatible, speciesCategoryTotals
+  isSustainableForage, needsPregnantPredatorFounder, plantPreference, preyCompatible, speciesCategoryTotals, validateSpeciesVisualDesigns
 } from "../src/species-registry.js";
 
 test("the catalogue retains the two generic originals while world rosters vary by scale", () => {
@@ -70,15 +70,26 @@ test("the extensive calculated preset enables every registered species", () => {
   assert.ok(SPECIES_IDS.every(id => counts[id] >= 1));
 });
 
-test("real species have scientific identities and two-mass attached-feature designs", () => {
+test("real species have valid silhouette-first recipes and no visible limbs", () => {
+  assert.deepEqual(validateSpeciesVisualDesigns(), []);
   for (const id of SPECIES_IDS.filter(id => !SPECIES[id].generic)) {
     assert.ok(SPECIES[id].scientificName, `${id} scientific name`);
     const visual = SPECIES_VISUAL_DESIGNS[id];
     assert.ok(visual?.bodyShape && visual?.headShape, `${id} body/head design`);
-    assert.ok(visual.features.every(feature => ["head", "body"].includes(feature.attach)), `${id} features attach only to head or body`);
+    assert.ok(ALLOWED_SILHOUETTE_BODY_PROFILES.includes(visual.bodyShape), `${id} body profile`);
+    assert.ok(ALLOWED_SILHOUETTE_HEAD_PROFILES.includes(visual.headShape), `${id} head profile`);
+    assert.ok(visual.featureGroups.length <= 3, `${id} logical feature budget`);
+    assert.ok(visual.featureGroups.every(feature => ["head", "body"].includes(feature.attach)), `${id} features attach only to head or body`);
+    assert.ok(visual.featureGroups.every(feature => !/^(?:leg|foot|arm|wing)(?:$|-)|^folded-wings$/.test(feature.kind)), `${id} has no limb or wing feature`);
+    assert.ok(Array.isArray(visual.markings), `${id} markings`);
   }
   assert.equal(SPECIES_VISUAL_DESIGNS.grazer, null);
   assert.equal(SPECIES_VISUAL_DESIGNS.hunter, null);
+  assert.equal(SPECIES_VISUAL_DESIGNS["sunscale-ambusher"].bodyShape, "curved-tube");
+  assert.ok(SPECIES_VISUAL_DESIGNS["woodland-browser"].featureGroups.some(feature => feature.kind === "broad-antlers"));
+  assert.ok(SPECIES_VISUAL_DESIGNS["little-opportunist"].markings.some(marking => marking.kind === "robber-mask"));
+  assert.ok(SPECIES_VISUAL_DESIGNS["african-elephant"].featureGroups.some(feature => feature.kind === "curved-trunk"));
+  assert.ok(SPECIES_VISUAL_DESIGNS["shieldback-colony"].markings.some(marking => marking.kind === "shell-panels"));
 });
 
 test("exact counts preserve disabled species and calculate ecological totals", () => {

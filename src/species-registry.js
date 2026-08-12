@@ -13,7 +13,7 @@ const visualDesign = (bodyShape, bodyScale, headShape, headScale, headOffset, fe
   features: freeze(features.map((feature) => freeze(feature)))
 });
 
-export const SPECIES_VISUAL_DESIGNS = freeze({
+const BASE_SPECIES_VISUAL_DESIGNS = freeze({
   grazer: null,
   hunter: null,
   "meadow-nibbler": visualDesign("ellipsoid", [.62, .42, .72], "round", [.31, .33, .3], [0, .34, .48], [{ kind: "long-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
@@ -26,21 +26,91 @@ export const SPECIES_VISUAL_DESIGNS = freeze({
   "highland-grazer": visualDesign("barrel", [.76, .5, .88], "block", [.38, .36, .4], [0, .48, .58], [{ kind: "swept-horns", attach: "head" }, { kind: "short-tail", attach: "body" }]),
   "armoured-browser": visualDesign("barrel", [1, .62, 1.08], "low", [.48, .36, .56], [0, .42, .72], [{ kind: "nasal-horns", attach: "head" }, { kind: "back-ridge", attach: "body" }]),
   "pack-breaker": visualDesign("sloped", [.72, .5, .92], "block", [.42, .4, .46], [0, .46, .62], [{ kind: "round-ears", attach: "head" }, { kind: "shoulder-hump", attach: "body" }, { kind: "short-tail", attach: "body" }]),
-  "carrion-runner": visualDesign("teardrop", [.68, .44, .74], "small", [.27, .3, .3], [0, .46, .48], [{ kind: "folded-wings", attach: "body" }, { kind: "hooked-beak", attach: "head" }]),
+  "carrion-runner": visualDesign("teardrop", [.68, .44, .74], "small", [.27, .3, .3], [0, .46, .48], [{ kind: "hooked-beak", attach: "head" }, { kind: "head-crest", attach: "head" }]),
   "waterline-grazer": visualDesign("barrel", [.78, .5, .84], "block", [.42, .38, .42], [0, .42, .56], [{ kind: "small-ears", attach: "head" }]),
   "brush-nibbler": visualDesign("slender", [.58, .38, .76], "round", [.29, .31, .29], [0, .35, .49], [{ kind: "long-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
   "waterline-ambusher": visualDesign("low-long", [.82, .3, 1.28], "low", [.42, .25, .62], [0, .28, .86], [{ kind: "armoured-ridge", attach: "body" }, { kind: "long-tail", attach: "body" }]),
   "northern-shaggy-grazer": visualDesign("barrel", [.92, .66, 1], "block", [.46, .43, .46], [0, .52, .64], [{ kind: "wide-horns", attach: "head" }, { kind: "shaggy-mantle", attach: "body" }]),
   "highland-prowler": visualDesign("long", [.68, .42, .96], "round", [.38, .36, .39], [0, .42, .63], [{ kind: "round-ears", attach: "head" }, { kind: "long-tail", attach: "body" }]),
   "little-opportunist": visualDesign("compact", [.66, .42, .76], "tapered", [.34, .35, .39], [0, .39, .52], [{ kind: "round-ears", attach: "head" }, { kind: "ringed-tail", attach: "body" }]),
-  "cold-country-scavenger": visualDesign("teardrop", [.72, .46, .8], "small", [.29, .31, .32], [0, .48, .52], [{ kind: "folded-wings", attach: "body" }, { kind: "hooked-beak", attach: "head" }, { kind: "head-crest", attach: "head" }]),
+  "cold-country-scavenger": visualDesign("teardrop", [.72, .46, .8], "small", [.29, .31, .32], [0, .48, .52], [{ kind: "hooked-beak", attach: "head" }, { kind: "long-tail", attach: "body" }]),
   "sunscale-ambusher": visualDesign("coil", [.82, .24, .82], "wedge", [.3, .22, .42], [0, .24, .58], [{ kind: "heat-pits", attach: "head" }]),
   "shieldback-colony": visualDesign("shell", [.9, .48, 1], "block", [.34, .28, .4], [0, .31, .66], [{ kind: "domed-shell", attach: "body" }]),
   "wild-boar": visualDesign("barrel", [.76, .48, .9], "wedge", [.38, .34, .48], [0, .4, .62], [{ kind: "large-ears", attach: "head" }, { kind: "tusks", attach: "head" }, { kind: "bristle-ridge", attach: "body" }, { kind: "short-tail", attach: "body" }]),
   "african-elephant": visualDesign("barrel", [1.08, .72, 1.08], "block", [.58, .52, .54], [0, .6, .74], [{ kind: "large-ears", attach: "head" }, { kind: "trunk", attach: "head" }, { kind: "tusks", attach: "head" }]),
   dromedary: visualDesign("long", [.76, .62, 1.08], "long", [.34, .35, .52], [0, .72, .75], [{ kind: "single-hump", attach: "body" }, { kind: "small-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
-  "common-ostrich": visualDesign("teardrop", [.64, .72, .72], "small", [.24, .25, .3], [0, 1.18, .54], [{ kind: "neck-column", attach: "body" }, { kind: "folded-wings", attach: "body" }, { kind: "hooked-beak", attach: "head" }])
+  "common-ostrich": visualDesign("teardrop", [.64, .72, .72], "small", [.24, .25, .3], [0, 1.18, .54], [{ kind: "neck-column", attach: "body" }, { kind: "hooked-beak", attach: "head" }])
 });
+
+const silhouette = (bodyProfile, headProfile, featureGroups = [], options = {}) => freeze({
+  bodyProfile, headProfile,
+  featureGroups: freeze(featureGroups.map(group => freeze(group))),
+  markings: freeze((options.markings || []).map(marking => freeze(marking))),
+  bodyElevation: options.bodyElevation ?? null,
+  footprint: options.footprint ?? 1,
+  displayScale: options.displayScale ?? 1
+});
+
+const SILHOUETTE_RECIPES = freeze({
+  "meadow-nibbler": silhouette("pear", "rounded", [{ kind: "long-ears", attach: "head" }, { kind: "short-tail", attach: "body" }], { displayScale: .92 }),
+  "great-plains-grazer": silhouette("front-heavy", "blunt", [{ kind: "paired-horns", attach: "head" }], { footprint: 1.12 }),
+  "woodland-browser": silhouette("elevated-deep", "elongated", [{ kind: "broad-antlers", attach: "head" }, { kind: "large-ears", attach: "head" }], { bodyElevation: .64, footprint: 1.12 }),
+  "brush-fox": silhouette("long-oval", "pointed", [{ kind: "pointed-ears", attach: "head" }, { kind: "bushy-tail", attach: "body" }]),
+  "shadow-stalker": silhouette("compact-loaf", "rounded", [{ kind: "tufted-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
+  "great-omnivore": silhouette("pear", "blunt", [{ kind: "round-ears", attach: "head" }], { footprint: 1.08 }),
+  "dryland-runner": silhouette("slim-loaf", "elongated", [{ kind: "pronged-horns", attach: "head" }, { kind: "large-ears", attach: "head" }]),
+  "highland-grazer": silhouette("compact-loaf", "tapered", [{ kind: "swept-horns", attach: "head" }]),
+  "armoured-browser": silhouette("front-heavy", "downturned", [{ kind: "nasal-horns", attach: "head" }], { footprint: 1.16 }),
+  "pack-breaker": silhouette("sloped-wedge", "blunt", [{ kind: "round-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
+  "carrion-runner": silhouette("teardrop", "bird", [{ kind: "head-crest", attach: "head" }], { displayScale: .94 }),
+  "waterline-grazer": silhouette("low-loaf", "blunt", [{ kind: "small-ears", attach: "head" }]),
+  "brush-nibbler": silhouette("lean-pear", "rounded", [{ kind: "long-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
+  "waterline-ambusher": silhouette("flattened-taper", "flat", [{ kind: "armoured-ridge", attach: "body" }], { footprint: 1.72, displayScale: .9 }),
+  "northern-shaggy-grazer": silhouette("front-heavy", "blunt", [{ kind: "wide-horns", attach: "head" }], { markings: [{ kind: "dark-mantle", attach: "body" }] }),
+  "highland-prowler": silhouette("long-oval", "rounded", [{ kind: "round-ears", attach: "head" }, { kind: "long-tail", attach: "body" }], { markings: [{ kind: "spots", attach: "body" }] }),
+  "little-opportunist": silhouette("low-loaf", "pointed", [{ kind: "round-ears", attach: "head" }, { kind: "ringed-tail", attach: "body" }], { markings: [{ kind: "robber-mask", attach: "head" }, { kind: "tail-bands", attach: "body" }] }),
+  "cold-country-scavenger": silhouette("teardrop", "bird", [{ kind: "feather-tail", attach: "body" }], { markings: [{ kind: "neck-ring", attach: "head" }] }),
+  "sunscale-ambusher": silhouette("curved-tube", "serpent", [], { footprint: 1.34, markings: [{ kind: "snake-patches", attach: "body" }] }),
+  "shieldback-colony": silhouette("dome", "blunt", [], { footprint: 1.06, markings: [{ kind: "shell-panels", attach: "body" }] }),
+  "wild-boar": silhouette("front-heavy", "pointed", [{ kind: "large-ears", attach: "head" }, { kind: "tusks", attach: "head" }, { kind: "bristle-ridge", attach: "body" }]),
+  "african-elephant": silhouette("deep-barrel", "broad", [{ kind: "ear-plates", attach: "head" }, { kind: "curved-trunk", attach: "head" }, { kind: "tusks", attach: "head" }], { footprint: 1.18 }),
+  dromedary: silhouette("humped", "elongated", [{ kind: "small-ears", attach: "head" }, { kind: "short-tail", attach: "body" }], { bodyElevation: .72, footprint: 1.12 }),
+  "common-ostrich": silhouette("teardrop", "bird", [], { bodyElevation: .78, footprint: 1.08, displayScale: .92 })
+});
+
+export const SPECIES_VISUAL_DESIGNS = freeze(Object.fromEntries(Object.entries(BASE_SPECIES_VISUAL_DESIGNS).map(([id, baseDesign]) => {
+  if (!baseDesign) return [id, null];
+  const recipe = SILHOUETTE_RECIPES[id];
+  return [id, freeze({
+    ...baseDesign,
+    bodyShape: recipe.bodyProfile,
+    headShape: recipe.headProfile,
+    features: recipe.featureGroups,
+    featureGroups: recipe.featureGroups,
+    markings: recipe.markings,
+    bodyElevation: recipe.bodyElevation,
+    footprint: recipe.footprint,
+    displayScale: recipe.displayScale
+  })];
+})));
+
+export const ALLOWED_SILHOUETTE_BODY_PROFILES = freeze(["pear", "lean-pear", "front-heavy", "elevated-deep", "long-oval", "compact-loaf", "slim-loaf", "sloped-wedge", "teardrop", "low-loaf", "flattened-taper", "curved-tube", "dome", "deep-barrel", "humped"]);
+export const ALLOWED_SILHOUETTE_HEAD_PROFILES = freeze(["rounded", "blunt", "elongated", "pointed", "tapered", "downturned", "bird", "flat", "serpent", "broad"]);
+export function validateSpeciesVisualDesigns(designs = SPECIES_VISUAL_DESIGNS) {
+  const errors = [];
+  for (const [id, design] of Object.entries(designs)) {
+    if (["grazer", "hunter"].includes(id)) { if (design !== null) errors.push(`${id} generic design must remain null`); continue; }
+    if (!design) { errors.push(`${id} missing silhouette recipe`); continue; }
+    if (!ALLOWED_SILHOUETTE_BODY_PROFILES.includes(design.bodyShape)) errors.push(`${id} invalid body profile`);
+    if (!ALLOWED_SILHOUETTE_HEAD_PROFILES.includes(design.headShape)) errors.push(`${id} invalid head profile`);
+    if ((design.featureGroups || []).length > 3) errors.push(`${id} has more than three logical feature groups`);
+    for (const feature of design.featureGroups || []) if (/^(?:leg|foot|arm|wing)(?:$|-)|^folded-wings$/.test(feature.kind)) errors.push(`${id} uses forbidden limb feature ${feature.kind}`);
+  }
+  return errors;
+}
+
+const VISUAL_DESIGN_ERRORS = validateSpeciesVisualDesigns();
+if (VISUAL_DESIGN_ERRORS.length) throw new Error(`Invalid species silhouette registry: ${VISUAL_DESIGN_ERRORS.join("; ")}`);
 
 const entry = (id, values) => {
   const lifeHistory = lifeHistoryFor(id);
@@ -71,14 +141,14 @@ export const SPECIES = freeze({
   "highland-grazer": entry("highland-grazer", { label: "Alpine Ibex", scientificName: "Capra ibex", symbol: "AI", guild: "herbivore", feeding: "grass", sizeClass: "medium", adultMass: 72, speed: .9, thirstRate: .58, herdTendency: .55, social: "seasonal-herd", habitat: "alpine", coldAdapted: true, colour: 0x8d7e6b, enabledByDefault: false, defaultPopulation: 5 }),
   "armoured-browser": entry("armoured-browser", { label: "Black Rhinoceros", scientificName: "Diceros bicornis", symbol: "BR", guild: "herbivore", feeding: "mixed-plants", sizeClass: "large", adultMass: 900, speed: .72, energyCapacity: 340, hungerRate: .22, thirstRate: .95, herdTendency: .05, social: "solitary", habitat: "scrub", defence: "armoured", colour: 0x747c75, enabledByDefault: true, defaultPopulation: 3 }),
   "pack-breaker": entry("pack-breaker", { label: "Spotted Hyena", scientificName: "Crocuta crocuta", symbol: "SH", guild: "carnivore", feeding: "prey-carrion", sizeClass: "large", adultMass: 65, speed: .98, energyCapacity: 520, enduranceMultiplier: 2.2, hungerRate: .06, thirstRate: .72, herdTendency: .7, social: "pack", hunting: "large-prey", preySizes: ["large", "giant"], habitat: "open", colour: 0x9a7446, enabledByDefault: true, defaultPopulation: 3 }),
-  "carrion-runner": entry("carrion-runner", { label: "Turkey Vulture", scientificName: "Cathartes aura", symbol: "TV", guild: "scavenger", feeding: "carrion", sizeClass: "small", adultMass: 2, speed: 1.12, smell: 13, energyCapacity: 95, hungerRate: .065, thirstRate: .5, herdTendency: .35, social: "feeding-groups", habitat: "open", colour: 0x3f332e, enabledByDefault: true, defaultPopulation: 3 }),
+  "carrion-runner": entry("carrion-runner", { label: "Southern Ground Hornbill", scientificName: "Bucorvus leadbeateri", symbol: "GH", guild: "scavenger", feeding: "carrion", sizeClass: "small", adultMass: 4, speed: 1.02, smell: 6, energyCapacity: 120, hungerRate: .065, thirstRate: .5, herdTendency: .35, social: "family-groups", habitat: "open", colour: 0x292729, enabledByDefault: true, defaultPopulation: 3 }),
   "waterline-grazer": entry("waterline-grazer", { label: "Capybara", scientificName: "Hydrochoerus hydrochaeris", symbol: "CA", guild: "herbivore", feeding: "grass", sizeClass: "medium", adultMass: 55, speed: .86, thirstRate: 1.05, herdTendency: .5, social: "small-herd", habitat: "riparian", colour: 0x80664c, enabledByDefault: false, defaultPopulation: 5 }),
   "brush-nibbler": entry("brush-nibbler", { label: "Snowshoe Hare", scientificName: "Lepus americanus", symbol: "SN", guild: "herbivore", feeding: "shrub", sizeClass: "tiny", adultMass: 2, speed: 1.05, hearing: 10, hungerRate: .24, thirstRate: .42, herdTendency: .08, social: "solitary", habitat: "woodland", defence: "conceal", colour: 0xb6aa95, enabledByDefault: false, defaultPopulation: 8 }),
   "waterline-ambusher": entry("waterline-ambusher", { label: "Nile Crocodile", scientificName: "Crocodylus niloticus", symbol: "NC", guild: "carnivore", feeding: "prey-carrion", sizeClass: "large", adultMass: 350, speed: 1.05, energyCapacity: 500, enduranceMultiplier: .8, hearing: 9, hungerRate: .055, herdTendency: .02, social: "territorial", hunting: "water-ambush", preySizes: ["small", "medium", "large"], habitat: "riparian", colour: 0x42523a, enabledByDefault: false, defaultPopulation: 2 }),
   "northern-shaggy-grazer": entry("northern-shaggy-grazer", { label: "Musk Ox", scientificName: "Ovibos moschatus", symbol: "MX", guild: "herbivore", feeding: "mixed-plants", sizeClass: "large", adultMass: 285, speed: .74, energyCapacity: 270, hungerRate: .21, thirstRate: .58, herdTendency: .8, social: "seasonal-herd", habitat: "boreal", coldAdapted: true, colour: 0x4f4037, enabledByDefault: false, defaultPopulation: 5 }),
   "highland-prowler": entry("highland-prowler", { label: "Snow Leopard", scientificName: "Panthera uncia", symbol: "SL", guild: "carnivore", feeding: "prey-carrion", sizeClass: "medium", adultMass: 40, speed: 1.08, energyCapacity: 370, enduranceMultiplier: 1.15, hungerRate: .05, herdTendency: .02, social: "solitary", hunting: "terrain-ambush", preySizes: ["small", "medium"], habitat: "alpine", coldAdapted: true, colour: 0xb5b7b0, enabledByDefault: false, defaultPopulation: 2 }),
   "little-opportunist": entry("little-opportunist", { label: "Raccoon", scientificName: "Procyon lotor", symbol: "RA", guild: "omnivore", feeding: "mixed", sizeClass: "small", adultMass: 8, speed: 1.03, smell: 10, energyCapacity: 160, hungerRate: .09, thirstRate: .48, herdTendency: .12, social: "family", hunting: "opportunist", preySizes: ["tiny"], habitat: "cover-edge", colour: 0x77736d, enabledByDefault: false, defaultPopulation: 3 }),
-  "cold-country-scavenger": entry("cold-country-scavenger", { label: "Bearded Vulture", scientificName: "Gypaetus barbatus", symbol: "BV", guild: "scavenger", feeding: "carrion", sizeClass: "small", adultMass: 6, speed: .92, smell: 12, energyCapacity: 170, enduranceMultiplier: 1.4, hungerRate: .045, thirstRate: .42, herdTendency: .02, social: "pair", habitat: "alpine", coldAdapted: true, colour: 0x8e7058, enabledByDefault: false, defaultPopulation: 2 }),
+  "cold-country-scavenger": entry("cold-country-scavenger", { label: "Common Pheasant", scientificName: "Phasianus colchicus", symbol: "PH", guild: "omnivore", feeding: "mixed", sizeClass: "small", adultMass: 1.3, speed: .98, smell: 5, energyCapacity: 90, enduranceMultiplier: .8, hungerRate: .08, thirstRate: .42, herdTendency: .3, social: "loose-flock", habitat: "cold-grassland", coldAdapted: true, colour: 0x8e5732, enabledByDefault: false, defaultPopulation: 4 }),
   "sunscale-ambusher": entry("sunscale-ambusher", { label: "Ball Python", scientificName: "Python regius", symbol: "BP", guild: "carnivore", feeding: "prey", sizeClass: "small", adultMass: 2, speed: .72, vision: 6, smell: 10, hearing: 5, energyCapacity: 150, enduranceMultiplier: .45, hungerRate: .025, thirstRate: .3, maternalCare: .45, herdTendency: 0, social: "territorial", hunting: "thermal-ambush", preySizes: ["tiny", "small"], habitat: "warm-open", colour: 0x9b6b35, enabledByDefault: false, defaultPopulation: 2 }),
   "shieldback-colony": entry("shieldback-colony", { label: "African Spurred Tortoise", scientificName: "Centrochelys sulcata", symbol: "AT", guild: "herbivore", feeding: "mixed-plants", sizeClass: "medium", adultMass: 70, speed: .45, vision: 4, smell: 8, hearing: 5, energyCapacity: 150, enduranceMultiplier: .75, hungerRate: .11, thirstRate: .48, maternalCare: 0, herdTendency: .08, social: "solitary", habitat: "arid", defence: "shell", colour: 0x9a855a, enabledByDefault: false, defaultPopulation: 4 }),
   "wild-boar": entry("wild-boar", { label: "Wild Boar", scientificName: "Sus scrofa", symbol: "WB", guild: "omnivore", feeding: "mixed", sizeClass: "medium", adultMass: 90, speed: 1.02, vision: 7, smell: 12, hearing: 9, energyCapacity: 240, enduranceMultiplier: 1.05, hungerRate: .085, thirstRate: .72, maternalCare: .9, herdTendency: .55, social: "sounder", hunting: "opportunist", preySizes: ["tiny"], habitat: "woodland-edge", defence: "tusks", colour: 0x765b48, enabledByDefault: false, defaultPopulation: 5 }),
@@ -112,7 +182,7 @@ export const FOOD_ECOLOGY = freeze({
   "northern-shaggy-grazer": freeze({ plants: freeze({ grass: 1, shrub: .72, tree: .22 }), carrion: freeze({}) }),
   "highland-prowler": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "highland-grazer": 1.3, "dryland-runner": .75, "waterline-grazer": .25 }) }),
   "little-opportunist": freeze({ plants: freeze({ grass: .72, shrub: 1.05, tree: .25 }), carrion: freeze({ "meadow-nibbler": 1.15, "brush-nibbler": 1, grazer: .2, "great-plains-grazer": .08 }) }),
-  "cold-country-scavenger": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "northern-shaggy-grazer": 1.3, "highland-grazer": 1.05, "highland-prowler": .65, "sunscale-ambusher": .15 }) }),
+  "cold-country-scavenger": freeze({ plants: freeze({ grass: .85, shrub: 1.05, tree: .12 }), carrion: freeze({ "meadow-nibbler": .18, "brush-nibbler": .18 }) }),
   "sunscale-ambusher": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "meadow-nibbler": 1.2, "brush-nibbler": 1.1, "shieldback-colony": .35, "great-plains-grazer": .05 }) }),
   "shieldback-colony": freeze({ plants: freeze({ grass: .8, shrub: 1.05, tree: .18 }), carrion: freeze({}) }),
   "wild-boar": freeze({ plants: freeze({ grass: .58, shrub: 1.1, tree: .28 }), carrion: freeze({ "meadow-nibbler": 1.05, "brush-nibbler": 1, "common-ostrich": .2, grazer: .12 }) }),
