@@ -1,0 +1,106 @@
+function triangleHeight(a, b, c, x, z) {
+  const denominator = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+  if (Math.abs(denominator) < 1e-9) return null;
+  const wa = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / denominator;
+  const wb = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / denominator;
+  const wc = 1 - wa - wb;
+  if (wa < -1e-5 || wb < -1e-5 || wc < -1e-5) return null;
+  return wa * a.y + wb * b.y + wc * c.y;
+}
+
+/** Converts an authored sRGB channel to the linear-light value expected by GPU vertex colours. */
+export function srgbChannelToLinear(value) {
+  const channel = Math.max(0, Math.min(1, Number(value) || 0));
+  return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+}
+
+/** Converts an RGB palette entry expressed as screen-space bytes into linear-light RGB. */
+export function linearRgbFromSrgbBytes(rgb = []) {
+  return [0, 1, 2].map(index => srgbChannelToLinear((Number(rgb[index]) || 0) / 255));
+}
+
+/**
+ * Gives every duplicated copy of a pointy-hex corner the same height. A corner
+ * is shared by the owning cell and its two closest neighbours; averaging that
+ * trio closes the otherwise-visible seams between independently indexed fans.
+ */
+export function sharedHexCornerHeight(cell, corner, radius) {
+  if (!cell || !corner) return 0;
+  const fallback = Number(cell.elevation) || 0, maximumDistanceSquared = Math.max(.0001, Number(radius) || 0) ** 2 * 1.0001;
+  let total = 0, count = 0;
+  for (const contributor of [cell, ...(cell.neighbours || [])]) {
+    const elevation = Number(contributor?.elevation);
+    if (!Number.isFinite(elevation)) continue;
+    const dx = contributor.x - corner.x, dz = contributor.z - corner.z;
+    if (dx * dx + dz * dz > maximumDistanceSquared) continue;
+    total += elevation; count += 1;
+  }
+  return count ? total / count : fallback;
+}
+
+export function fanSurfaceHeight(surface, x, z) {
+  if (!surface?.corners?.length) return surface?.centre?.y ?? 0;
+  const centre = surface.centre;
+  for (let index = 0; index < surface.corners.length; index += 1) {
+    const height = triangleHeight(centre, surface.corners[index], surface.corners[(index + 1) % surface.corners.length], x, z);
+    if (height !== null) return height;
+  }
+  return centre.y;
+}
+
+/** Samples a seven-vertex (centre + six corners) fan stored in one typed array. */
+export function indexedFanSurfaceHeight(positions, vertexOffset, x, z) {
+  if (!positions || !Number.isInteger(vertexOffset) || vertexOffset < 0) return 0;
+  const centreOffset = vertexOffset * 3, ax = positions[centreOffset], ay = positions[centreOffset + 1], az = positions[centreOffset + 2];
+  for (let index = 0; index < 6; index += 1) {
+    const bOffset = (vertexOffset + index + 1) * 3, cOffset = (vertexOffset + (index + 1) % 6 + 1) * 3;
+    const bx = positions[bOffset], by = positions[bOffset + 1], bz = positions[bOffset + 2], cx = positions[cOffset], cy = positions[cOffset + 1], cz = positions[cOffset + 2];
+    const denominator = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+    if (Math.abs(denominator) < 1e-9) continue;
+    const wa = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / denominator;
+    const wb = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / denominator, wc = 1 - wa - wb;
+    if (wa >= -1e-5 && wb >= -1e-5 && wc >= -1e-5) return wa * ay + wb * by + wc * cy;
+  }
+  return ay;
+}
+
+export function stableGroundSupport(x, z, heading, surfaceHeight, options = {}) {
+  const footprint = Math.max(0.05, options.footprint || 0.42);
+  const maxTilt = Math.max(0, options.maxTilt ?? Math.PI / 7);
+  const forwardX = Math.cos(heading || 0), forwardZ = Math.sin(heading || 0);
+  const sideX = -forwardZ, sideZ = forwardX;
+  const front = surfaceHeight(x + forwardX * footprint, z + forwardZ * footprint);
+  const back = surfaceHeight(x - forwardX * footprint, z - forwardZ * footprint);
+  const left = surfaceHeight(x + sideX * footprint, z + sideZ * footprint);
+  const right = surfaceHeight(x - sideX * footprint, z - sideZ * footprint);
+  const centre = surfaceHeight(x, z);
+  const rawPitch = Math.atan2(back - front, footprint * 2);
+  const rawRoll = Math.atan2(right - left, footprint * 2);
+  const clamp = (value) => Math.max(-maxTilt, Math.min(maxTilt, value));
+  const pitch = clamp(rawPitch), roll = clamp(rawRoll);
+  const requestedSupport = Math.max(centre, front - Math.sin(-pitch) * footprint, back + Math.sin(-pitch) * footprint, left - Math.sin(-roll) * footprint, right + Math.sin(-roll) * footprint);
+  // Cardinal samples establish pitch and roll, but a triangulated hill can
+  // peak diagonally between them. Sample the complete circumference plus an
+  // inner ring and reserve enough height for the bounded group tilt. Without
+  // this, the terrain can cover the torso and leave only the top of its back.
+  let radialSupport = centre;
+  for (const radius of [footprint * .55, footprint]) {
+    for (let index = 0; index < 16; index += 1) {
+      const angle = (heading || 0) + index / 16 * Math.PI * 2;
+      const sample = surfaceHeight(x + Math.cos(angle) * radius, z + Math.sin(angle) * radius);
+      const localAngle = angle - (heading || 0);
+      const forwardDistance = Math.cos(localAngle) * radius;
+      const sideDistance = Math.sin(localAngle) * radius;
+      // Correct for the actual bounded pitch and roll at this point rather
+      // than assuming every radial sample lies on the maximum uphill face.
+      // This makes the resulting support plane clear all sampled terrain.
+      radialSupport = Math.max(radialSupport, sample + forwardDistance * Math.sin(pitch) + sideDistance * Math.sin(roll));
+    }
+  }
+  const completeSupport = Math.max(requestedSupport, radialSupport);
+  // Do not let a single cliff-side sample hoist the animal far above its
+  // centre point. Traversability owns whether the animal may enter that cell.
+  const liftLimit = options.avoidClipping ? Infinity : options.maxLift ?? footprint * Math.tan(maxTilt) + 0.08;
+  const supportHeight = Math.min(completeSupport, centre + liftLimit);
+  return { height: supportHeight, pitch, roll, rawPitch, rawRoll };
+}

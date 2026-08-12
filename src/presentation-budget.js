@@ -2,7 +2,7 @@ export const PRESENTATION_TIERS = Object.freeze({ SELECTED: "selected", CLOSE: "
 
 export const PRESENTATION_CHANNELS = Object.freeze({
   selected: Object.freeze(["body", "posture", "movement", "signals", "urgent", "healthBars", "thoughts", "callRings", "trails", "connectors", "actionBadges", "movementArrows", "urgentHalos"]),
-  close: Object.freeze(["body", "posture", "movement", "signals", "urgent", "healthBars", "callRings", "actionBadges", "urgentHalos"]),
+  close: Object.freeze(["body", "posture", "movement", "signals", "urgent", "healthBars", "thoughts", "callRings", "actionBadges", "urgentHalos"]),
   medium: Object.freeze(["body", "movement", "urgent", "healthBars", "movementArrows", "urgentHalos"]),
   distant: Object.freeze(["body", "urgent", "urgentHalos"]),
   strategic: Object.freeze(["aggregates"])
@@ -10,7 +10,7 @@ export const PRESENTATION_CHANNELS = Object.freeze({
 
 export const DEFAULT_PRESENTATION_BUDGETS = Object.freeze({ connectors: 8, trails: 16, thoughts: 1, callRings: 12, healthBars: 24, actionBadges: 12, movementArrows: 24, urgentHalos: 16 });
 const PRIVATE_REQUIREMENTS = Object.freeze({ connectors: "cause", thoughts: "thought" });
-const CHANNEL_REQUIREMENTS = Object.freeze({ callRings: "signals", healthBars: "injury", trails: "movement", movementArrows: "movement" });
+const CHANNEL_REQUIREMENTS = Object.freeze({ callRings: "signals", healthBars: "exact-health", trails: "movement", movementArrows: "movement" });
 const TIER_RANK = Object.freeze({ selected: 5, close: 4, medium: 3, distant: 2, strategic: 0 });
 
 export function resolvePresentationTier({ selected = false, strategic = false, distance = Infinity, cameraDistance = 0, closeDistance = 34, mediumDistance = 86, mediumZoom = 110, distantZoom = 175 }) {

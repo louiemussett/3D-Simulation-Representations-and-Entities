@@ -1,4 +1,6 @@
-const DEFAULT_SAMPLE_LIMIT = 240;
+export const DEFAULT_PROFILER_SAMPLE_LIMIT = 600;
+const DEFAULT_SAMPLE_LIMIT = DEFAULT_PROFILER_SAMPLE_LIMIT;
+const normalizedSampleLimit = (value, fallback = DEFAULT_SAMPLE_LIMIT) => Number.isFinite(Number(value)) ? Math.max(1, Math.floor(Number(value))) : fallback;
 
 export const PROFILE_CATEGORIES = Object.freeze([
   "frame.total", "frame presentation update", "Three.js render", "controls/camera", "weather/hydrology",
@@ -9,7 +11,7 @@ export const PROFILE_CATEGORIES = Object.freeze([
 
 export class FixedRingBuffer {
   constructor(limit = DEFAULT_SAMPLE_LIMIT) {
-    this.limit = Math.max(1, Math.floor(limit));
+    this.limit = normalizedSampleLimit(limit);
     this.values = new Array(this.limit);
     this.next = 0;
     this.length = 0;
@@ -19,6 +21,20 @@ export class FixedRingBuffer {
     this.values[this.next] = value;
     this.next = (this.next + 1) % this.limit;
     this.length = Math.min(this.length + 1, this.limit);
+    return this.length;
+  }
+
+  get size() { return this.length; }
+  get capacity() { return this.limit; }
+  latest() { return this.length ? this.values[(this.next - 1 + this.limit) % this.limit] : undefined; }
+
+  resize(limit) {
+    limit = normalizedSampleLimit(limit, this.limit);
+    if (limit === this.limit) return this.limit;
+    const retained = this.toArray().slice(-limit);
+    this.limit = limit; this.values = new Array(limit); this.next = 0; this.length = 0;
+    for (const value of retained) this.push(value);
+    return this.limit;
   }
 
   toArray() {
@@ -47,15 +63,33 @@ export function sampleSummary(values) {
 }
 
 export class DevelopmentProfiler {
-  constructor({ enabled = false, sampleLimit = DEFAULT_SAMPLE_LIMIT, clock = () => performance.now() } = {}) {
+  constructor({ enabled = false, sampleLimit = DEFAULT_SAMPLE_LIMIT, clock = () => performance.now(), categories = PROFILE_CATEGORIES, dynamicCategories = false } = {}) {
     this.enabled = enabled;
     this.clock = clock;
-    this.buffers = new Map(PROFILE_CATEGORIES.map((name) => [name, new FixedRingBuffer(sampleLimit)]));
+    this.sampleLimit = normalizedSampleLimit(sampleLimit);
+    this.dynamicCategories = Boolean(dynamicCategories);
+    this.buffers = new Map([...new Set(categories.map(String).filter(Boolean))].map((name) => [name, new FixedRingBuffer(this.sampleLimit)]));
   }
 
   setEnabled(enabled) { this.enabled = Boolean(enabled); return this.enabled; }
+  register(category) {
+    const name = String(category || "");
+    if (!name) return null;
+    if (!this.buffers.has(name)) this.buffers.set(name, new FixedRingBuffer(this.sampleLimit));
+    return this.buffers.get(name);
+  }
+  resizeSampleLimit(sampleLimit) {
+    this.sampleLimit = normalizedSampleLimit(sampleLimit, this.sampleLimit);
+    for (const buffer of this.buffers.values()) buffer.resize(this.sampleLimit);
+    return this.sampleLimit;
+  }
   clear() { for (const buffer of this.buffers.values()) buffer.clear(); }
-  record(category, durationMs) { if (this.enabled) this.buffers.get(category)?.push(durationMs); }
+  record(category, durationMs) {
+    if (!this.enabled || !Number.isFinite(Number(durationMs))) return false;
+    const buffer = this.buffers.get(category) || (this.dynamicCategories ? this.register(category) : null);
+    if (!buffer) return false;
+    buffer.push(Number(durationMs)); return true;
+  }
   measure(category, work) {
     if (!this.enabled) return work();
     const started = this.clock();
@@ -69,6 +103,67 @@ export class DevelopmentProfiler {
       resources
     };
   }
+  drain(resources = {}) { const report = this.report(resources); this.clear(); return report; }
+}
+
+const metricName = (value) => {
+  const name = String(value || "").trim();
+  if (!name) throw new TypeError("Diagnostic metric names must be non-empty");
+  return name;
+};
+
+/** Small reusable counter/gauge/history registry for diagnostics-only data. */
+export class DiagnosticsMetrics {
+  constructor({ historyLimit = DEFAULT_SAMPLE_LIMIT } = {}) {
+    this.historyLimit = normalizedSampleLimit(historyLimit);
+    this.counters = new Map();
+    this.gauges = new Map();
+    this.histories = new Map();
+  }
+  increment(name, amount = 1) {
+    name = metricName(name); amount = Number(amount);
+    if (!Number.isFinite(amount)) throw new TypeError(`Diagnostic counter ${name} requires a finite amount`);
+    const value = (this.counters.get(name) || 0) + amount; this.counters.set(name, value); return value;
+  }
+  gauge(name, value) {
+    name = metricName(name); value = Number(value);
+    if (!Number.isFinite(value)) throw new TypeError(`Diagnostic gauge ${name} requires a finite value`);
+    this.gauges.set(name, value); return value;
+  }
+  sample(name, value) {
+    name = metricName(name); value = Number(value);
+    if (!Number.isFinite(value)) throw new TypeError(`Diagnostic sample ${name} requires a finite value`);
+    if (!this.histories.has(name)) this.histories.set(name, new FixedRingBuffer(this.historyLimit));
+    this.histories.get(name).push(value); return value;
+  }
+  snapshot() {
+    const histories = Object.fromEntries([...this.histories].map(([name, buffer]) => [name, Object.freeze(sampleSummary(buffer.toArray()))]));
+    return Object.freeze({
+      counters: Object.freeze(Object.fromEntries(this.counters)),
+      gauges: Object.freeze(Object.fromEntries(this.gauges)),
+      histories: Object.freeze(histories)
+    });
+  }
+  clear() { this.counters.clear(); this.gauges.clear(); for (const history of this.histories.values()) history.clear(); this.histories.clear(); }
+}
+
+/** Normalises cache-like diagnostics without exposing the mutable cache. */
+export function cacheDiagnosticsMetrics(cache) {
+  const source = typeof cache?.metrics === "function" ? cache.metrics() : cache || {};
+  const finite = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+  const hits = Math.max(0, finite(source.hits)), misses = Math.max(0, finite(source.misses));
+  const bytes = Math.max(0, finite(source.bytes ?? source.totalBytes)), budgetBytes = Math.max(0, finite(source.budgetBytes ?? source.maxBytes));
+  return Object.freeze({
+    entries: Math.max(0, finite(source.entries ?? source.size)),
+    bytes,
+    budgetBytes,
+    utilization: budgetBytes ? bytes / budgetBytes : 0,
+    hits,
+    misses,
+    hitRate: hits + misses ? hits / (hits + misses) : 0,
+    evictions: Math.max(0, finite(source.evictions)),
+    disposals: Math.max(0, finite(source.disposals))
+  });
 }
 
 const PRESENTATION_KEYS = new Set([
@@ -108,10 +203,13 @@ export function stableStringify(value) { return JSON.stringify(authoritativeSnap
 
 export function authoritativeHash(world) {
   const text = stableStringify(world);
-  let hash = 0xcbf29ce484222325n;
+  let left = 0xdeadbeef, right = 0x41c6ce57;
   for (let index = 0; index < text.length; index += 1) {
-    hash ^= BigInt(text.charCodeAt(index));
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+    const code = text.charCodeAt(index);
+    left = Math.imul(left ^ code, 2654435761);
+    right = Math.imul(right ^ code, 1597334677);
   }
-  return hash.toString(16).padStart(16, "0");
+  left = Math.imul(left ^ (left >>> 16), 2246822507) ^ Math.imul(right ^ (right >>> 13), 3266489909);
+  right = Math.imul(right ^ (right >>> 16), 2246822507) ^ Math.imul(left ^ (left >>> 13), 3266489909);
+  return `${(right >>> 0).toString(16).padStart(8, "0")}${(left >>> 0).toString(16).padStart(8, "0")}`;
 }

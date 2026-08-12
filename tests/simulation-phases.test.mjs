@@ -1,7 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { MultiEntitySpatialIndex } from "../src/spatial-index.js";
-import { assignDecisionOrder, rebuildOccupancy, runStableAnimalPhases } from "../src/simulation-phases.js";
+import { StableLivingList, assignDecisionOrder, orderedLivingAnimals, rebuildOccupancy, runStableAnimalPhases } from "../src/simulation-phases.js";
+
+test("the default ordered living list reuses storage and notices births, deaths and order changes", () => {
+  const animals = [{ id: "b", alive: true, decisionOrder: 1 }, { id: "a", alive: true, decisionOrder: 0 }];
+  const first = orderedLivingAnimals(animals), second = orderedLivingAnimals(animals);
+  assert.equal(first, second); assert.deepEqual(first.map(animal => animal.id), ["a", "b"]);
+  animals[0].alive = false;
+  const afterDeath = orderedLivingAnimals(animals); assert.equal(afterDeath, first); assert.deepEqual(afterDeath.map(animal => animal.id), ["a"]);
+  animals.push({ id: "c", alive: true, decisionOrder: -1 });
+  assert.deepEqual(orderedLivingAnimals(animals).map(animal => animal.id), ["c", "a"]);
+});
+
+test("explicit stable living lists rebuild only when marked dirty", () => {
+  const animals = [{ id: "a", alive: true, decisionOrder: 0 }, { id: "b", alive: true, decisionOrder: 1 }], living = new StableLivingList(animals);
+  const first = living.ordered(animals, { verify: false });
+  assert.equal(living.ordered(animals, { verify: false }), first);
+  animals[0].alive = false; living.markDirty();
+  assert.equal(living.ordered(animals, { verify: false }), first); assert.deepEqual(first.map(animal => animal.id), ["b"]);
+});
 
 function run(items) {
   const animals = items.map((item) => ({ ...item, seen: [] }));

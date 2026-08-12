@@ -1,3 +1,12 @@
 node_modules/
 test-results/
 playwright-report/
+debug.log
+artifacts/
+companion/.env
+companion/sessions/
+companion/runtime/
+sessions/
+*.wav
+*.mkv
+*.mp4

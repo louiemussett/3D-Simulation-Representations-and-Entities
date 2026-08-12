@@ -25,7 +25,7 @@ test("tier transitions restore identifying animal parts", () => {
 test("budgets are enforced with selected and immediate threats first", () => {
   const allocator = new PresentationBudgetAllocator({ trails: 2, connectors: 1, thoughts: 1, callRings: 1, healthBars: 1, actionBadges: 1, movementArrows: 1, urgentHalos: 1 }, 0);
   const candidates = [
-    { id: "ordinary", tier: "selected", distance: 2, selected: true, permittedChannels: ["movement", "cause", "thought", "signals", "injury"] },
+    { id: "ordinary", tier: "selected", distance: 2, selected: true, permittedChannels: ["movement", "cause", "thought", "signals", "injury", "exact-health"] },
     { id: "threat", tier: "close", distance: 4, immediateThreat: true, permittedChannels: ["movement", "cause", "signals", "injury"] },
     { id: "other", tier: "close", distance: 1, permittedChannels: ["movement", "cause", "signals", "injury"] }
   ];
@@ -44,11 +44,12 @@ test("privacy overrides importance and budget availability", () => {
   assert.equal(result.get("observed").has("thoughts"), false);
 });
 
-test("hysteresis keeps an existing overlay through a close ranking change", () => {
+test("health bars require private exact-health permission and retain ranking hysteresis", () => {
   const allocator = new PresentationBudgetAllocator({ healthBars: 1 }, 100);
-  const candidate = (id, distance) => ({ id, tier: "close", distance, permittedChannels: ["injury"] });
+  const candidate = (id, distance) => ({ id, tier: "close", distance, permittedChannels: ["injury", "exact-health"] });
   assert.equal(allocator.allocate([candidate("a", 10), candidate("b", 11)]).get("a").has("healthBars"), true);
   assert.equal(allocator.allocate([candidate("a", 11), candidate("b", 10)]).get("a").has("healthBars"), true);
+  assert.equal(allocator.allocate([{ id: "observed", tier: "close", distance: 1, permittedChannels: ["injury"] }]).get("observed").has("healthBars"), false);
 });
 
 test("reality work is visibility-gated and rate bounded", () => {

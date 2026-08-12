@@ -10,5 +10,3 @@ export class StructuralRootCache {
   }
   remove(id) { const entry = this.entries.get(id); this.entries.delete(id); return entry?.root || null; }
 }
-
-export const BADGED_ACTIONS = Object.freeze(new Set(["blocked", "listen"]));

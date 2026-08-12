@@ -5,7 +5,9 @@ export function disposeOwnedResource(resource) { if (!resource || ![RESOURCE_OWN
 export function disposeOwnedTree(root) {
   const disposed = new Set();
   root?.traverse?.((node) => {
-    for (const resource of [node.geometry, ...(Array.isArray(node.material) ? node.material : [node.material])]) {
+    const materials = Array.isArray(node.material) ? node.material : [node.material];
+    const materialResources = materials.flatMap((material) => material ? [material.map, material.alphaMap, material] : []);
+    for (const resource of [node.geometry, ...materialResources]) {
       if (!resource || disposed.has(resource)) continue;
       if (disposeOwnedResource(resource)) disposed.add(resource);
     }

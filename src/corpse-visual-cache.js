@@ -8,6 +8,10 @@ export function corpseVisualStage(corpse) {
 export class CorpseRenderCache {
   constructor(dispose = () => {}) { this.entries = new Map(); this.dispose = dispose; }
   hideAll() { for (const entry of this.entries.values()) entry.visual.visible = false; }
+  setVisibleIds(ids) {
+    const visible = ids instanceof Set ? ids : new Set(ids || []);
+    for (const [id, entry] of this.entries) entry.visual.visible = visible.has(id);
+  }
   update(corpse, create, update) {
     const stage = corpseVisualStage(corpse); let entry = this.entries.get(corpse.id);
     if (!entry || entry.stage !== stage) {
