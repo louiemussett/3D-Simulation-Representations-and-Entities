@@ -37,7 +37,7 @@ import { experimentRecord, summarizeExperiment } from "./experiment-metrics.js";
 import { DEFAULT_FRAME_TICK_BUDGET_MS, runBudgetedTicks, shouldRefreshPresentation } from "./tick-budget.js";
 import { continuingMotionTarget, traversableNeighbourCells } from "./movement-candidates.js";
 import { indexedFanSurfaceHeight, linearRgbFromSrgbBytes, sharedHexCornerHeight, srgbChannelToLinear, stableGroundSupport } from "./terrain-surface.js";
-import { cameraPresentationMetrics, cinemaPopulationPresentation, constrainCameraToTerrain, followTargetPreservingOrbit, usesAggregateAnimalMarkers } from "./camera-ground.js";
+import { cameraPresentationMetrics, cinemaPopulationPresentation, constrainCameraToTerrain, followTargetPreservingOrbit, observerCameraClearance, usesAggregateAnimalMarkers } from "./camera-ground.js";
 import { cameraFaultRequiresRecovery, finiteMovieCameraPose, movieCameraWatchdogDecision } from "./movie-camera-watchdog.js";
 import { createGameplayCameraState, updateGameplayCamera } from "./gameplay-camera.js";
 import { cameraRelativeMovement, EmbodiedInput } from "./embodied-movement.js";
@@ -65,23 +65,35 @@ import { chooseOffspringCount, conceptionProbability, maternalConditionScore, mi
 import { migrateReproductiveState, recordInducedOvulation, recordReproductiveOutcome, reproductiveStatus, reproductiveStatusLabel, updateReproductiveEnvironment } from "./reproductive-biology.js";
 import { advanceSurfaceNestCare, surfaceNestHatchCount } from "./surface-nest.js";
 import { reproductiveIntegrityAudit } from "./reproductive-audit.js";
-import { animalEyePosition, attachedAnimalEyePosition } from "./animal-face-geometry.js";
+import { animalEyePosition, attachedAnimalEyePosition, constrainedVisualEyeYaw } from "./animal-face-geometry.js";
+import { visibleEyeGazeOffset, visibleIrisScale, visiblePupilScale } from "./visual-eye-dynamics.js";
+import { environmentalMotionClutter } from "./visual-clutter.js";
+import { recordDecisionAndMotorLatency, recordPerceptionLatency } from "./perception-latency.js";
 import { adaptFemaleMatePreferences, createMaleMatingEpisode, inferredLibido, maleMatingStrategy, maleSocialStrategyNetwork, migrateSocialState, observableMateCompatibility, rateFemaleCandidate, relationshipKind, rememberFemaleMateOutcome, rememberMaleFemaleRating, rememberSocialEvent, shareFemaleMateObservation, shareHighRatedFemale, socialEncounterKind } from "./social-relationships.js";
 import { endurancePresentation } from "./endurance-presentation.js";
 import { lifespanQuality, migrateLifeHistory, recordInjurySustained, recordLifeExperience } from "./lifespan-history.js";
 import { advanceSenescence, migrateSenescence, senescenceModifiers, senescenceSummary, senescentDeathCause } from "./senescence.js";
-import { evaluateVision, visionFov } from "./vision-model.js";
+import { visionFov } from "./vision-model.js";
+import { FOUNDER_VISUAL_BASELINE } from "./perception-baselines.js";
 import { buildGroundVisionSector } from "./vision-overlay.js";
 import { PerformanceBenchmark } from "./performance-benchmark.js";
 import { feedingAppetite } from "./feeding-appetite.js";
 import { FOG_STATE, fogKnowledgeState, withinLocalFogReveal } from "./knowledge-fog.js";
 import { buildNavMesh, buildNavMeshAsync } from "./navmesh.js";
 import { findNavPath } from "./navmesh-pathfinding.js";
-import { bodySupportedByNavmesh, createLocomotionState, createMovementRequest, LOCOMOTION_PROFILES, realtimeLocomotionHours, runLocomotionMinute } from "./locomotion-system.js";
+import { bodySupportedByNavmesh, createLocomotionState, createMovementRequest, equivalentMovementRequest, LOCOMOTION_PROFILES, realtimeLocomotionHours, runLocomotionMinute } from "./locomotion-system.js";
 import { nearestSafeUnstuckDestination } from "./entity-unstuck.js";
 import { assessWorldBoundary, DEFAULT_EDGE_MARGIN, DEFAULT_RECOVERY_BUFFER, worldBoundaryClearance } from "./world-boundary.js";
 import { bodyRadius, collisionRadiusFor, interactionRadius, physicalContact } from "./interaction-spacing.js";
 import { gradedObservation } from "./perception-observation.js";
+import { classifySensoryContacts } from "./perception-orchestrator.js";
+import { createEnvironmentInterface } from "./environment-interface.js";
+import { createVisionInterface } from "./vision-interface.js";
+import { AirborneScentField, castingDestination, deterministicIntermittency, localWindVector, updateScentField } from "./scent-model.js";
+import { buildEvidenceHypotheses, selectTrackingRoute, traceToSensoryEvidence } from "./evidence-fusion.js";
+import { updateOrienting } from "./orienting-system.js";
+import { chooseStalkingAction, estimatePredatorExposure, preyTargetingEstimate, stalkingReroutePoint } from "./reciprocal-attention.js";
+import { advanceSurfaceMoisture, applyVegetationDisturbance, migrateSurfaceState, movementEvidence, substrateContact } from "./surface-evidence.js";
 import { PerceptionResultCache, perceptionPoseSignature } from "./perception-cache.js";
 import { environmentSenseCadence, routineEnvironmentScanDue } from "./population-performance.js";
 import { describeGroup, dissolveSingletonGroups, groupDisplayName, updateGroupIdentity } from "./group-naming.js";
@@ -117,7 +129,8 @@ import { abandonDependent, assessGroupMembership, beginGroupDeparture, canJoinGr
 import { closeKinForMating, descendantDepth, generationLabel, kinshipBetween, livingAncestorCandidates, migrateKinship, registerBirthKinship, storeLineage } from "./kinship.js";
 import { unifiedSocialGraph } from "./social-graph.js";
 import { drinkingContactState, waterContactPoint } from "./water-contact.js";
-import { assessPersonalSpace, migratePersonalSpace, personalSpaceRadius } from "./personal-space.js";
+import { HYDRATION_ACQUISITION_TARGET, NEED_DEPENDENCY_PLAN_SCHEMA, hydrationAcquisitionState, immediateThreatPrecedesWater, migrateNeedDependencyPlan, retainGoalPlanCommitment, shorelineContactKey, ShorelineReservationBook, shouldRetainWaterTarget, stabilizeNeedDependencyPlan, suspendNeedDependencyPlan, waterTargetKey } from "./water-commitment.js";
+import { assessPersonalSpace, learnProximityRelationship, migratePersonalSpace, personalSpaceRadius } from "./personal-space.js";
 import { semanticIconLayout } from "./semantic-icon-layout.js";
 import { confirmResourceMemory, failResourceMemory, migrateResourceAcquisition, recordResourceContact, resourceAcquisitionTotals, resourceMemoryEligible, resourceSearchRadius } from "./resource-acquisition.js";
 import { applyOffspringTraitArchitecture, offspringTraitArchitecture } from "./trait-variation.js";
@@ -125,6 +138,18 @@ import { activeBereavement, ageBereavement, bereavementDisposition, createBereav
 import { captureGenerationalAudit, compareGenerationalAudit } from "./generational-audit.js";
 import { ECOLOGY_POPULATION_LEVELS, ECOLOGY_PRESETS, ECOLOGY_PRESET_POPULATIONS, SPECIES as species, SPECIES_IDS, canHunt as speciesCanHunt, canScavenge as speciesCanScavenge, carcassPreference, eatsMeat, eatsPlants, ecologyPresetCounts, ecologyPresetForWorldScale, ecologyWarnings, enabledSpeciesCounts, foodPreferenceSummary, guildOf, habitatPreferenceSummary, habitatSuitability, isCarnivore, isHerbivore, isOmnivore, isSustainableForage, needsPregnantPredatorFounder, plantPreference, preyCompatible, selectHabitatWeighted, spatialEcology, speciesCategoryTotals, speciesProfile } from "./species-registry.js";
 import { biologicalPhenotype, digestiveEfficiency, phenotypeSummary, sensoryPhenotype, thermalPerformance } from "./biological-phenotypes.js";
+import { ACOUSTIC_FREQUENCY_BANDS_HZ, acousticProfile, supportedAcousticCall } from "./acoustic-profiles.js";
+import { acousticObservationContact, createAnimalSoundEvent, createEnvironmentalSoundEvent, createIndividualAcousticTraits, lineSamplePath, migrateIndividualAcousticTraits, observeSound, propagateSound } from "./acoustic-ecology.js";
+import { acousticLaboratoryRecord, explainLatestAcousticObservation } from "./acoustic-diagnostics.js";
+import { CompactTraceField, signalEmissionRecord, supportedSignalModalities } from "./multimodal-communication.js";
+import { createSensoryPerspective, sensorDefinitionsFor, sensoryTranslationLabel, SENSORY_PERSPECTIVE_MODES } from "./sensory-perspective.js";
+import { sensorDefinitions, sensorWorldAnchor, visualHeadYawRadians, visualSensorYawRadians } from "./sensor-anatomy.js";
+import { causalWhyDiagnostic, gazeControlDiagnostic, perceptionLatencyDiagnostic, perceptionResearchReadiness, sensorAnatomyDiagnostic, temporalMotionDiagnostic, truthPerceptionTraceInspection } from "./perception-laboratory.js";
+import { biologicalHistoryDeposits, boneHistoryDeposit, carcassFragmentHistoryDeposit, environmentalHistorySummary, HISTORY_TRACE_KINDS } from "./environmental-history.js";
+import { ProceduralAudioRenderer } from "./procedural-audio.js";
+import { loadAudioSettings, saveAudioSettings, soundLanguageDefinition } from "./audio-settings.js";
+import { encodeWeatherFieldTexture, localizedWeatherPresentation, precipitationFromAtmosphere, weatherFieldRefreshDue, weatherFieldRefreshMarker, weatherSystemActivity } from "./localized-weather.js";
+import { precipitationBand, weatherOverlayLegend, weatherShaderLayerIndex, weatherVisualBudget } from "./weather-visuals.js";
 import { advanceMetabolism, fillMetabolicReserves, ingestNutrients, initializeMetabolism, metabolicJourneyBudget, metabolicPresentation, predictiveHunger, spendMetabolicEnergy, syncLegacyEnergy } from "./metabolic-system.js";
 import { difficultyProfile, resolveEmbodimentCapabilities } from "./embodiment-capabilities.js";
 import { guaranteePopulationSlot, randomEmbodiedSetup, speciesForRole, validateEmbodiedSetup } from "./embodied-setup.js";
@@ -174,8 +199,11 @@ function recordNutrientIntake(animal, nutrients) {
 const TEST_MODE = new URLSearchParams(window.location.search).get("test") === "1";
 let WORLD = TEST_MODE ? 48 : 90;
 let HALF = Math.floor(WORLD / 2);
-let worldSetup = { size: WORLD, span: 1, customSpan: null, hexDetail: TEST_MODE ? 400 : 5000, startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, ecologyPreset: "compact", ecologyPopulationScale: 100, speciesCounts: ecologyPresetCounts("compact"), ...speciesCategoryTotals(ecologyPresetCounts("compact")), relief: .15, mountains: 1, roundedMountains: 1, pyramidalMountains: 1, alpineRanges: 1.25, mountainBreadth: 1.35, summitSharpness: 1, mountainRangeLength: 1.4, mountainRangeComplexity: 1, hills: 1, valleys: 1, ridges: .55, plateaus: .35, roughness: .3, rivers: 1.25, riverWidthVariation: 1, riverPatternDiversity: 1, lakes: 1.25, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1.2, climate: 1, temperatureVariation: 1, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36 };
-const WORLD_SCHEMA = 5;
+const DEFAULT_ECOLOGY_PRESET = "updated-originals";
+let worldSetup = { size: WORLD, span: 1, customSpan: null, hexDetail: TEST_MODE ? 400 : 5000, startSeason: "Spring", windDirection: "west", windStrength: 1, stormIntensity: 1, rainShadow: 1, sedimentTransport: 1, ecologyPreset: DEFAULT_ECOLOGY_PRESET, ecologyPopulationScale: 100, speciesCounts: ecologyPresetCounts(DEFAULT_ECOLOGY_PRESET), ...speciesCategoryTotals(ecologyPresetCounts(DEFAULT_ECOLOGY_PRESET)), relief: .15, mountains: 1, roundedMountains: 1, pyramidalMountains: 1, alpineRanges: 1.25, mountainBreadth: 1.35, summitSharpness: 1, mountainRangeLength: 1.4, mountainRangeComplexity: 1, hills: 1, valleys: 1, ridges: .55, plateaus: .35, roughness: .3, rivers: 1.25, riverWidthVariation: 1, riverPatternDiversity: 1, lakes: 1.25, woodland: 1, trees: 1, bushes: 1, longGrass: 1, rainfall: 1.2, climate: 1, temperatureVariation: 1, northTemperature: 8, southTemperature: 24, coldestTemperature: -12, hottestTemperature: 36 };
+const WORLD_SCHEMA = 6;
+const COMPATIBLE_WORLD_SCHEMAS = new Set([5, WORLD_SCHEMA]);
+const compatibleWorldSchema = schema => COMPATIBLE_WORLD_SCHEMAS.has(Number(schema));
 const SAVE_KEY = "persistent-ecosystem-simulation-v1";
 const AUTOSAVE_DB = "rss-living-laboratory-progress-v1";
 const AUTOSAVE_STORE = "snapshots";
@@ -213,6 +241,41 @@ ui.overlayNavigationCues = document.querySelector("#overlay-navigation-cues");
 ui.overlaySelectionRing = document.querySelector("#overlay-selection-ring");
 ui.overlayMotionTrails = document.querySelector("#overlay-motion-trails");
 ui.overlayTerritories = document.querySelector("#overlay-territories");
+ui.overlayEnvironmentalHistory = document.querySelector("#overlay-environmental-history");
+ui.perceptionDiagnostics = document.querySelector("#selected-perception-diagnostics");
+ui.audioEnabled = document.querySelector("#audio-enabled");
+ui.audioVolume = document.querySelector("#audio-volume");
+ui.audioDynamicRange = document.querySelector("#audio-dynamic-range");
+ui.audioLanguage = document.querySelector("#audio-language");
+ui.soundCaptionLive = document.querySelector("#sound-caption-live");
+ui.settingsAudioEnabled = document.querySelector("#settings-audio-enabled");
+ui.settingsAudioLanguage = document.querySelector("#settings-audio-language");
+ui.settingsAudioCompareLanguages = document.querySelector("#settings-audio-compare-languages");
+ui.settingsAudioMaster = document.querySelector("#settings-audio-master");
+ui.settingsAudioAnimals = document.querySelector("#settings-audio-animals");
+ui.settingsAudioMovement = document.querySelector("#settings-audio-movement");
+ui.settingsAudioWind = document.querySelector("#settings-audio-wind");
+ui.settingsAudioVegetation = document.querySelector("#settings-audio-vegetation");
+ui.settingsAudioRain = document.querySelector("#settings-audio-rain");
+ui.settingsAudioThunder = document.querySelector("#settings-audio-thunder");
+ui.settingsAudioRiver = document.querySelector("#settings-audio-river");
+ui.settingsAudioShoreline = document.querySelector("#settings-audio-shoreline");
+ui.settingsAudioInterface = document.querySelector("#settings-audio-interface");
+ui.settingsAudioCinema = document.querySelector("#settings-audio-cinema");
+ui.settingsAudioDensity = document.querySelector("#settings-audio-density");
+ui.settingsAudioEnvironment = document.querySelector("#settings-audio-environment");
+ui.settingsAudioReverberation = document.querySelector("#settings-audio-reverberation");
+ui.settingsAudioDynamicRange = document.querySelector("#settings-audio-dynamic-range");
+ui.settingsAudioSpatialization = document.querySelector("#settings-audio-spatialization");
+ui.settingsAudioVoices = document.querySelector("#settings-audio-voices");
+ui.settingsAudioTranslated = document.querySelector("#settings-audio-translated");
+ui.settingsAudioCaptions = document.querySelector("#settings-audio-captions");
+ui.settingsAudioVisualOverlay = document.querySelector("#settings-audio-visual-overlay");
+ui.settingsAudioStatus = document.querySelector("#settings-audio-status");
+ui.soundLanguageSelector = document.querySelector("#sound-language-selector");
+ui.soundLanguagePreviewStatus = document.querySelector("#sound-language-preview-status");
+ui.sensoryPerspective = document.querySelector("#sensory-perspective");
+ui.sensoryPerspectiveStatus = document.querySelector("#sensory-perspective-status");
 ui.gameMenu = document.querySelector("#game-menu"); ui.gameMenuMain = document.querySelector("#game-menu-main"); ui.gameMenuSaves = document.querySelector("#game-menu-saves"); ui.gameMenuShowcase = document.querySelector("#game-menu-showcase"); ui.gameMenuSaveControls = document.querySelector("#game-menu-save-controls");
 ui.menuContinue = document.querySelector("#menu-continue"); ui.menuNewWorld = document.querySelector("#menu-new-world"); ui.menuShowcaseWorld = document.querySelector("#menu-showcase-world"); ui.menuSaveLoad = document.querySelector("#menu-save-load"); ui.menuSettings = document.querySelector("#menu-settings"); ui.menuSavesBack = document.querySelector("#menu-saves-back"); ui.menuShowcaseBack = document.querySelector("#menu-showcase-back");
 ui.menuWorldSource = document.querySelector("#menu-world-source"); ui.menuWorldAction = document.querySelector("#menu-world-action"); ui.menuWorldState = document.querySelector("#menu-world-state"); ui.menuWorldDetail = document.querySelector("#menu-world-detail"); ui.menuWorldExplanation = document.querySelector("#menu-world-explanation");
@@ -225,6 +288,7 @@ ui.benchmarkCopy = document.querySelector("#benchmark-copy");
 ui.benchmarkStatus = document.querySelector("#benchmark-status");
 ui.benchmarkLive = document.querySelector("#benchmark-live");
 ui.graphicsOpen = document.querySelector("#graphics-open"); ui.graphicsPanel = document.querySelector("#graphics-panel"); ui.graphicsClose = document.querySelector("#graphics-close"); ui.graphicsPreset = document.querySelector("#graphics-preset"); ui.graphicsResolution = document.querySelector("#graphics-resolution"); ui.graphicsVegetation = document.querySelector("#graphics-vegetation"); ui.graphicsAnimals = document.querySelector("#graphics-animals"); ui.graphicsLargeMapPerformance = document.querySelector("#graphics-large-map-performance"); ui.graphicsObserverZoom = document.querySelector("#graphics-observer-zoom"); ui.graphicsObserverHaze = document.querySelector("#graphics-observer-haze"); ui.graphicsFrameCap = document.querySelector("#graphics-frame-cap"); ui.graphicsEffects = document.querySelector("#graphics-effects"); ui.graphicsShadows = document.querySelector("#graphics-shadows"); ui.graphicsAdaptiveResolution = document.querySelector("#graphics-adaptive-resolution"); ui.graphicsAdaptiveMin = document.querySelector("#graphics-adaptive-min"); ui.graphicsAdaptiveMax = document.querySelector("#graphics-adaptive-max"); ui.graphicsSummary = document.querySelector("#graphics-summary");
+ui.weatherCloudQuality = document.querySelector("#weather-cloud-quality"); ui.weatherParticleDensity = document.querySelector("#weather-particle-density"); ui.weatherLocalPrecipitation = document.querySelector("#weather-local-precipitation"); ui.weatherDistantShafts = document.querySelector("#weather-distant-shafts"); ui.weatherCloudShadows = document.querySelector("#weather-cloud-shadows"); ui.weatherWetGround = document.querySelector("#weather-wet-ground"); ui.weatherSplashes = document.querySelector("#weather-splashes"); ui.weatherLightning = document.querySelector("#weather-lightning"); ui.weatherHaze = document.querySelector("#weather-haze"); ui.weatherScientificOverlay = document.querySelector("#weather-scientific-overlay"); ui.weatherOverlayLayer = document.querySelector("#weather-overlay-layer"); ui.weatherFieldLegend = document.querySelector("#weather-field-legend"); ui.weatherFieldTitle = document.querySelector("#weather-field-title"); ui.weatherFieldStops = document.querySelector("#weather-field-stops"); ui.weatherFieldStatus = document.querySelector("#weather-field-status");
 ui.graphicsIconQuality = document.querySelector("#graphics-icon-quality");
 ui.graphicsUnstuckEntity = document.querySelector("#graphics-unstuck-entity"); ui.entityUnstuckStatus = document.querySelector("#entity-unstuck-status");
 const displayScaleFieldset = ui.graphicsResolution?.closest("fieldset");
@@ -311,27 +375,50 @@ scene.fog = new THREE.Fog(0x18201c, 330, 900);
 const camera = new THREE.PerspectiveCamera(46, ui.viewport.clientWidth / ui.viewport.clientHeight, 0.1, 1200);
 camera.position.set(175, 230, 190);
 const controls = new OrbitControls(camera, renderer.domElement);
+const OBSERVER_MIN_DISTANCE = .55;
 controls.enableDamping = true;
+controls.zoomToCursor = true;
 controls.enablePan = true;
 controls.enableRotate = true;
 controls.screenSpacePanning = true;
 controls.target.set(0, 0, 0);
 controls.maxPolarAngle = Math.PI * 0.49;
-controls.minDistance = 6;
+controls.minDistance = OBSERVER_MIN_DISTANCE;
 controls.maxDistance = 520;
 controls.zoomSpeed = 1.25;
 controls.panSpeed = .9;
 controls.rotateSpeed = .75;
-scene.add(new THREE.HemisphereLight(0xf4fff2, 0x263029, 2.2));
+const skyLight = new THREE.HemisphereLight(0xf4fff2, 0x263029, 2.2); scene.add(skyLight);
 const sun = new THREE.DirectionalLight(0xffffff, 2.4);
 sun.position.set(12, 18, 10);
 scene.add(sun);
 
-const groups = { terrain: new THREE.Group(), plants: new THREE.Group(), water: new THREE.Group(), animals: new THREE.Group(), intent: new THREE.Group(), selection: new THREE.Group(), fog: new THREE.Group(), overlays: new THREE.Group(), scent: new THREE.Group(), corpses: new THREE.Group() };
+const groups = { terrain: new THREE.Group(), plants: new THREE.Group(), water: new THREE.Group(), weather: new THREE.Group(), animals: new THREE.Group(), intent: new THREE.Group(), selection: new THREE.Group(), fog: new THREE.Group(), overlays: new THREE.Group(), scent: new THREE.Group(), corpses: new THREE.Group() };
 for (const name of ["terrain", "plants", "water", "corpses"]) groups[name].userData.resourceOwnership = RESOURCE_OWNERSHIP.chunk;
-for (const name of ["fog", "overlays", "scent"]) groups[name].userData.resourceOwnership = RESOURCE_OWNERSHIP.temporary;
+for (const name of ["fog", "overlays", "scent", "weather"]) groups[name].userData.resourceOwnership = RESOURCE_OWNERSHIP.temporary;
 for (const name of ["animals", "intent", "selection"]) groups[name].userData.resourceOwnership = RESOURCE_OWNERSHIP.entity;
 Object.values(groups).forEach((g) => scene.add(g));
+
+const MAX_LOCAL_PRECIPITATION = 1600, MAX_WEATHER_SHAFTS = 56, MAX_WEATHER_SPLASHES = 220;
+const rainStreakPositions = new Float32Array(MAX_LOCAL_PRECIPITATION * 2 * 3), rainStreakGeometry = new THREE.BufferGeometry(); rainStreakGeometry.setAttribute("position", new THREE.BufferAttribute(rainStreakPositions, 3).setUsage(THREE.DynamicDrawUsage)); rainStreakGeometry.setDrawRange(0, 0);
+const rainStreakMaterial = new THREE.LineBasicMaterial({ color: 0x9bc9db, transparent: true, opacity: .5, depthWrite: false });
+const cameraRainStreaks = new THREE.LineSegments(rainStreakGeometry, rainStreakMaterial); cameraRainStreaks.frustumCulled = false; groups.weather.add(cameraRainStreaks);
+const snowPositions = new Float32Array(MAX_LOCAL_PRECIPITATION * 3), snowGeometry = new THREE.BufferGeometry(); snowGeometry.setAttribute("position", new THREE.BufferAttribute(snowPositions, 3).setUsage(THREE.DynamicDrawUsage)); snowGeometry.setDrawRange(0, 0);
+const snowMaterial = new THREE.PointsMaterial({ color: 0xe8f3f5, size: .25, transparent: true, opacity: .72, depthWrite: false, sizeAttenuation: true });
+const cameraSnow = new THREE.Points(snowGeometry, snowMaterial); cameraSnow.frustumCulled = false; groups.weather.add(cameraSnow);
+const splashPositions = new Float32Array(MAX_WEATHER_SPLASHES * 3), splashGeometry = new THREE.BufferGeometry(); splashGeometry.setAttribute("position", new THREE.BufferAttribute(splashPositions, 3).setUsage(THREE.DynamicDrawUsage)); splashGeometry.setDrawRange(0, 0);
+const splashMaterial = new THREE.PointsMaterial({ color: 0xb9e6ef, size: .14, transparent: true, opacity: .58, depthWrite: false, sizeAttenuation: true });
+const cameraRainSplashes = new THREE.Points(splashGeometry, splashMaterial); cameraRainSplashes.frustumCulled = false; groups.weather.add(cameraRainSplashes);
+const rainRippleGeometry = new THREE.RingGeometry(.06, .085, 14), rainRippleMaterial = new THREE.MeshBasicMaterial({ color: 0xc8edf3, transparent: true, opacity: .42, depthWrite: false, side: THREE.DoubleSide });
+const cameraRainRipples = new THREE.InstancedMesh(rainRippleGeometry, rainRippleMaterial, MAX_WEATHER_SPLASHES); cameraRainRipples.count = 0; cameraRainRipples.instanceMatrix.setUsage(THREE.DynamicDrawUsage); cameraRainRipples.frustumCulled = false; groups.weather.add(cameraRainRipples);
+function createCloudMassTexture() { const canvas = document.createElement("canvas"); canvas.width = 256; canvas.height = 128; const context = canvas.getContext("2d"); context.filter = "blur(5px)"; for (let index = 0; index < 22; index += 1) { const x = 26 + ((index * 71) % 205), y = 34 + ((index * 43) % 58), radiusX = 23 + index % 5 * 6, radiusY = 15 + index % 4 * 4; context.save(); context.translate(x, y); context.scale(1, radiusY / radiusX); const gradient = context.createRadialGradient(0, 0, 2, 0, 0, radiusX); gradient.addColorStop(0, "rgba(255,255,255,.82)"); gradient.addColorStop(.58, "rgba(255,255,255,.56)"); gradient.addColorStop(1, "rgba(255,255,255,0)"); context.fillStyle = gradient; context.beginPath(); context.arc(0, 0, radiusX, 0, Math.PI * 2); context.fill(); context.restore(); } context.filter = "none"; const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; return texture; }
+const cloudMassTexture = createCloudMassTexture();
+const cloudMasses = Array.from({ length: 60 }, () => { const material = new THREE.SpriteMaterial({ map: cloudMassTexture, color: 0xe4ebeb, transparent: true, opacity: 0, depthWrite: false, fog: false }); const sprite = new THREE.Sprite(material); sprite.visible = false; sprite.renderOrder = 3; groups.weather.add(sprite); return sprite; });
+function createRainShaftTexture() { const canvas = document.createElement("canvas"); canvas.width = 96; canvas.height = 256; const context = canvas.getContext("2d"), gradient = context.createLinearGradient(0, 0, 0, 256); gradient.addColorStop(0, "rgba(140,174,184,0)"); gradient.addColorStop(.12, "rgba(137,171,184,.62)"); gradient.addColorStop(.76, "rgba(116,154,170,.24)"); gradient.addColorStop(1, "rgba(111,147,160,0)"); context.fillStyle = gradient; context.beginPath(); context.moveTo(9, 0); context.lineTo(88, 0); context.lineTo(72, 256); context.lineTo(18, 256); context.closePath(); context.fill(); context.globalCompositeOperation = "destination-out"; for (let index = 0; index < 20; index += 1) { context.globalAlpha = .18 + (index % 4) * .08; context.fillRect((index * 29) % 91, 18 + (index * 47) % 210, 1 + index % 2, 28 + index % 31); } context.globalCompositeOperation = "destination-in"; context.globalAlpha = 1; const edge = context.createLinearGradient(0, 0, 96, 0); edge.addColorStop(0, "rgba(255,255,255,0)"); edge.addColorStop(.24, "rgba(255,255,255,.9)"); edge.addColorStop(.7, "rgba(255,255,255,.9)"); edge.addColorStop(1, "rgba(255,255,255,0)"); context.fillStyle = edge; context.fillRect(0, 0, 96, 256); const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; return texture; }
+const rainShaftTexture = createRainShaftTexture();
+const precipitationShafts = Array.from({ length: MAX_WEATHER_SHAFTS }, () => { const material = new THREE.SpriteMaterial({ map: rainShaftTexture, color: 0xa4c1cc, transparent: true, opacity: 0, depthWrite: false, depthTest: true, fog: false }); const sprite = new THREE.Sprite(material); sprite.visible = false; sprite.renderOrder = 4; groups.weather.add(sprite); return sprite; });
+const weatherInstanceDummy = new THREE.Object3D(), weatherViewDirection = new THREE.Vector3();
+let weatherPresentationFieldMarker = null, weatherFieldOverlayMesh = null, weatherWindArrows = null, weatherTerrainShader = null, weatherOverlayMaterial = null, lastWeatherPresentationAt = 0, lastLightningTick = -1, lightningFlashUntil = 0;
 
 const mats = {
   groundA: new THREE.MeshStandardMaterial({ color: 0x1d2822, roughness: 0.95 }), groundB: new THREE.MeshStandardMaterial({ color: 0x25352d, roughness: 0.95 }), groundBase: new THREE.MeshStandardMaterial({ color: 0x2c3a30, roughness: 0.96 }), water: new THREE.MeshStandardMaterial({ color: 0x3d8fd1, roughness: 0.2, metalness: 0.05, transparent: true, opacity: 0.9, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, side: THREE.DoubleSide }), herbivore: new THREE.MeshStandardMaterial({ color: 0xe6bc52, roughness: 0.45, emissive: 0x2d2106 }), carnivore: new THREE.MeshStandardMaterial({ color: 0xd96cff, roughness: 0.42, emissive: 0x27082d }), herbivoreFemale: new THREE.MeshStandardMaterial({ color: 0xd7b76a, roughness: 0.52 }), herbivoreMale: new THREE.MeshStandardMaterial({ color: 0xc58f35, roughness: 0.48, emissive: 0x241305 }), carnivoreFemale: new THREE.MeshStandardMaterial({ color: 0xc96fff, roughness: 0.42, emissive: 0x23072e }), carnivoreMale: new THREE.MeshStandardMaterial({ color: 0x8c4aff, roughness: 0.42, emissive: 0x170633 }), juvenile: new THREE.MeshStandardMaterial({ color: 0xf0d88b, roughness: 0.5 }), newborn: new THREE.MeshStandardMaterial({ color: 0xf5e6b0, roughness: 0.55 }), oldAnimal: new THREE.MeshStandardMaterial({ color: 0xa6aa9d, roughness: 0.7 }), sexMarkerMale: new THREE.MeshBasicMaterial({ color: 0x8bd3ff }), sexMarkerFemale: new THREE.MeshBasicMaterial({ color: 0xff9cc8 }), corpse: new THREE.MeshStandardMaterial({ color: 0x5b4a40, roughness: 0.9 }), skeleton: new THREE.MeshStandardMaterial({ color: 0xd9d4bd, roughness: 0.85 }), perception: new THREE.MeshBasicMaterial({ color: 0x5ac7a6, transparent: true, opacity: 0.28, side: THREE.DoubleSide }), memory: new THREE.MeshBasicMaterial({ color: 0x75a7ff, transparent: true, opacity: 0.46 }), biomass: new THREE.MeshBasicMaterial({ color: 0x70ff82, transparent: true, opacity: 0.18 }), selected: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75, side: THREE.DoubleSide }), grassPatch: new THREE.MeshLambertMaterial({ color: 0x4c8651 }), longGrassPatch: new THREE.MeshLambertMaterial({ color: 0x3c7441 }), forestPatch: new THREE.MeshLambertMaterial({ color: 0x24503a }), scrubPatch: new THREE.MeshLambertMaterial({ color: 0x35653a }), dryGrassPatch: new THREE.MeshLambertMaterial({ color: 0x96834e }), bushAsset: new THREE.MeshLambertMaterial({ color: 0x2d6a3b }), treeAsset: new THREE.MeshLambertMaterial({ color: 0x18482e }), dirtPatch: new THREE.MeshLambertMaterial({ color: 0x765b3e }), sandPatch: new THREE.MeshLambertMaterial({ color: 0xbca35e }), mudPatch: new THREE.MeshLambertMaterial({ color: 0x4b4033 }), wetlandPatch: new THREE.MeshLambertMaterial({ color: 0x416a4c }), rockPatch: new THREE.MeshLambertMaterial({ color: 0x69716d }), snowPatch: new THREE.MeshLambertMaterial({ color: 0xdce9e7 })
@@ -340,7 +427,45 @@ const mats = {
 mats.eye = new THREE.MeshBasicMaterial({ color: 0x1a1420 });
 mats.animalDark = new THREE.MeshLambertMaterial({ color: 0x211d20 });
 mats.animalLight = new THREE.MeshLambertMaterial({ color: 0xd8d0bb, roughness: .78 });
+mats.animalSclera = new THREE.MeshBasicMaterial({ color: 0xe7dcc2 });
+mats.animalIris = new THREE.MeshBasicMaterial({ color: 0xb78a2c });
+mats.deerIris = new THREE.MeshBasicMaterial({ color: 0x70451f });
+mats.wolfIris = new THREE.MeshBasicMaterial({ color: 0xd5a43d });
+mats.animalEyeRim = new THREE.MeshBasicMaterial({ color: 0x32251d });
+mats.animalPupil = new THREE.MeshBasicMaterial({ color: 0x09070a });
+mats.animalEyeGlint = new THREE.MeshBasicMaterial({ color: 0xf4eee1 });
+mats.animalInnerEar = new THREE.MeshLambertMaterial({ color: 0x80554e, side: THREE.DoubleSide });
 mats.trunk = new THREE.MeshLambertMaterial({ color: 0x5a3a22 });
+function createCartoonEyeballMaterial({ iris, irisRadius, pupilWidth, pupilHeight }) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      eyeWhite: { value: new THREE.Color(0xe8ddc5) }, eyeRim: { value: new THREE.Color(0x30231d) }, irisColour: { value: new THREE.Color(iris) }, pupilColour: { value: new THREE.Color(0x09070a) }, glintColour: { value: new THREE.Color(0xfffbef) },
+      irisRadius: { value: irisRadius }, pupilWidth: { value: pupilWidth }, pupilHeight: { value: pupilHeight },
+      gazeOffset: { value: new THREE.Vector2() }, irisScale: { value: 1 }, pupilScale: { value: 1 }
+    },
+    vertexShader: `varying vec3 vEyeSurface; void main(){ vEyeSurface=normalize(position); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: `varying vec3 vEyeSurface; uniform vec3 eyeWhite; uniform vec3 eyeRim; uniform vec3 irisColour; uniform vec3 pupilColour; uniform vec3 glintColour; uniform float irisRadius; uniform float pupilWidth; uniform float pupilHeight; uniform vec2 gazeOffset; uniform float irisScale; uniform float pupilScale;
+      void main(){
+        vec3 colour=eyeWhite;
+        if(vEyeSurface.z>0.18){
+          vec2 surface=vEyeSurface.xy/max(.34,vEyeSurface.z);
+          float eyeArea=length(surface/vec2(1.05,.82));
+          if(eyeArea>0.88&&eyeArea<1.0) colour=eyeRim;
+          vec2 gazeSurface=surface-gazeOffset;
+          float irisDistance=length(gazeSurface/vec2(irisRadius*irisScale));
+          if(irisDistance<1.0) colour=irisColour;
+          float pupilDistance=length(gazeSurface/vec2(pupilWidth*pupilScale,pupilHeight*pupilScale));
+          if(pupilDistance<1.0) colour=pupilColour;
+          float glintDistance=length((gazeSurface-vec2(-.105,.12))/vec2(.055));
+          if(glintDistance<1.0) colour=glintColour;
+        }
+        gl_FragColor=vec4(colour,1.0);
+      }`
+  });
+}
+mats.deerCartoonEye = createCartoonEyeballMaterial({ iris: 0xb47a2b, irisRadius: .43, pupilWidth: .2, pupilHeight: .2 });
+mats.wolfCartoonEye = createCartoonEyeballMaterial({ iris: 0xd5a43d, irisRadius: .39, pupilWidth: .18, pupilHeight: .18 });
+mats.genericCartoonEye = createCartoonEyeballMaterial({ iris: 0xb78a2c, irisRadius: .4, pupilWidth: .18, pupilHeight: .2 });
 // A leafless crown is deliberately a different material from a living canopy:
 // it remains useful cover, but is visibly not a dense sight-blocking tree.
 mats.bareTree = new THREE.MeshLambertMaterial({ color: 0x76523a });
@@ -388,6 +513,38 @@ function patternedAnimalMaterial(baseMaterial, kinds = []) {
 }
 const groundLandMaterial = mats.groundBase.clone();
 groundLandMaterial.map = groundPatternTexture; groundLandMaterial.color.set(0xffffff); groundLandMaterial.vertexColors = true; groundLandMaterial.roughness = .92;
+groundLandMaterial.onBeforeCompile = shader => {
+  weatherTerrainShader = shader;
+  shader.uniforms.weatherFieldMap = { value: weatherDataTexture };
+  shader.uniforms.weatherFieldAvailable = { value: weatherDataTexture ? 1 : 0 };
+  shader.uniforms.weatherWorldHalf = { value: Math.max(1, HALF) };
+  shader.uniforms.weatherCloudShadowStrength = { value: graphicsSettings.weatherCloudShadows ? 1 : 0 };
+  shader.uniforms.weatherWetGroundStrength = { value: graphicsSettings.weatherWetGround ? 1 : 0 };
+  shader.vertexShader = `varying vec2 vWeatherFieldUv;\nuniform float weatherWorldHalf;\n${shader.vertexShader}`.replace("#include <begin_vertex>", "#include <begin_vertex>\nvWeatherFieldUv = clamp(vec2((position.x + weatherWorldHalf) / (weatherWorldHalf * 2.0), (position.z + weatherWorldHalf) / (weatherWorldHalf * 2.0)), 0.0, 1.0);");
+  shader.fragmentShader = `varying vec2 vWeatherFieldUv;\nuniform sampler2D weatherFieldMap;\nuniform float weatherFieldAvailable;\nuniform float weatherCloudShadowStrength;\nuniform float weatherWetGroundStrength;\n${shader.fragmentShader}`.replace("#include <color_fragment>", `#include <color_fragment>
+    vec4 weatherField = texture2D(weatherFieldMap, vWeatherFieldUv);
+    float cloudShade = weatherFieldAvailable * weatherField.r * weatherCloudShadowStrength;
+    float precipitationShade = weatherFieldAvailable * weatherField.g * weatherCloudShadowStrength;
+    float wetShade = weatherFieldAvailable * weatherField.b * weatherWetGroundStrength;
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.67, 0.73, 0.76), clamp(cloudShade * 0.48 + precipitationShade * 0.22, 0.0, 0.58));
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.48, 0.57, 0.61), clamp(wetShade * 0.34, 0.0, 0.34));`);
+};
+groundLandMaterial.customProgramCacheKey = () => "localized-weather-terrain-v1";
+function createWeatherOverlayMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, side: THREE.DoubleSide,
+    uniforms: { weatherFieldMap: { value: weatherDataTexture }, weatherFieldAvailable: { value: weatherDataTexture ? 1 : 0 }, weatherWorldHalf: { value: Math.max(1, HALF) }, weatherLayer: { value: weatherShaderLayerIndex(graphicsSettings.weatherOverlayLayer) }, weatherOpacity: { value: .66 } },
+    vertexShader: `varying vec2 vWeatherFieldUv; uniform float weatherWorldHalf; void main(){ vWeatherFieldUv=clamp(vec2((position.x+weatherWorldHalf)/(weatherWorldHalf*2.0),(position.z+weatherWorldHalf)/(weatherWorldHalf*2.0)),0.0,1.0); vec3 lifted=position+normal*0.075; gl_Position=projectionMatrix*modelViewMatrix*vec4(lifted,1.0); }`,
+    fragmentShader: `varying vec2 vWeatherFieldUv; uniform sampler2D weatherFieldMap; uniform float weatherFieldAvailable; uniform float weatherLayer; uniform float weatherOpacity;
+      vec3 ramp(float value, vec3 a, vec3 b, vec3 c){ return value<0.5?mix(a,b,value*2.0):mix(b,c,(value-0.5)*2.0); }
+      void main(){ vec4 field=texture2D(weatherFieldMap,vWeatherFieldUv); float value=field.g; vec3 colour=ramp(value,vec3(.10,.18,.15),vec3(.20,.50,.74),vec3(.50,.13,.60));
+        if(weatherLayer>0.5&&weatherLayer<1.5){ value=field.r; colour=ramp(value,vec3(.06,.15,.11),vec3(.40,.47,.45),vec3(.88,.91,.90)); }
+        else if(weatherLayer>1.5&&weatherLayer<2.5){ value=field.b; colour=ramp(value,vec3(.55,.45,.24),vec3(.20,.50,.40),vec3(.05,.22,.36)); }
+        else if(weatherLayer>2.5&&weatherLayer<3.5){ value=clamp(1.0-field.g*.68-field.r*.18,0.0,1.0); colour=ramp(value,vec3(.55,.34,.49),vec3(.35,.55,.60),vec3(.76,.91,.62)); }
+        else if(weatherLayer>3.5){ value=clamp(field.g*.62+(1.0-field.a)*.58,0.0,1.0); colour=ramp(value,vec3(.08,.20,.17),vec3(.58,.38,.16),vec3(.68,.06,.32)); }
+        gl_FragColor=vec4(colour,weatherFieldAvailable*weatherOpacity*(.2+value*.8)); }`
+  });
+}
 let groundMesh = null;
 let groundColours = null;
 let worldEdgeLine = null;
@@ -401,6 +558,15 @@ const memoryArrowShape = new THREE.Shape();
 memoryArrowShape.moveTo(-0.42, -0.09); memoryArrowShape.lineTo(0.08, -0.09); memoryArrowShape.lineTo(0.08, -0.23); memoryArrowShape.lineTo(0.48, 0); memoryArrowShape.lineTo(0.08, 0.23); memoryArrowShape.lineTo(0.08, 0.09); memoryArrowShape.lineTo(-0.42, 0.09); memoryArrowShape.closePath();
 const geos = { terrainTile: flatTerrainTile, water: new THREE.BoxGeometry(0.98, 0.05, 0.98), herbivore: new THREE.SphereGeometry(0.42, 24, 16), carnivore: new THREE.ConeGeometry(0.46, 1, 5), marker: new THREE.SphereGeometry(0.11, 12, 8), horn: new THREE.ConeGeometry(0.08, 0.26, 8), ring: new THREE.RingGeometry(0.98, 1.03, 80), memoryArrow: new THREE.ShapeGeometry(memoryArrowShape), corpse: new THREE.BoxGeometry(0.7, 0.18, 0.42), bone: new THREE.BoxGeometry(0.78, 0.07, 0.09), bush: new THREE.SphereGeometry(0.46, 8, 6), tree: new THREE.ConeGeometry(0.5, 1.8, 7), trunk: new THREE.CylinderGeometry(0.09, 0.13, 0.82, 6), fallenTree: new THREE.CylinderGeometry(0.14, 0.22, 1.9, 7) };
 geos.eye = new THREE.SphereGeometry(0.05, 10, 8);
+geos.eyeDisc = new THREE.CircleGeometry(.05, 16);
+const wolfEyeShape = new THREE.Shape(); wolfEyeShape.moveTo(-.055, 0); wolfEyeShape.quadraticCurveTo(0, .038, .055, 0); wolfEyeShape.quadraticCurveTo(0, -.038, -.055, 0); wolfEyeShape.closePath();
+geos.wolfEyeDisc = new THREE.ShapeGeometry(wolfEyeShape, 5);
+const animalEarShape = new THREE.Shape();
+animalEarShape.moveTo(0, .18); animalEarShape.quadraticCurveTo(-.11, .08, -.095, -.13); animalEarShape.quadraticCurveTo(0, -.17, .095, -.13); animalEarShape.quadraticCurveTo(.11, .08, 0, .18);
+geos.animalEar = new THREE.ExtrudeGeometry(animalEarShape, { depth: .035, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: .012, bevelThickness: .008, curveSegments: 5 });
+geos.animalEar.center();
+const wolfEarShape = new THREE.Shape(); wolfEarShape.moveTo(0, .2); wolfEarShape.lineTo(-.105, -.14); wolfEarShape.quadraticCurveTo(0, -.18, .105, -.14); wolfEarShape.closePath();
+geos.wolfEar = new THREE.ExtrudeGeometry(wolfEarShape, { depth: .045, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: .01, bevelThickness: .008, curveSegments: 4 }); geos.wolfEar.center();
 geos.animalBlock = new THREE.BoxGeometry(.7, .58, .76, 2, 2, 2);
 geos.animalWedge = new THREE.ConeGeometry(.42, .78, 5);
 geos.animalCoil = new THREE.TorusGeometry(.3, .14, 10, 24);
@@ -488,7 +654,7 @@ const fogMats = {
   explored: new THREE.MeshBasicMaterial({ color: 0x17211c, depthTest: true, depthWrite: false, transparent: true, opacity: .58, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })
 };
 const VISION_FOV = Math.PI * 1.45;
-const senseMats = { vision: new THREE.MeshBasicMaterial({ color: 0x86ffad, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }), smell: new THREE.MeshBasicMaterial({ color: 0x53d9ff, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide }), hearing: new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }), infrared: new THREE.MeshBasicMaterial({ color: 0xff6238, transparent: true, opacity: .75, depthWrite: false }), vibration: new THREE.MeshBasicMaterial({ color: 0xc58cff, transparent: true, opacity: .55, depthWrite: false }), sightContact: new THREE.MeshBasicMaterial({ color: 0x86ffad }), smellContact: new THREE.MeshBasicMaterial({ color: 0x53d9ff }), hearingContact: new THREE.MeshBasicMaterial({ color: 0xffd166 }) };
+const senseMats = { vision: new THREE.MeshBasicMaterial({ color: 0x86ffad, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }), visionLeft: new THREE.MeshBasicMaterial({ color: 0x63d9ff, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide }), visionRight: new THREE.MeshBasicMaterial({ color: 0x95ff83, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide }), smell: new THREE.MeshBasicMaterial({ color: 0x53d9ff, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide }), hearing: new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }), infrared: new THREE.MeshBasicMaterial({ color: 0xff6238, transparent: true, opacity: .75, depthWrite: false }), vibration: new THREE.MeshBasicMaterial({ color: 0xc58cff, transparent: true, opacity: .55, depthWrite: false }), sightContact: new THREE.MeshBasicMaterial({ color: 0x86ffad }), smellContact: new THREE.MeshBasicMaterial({ color: 0x53d9ff }), hearingContact: new THREE.MeshBasicMaterial({ color: 0xffd166 }) };
 const personalSpaceMats = {
   tolerant: new THREE.MeshBasicMaterial({ color: 0x7ce6b0, transparent: true, opacity: .38, depthWrite: false, side: THREE.DoubleSide }),
   guarded: new THREE.MeshBasicMaterial({ color: 0xffcf63, transparent: true, opacity: .48, depthWrite: false, side: THREE.DoubleSide }),
@@ -514,6 +680,8 @@ const temporaryOverlayPool = {
   arrows: [],
   arrowCursor: 0,
   vision: null,
+  visionLeft: null,
+  visionRight: null,
   dummy: new THREE.Object3D(),
   identityQuaternion: new THREE.Quaternion(),
   flatQuaternion: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2),
@@ -531,10 +699,7 @@ function resetTemporaryOverlayPool() {
   }
   temporaryOverlayPool.arrowCursor = 0;
   for (const arrow of temporaryOverlayPool.arrows) arrow.visible = false;
-  if (temporaryOverlayPool.vision) {
-    temporaryOverlayPool.vision.mesh.visible = false;
-    temporaryOverlayPool.vision.geometry.setDrawRange(0, 0);
-  }
+  for (const key of ["vision", "visionLeft", "visionRight"]) if (temporaryOverlayPool[key]) { temporaryOverlayPool[key].mesh.visible = false; temporaryOverlayPool[key].geometry.setDrawRange(0, 0); }
 }
 function finalizeTemporaryOverlayPool() {
   for (const batch of temporaryOverlayPool.instanceBatches) {
@@ -1470,7 +1635,7 @@ function narrationHighlightIdsForShot(shot = movieState.shot) {
 }
 function syncMovieNarrationControls() { if (movieUi.narrationEnabled) movieUi.narrationEnabled.checked = movieNarrationSettings.enabled; if (movieUi.captionsEnabled) movieUi.captionsEnabled.checked = movieNarrationSettings.captions; if (movieUi.narrationPreset) movieUi.narrationPreset.value = movieNarrationSettings.preset; if (movieUi.narrationContext) movieUi.narrationContext.value = String(movieNarrationSettings.contextDepth); if (movieUi.narrationLength) movieUi.narrationLength.value = movieNarrationSettings.length; if (movieUi.narrationVolume) movieUi.narrationVolume.value = String(movieNarrationSettings.volume); if (movieUi.narrationRate) movieUi.narrationRate.value = String(movieNarrationSettings.rate); if (movieUi.panelNarrationEnabled) movieUi.panelNarrationEnabled.checked = movieNarrationSettings.enabled; if (movieUi.panelCaptionsEnabled) movieUi.panelCaptionsEnabled.checked = movieNarrationSettings.captions; if (movieUi.panelNarrationPreset) movieUi.panelNarrationPreset.value = movieNarrationSettings.preset; if (movieUi.panelNarrationContext) movieUi.panelNarrationContext.value = String(movieNarrationSettings.contextDepth); if (movieUi.panelNarrationLength) movieUi.panelNarrationLength.value = movieNarrationSettings.length; }
 function saveMovieNarrationSettings() { try { localStorage.setItem(MOVIE_NARRATION_KEY, JSON.stringify(movieNarrationSettings)); } catch {} }
-function stopMovieNarration({ preserveOverview = true } = {}) { narrationGeneration += 1; clearTimeout(narrationTimer); if ("speechSynthesis" in window) window.speechSynthesis.cancel(); if (!preserveOverview) { if (companionNarrationAudio) { companionNarrationAudio.pause(); companionNarrationAudio.removeAttribute("src"); companionNarrationAudio.load(); companionNarrationAudio = null; } companionNarrationQueue.length = 0; companionNarrationPlaying = false; if (documentarySystem?.narration?.playing) documentarySystem.narration.finish(documentarySystem.recorder.time()); } activeNarration = null; setActiveNarrationSubjects(); if (movieUi.captions) { movieUi.captions.hidden = true; movieUi.captions.classList.remove("is-speaking"); } }
+function stopMovieNarration({ preserveOverview = true } = {}) { narrationGeneration += 1; clearTimeout(narrationTimer); acousticRenderer?.duckForNarration(false); if ("speechSynthesis" in window) window.speechSynthesis.cancel(); if (!preserveOverview) { if (companionNarrationAudio) { companionNarrationAudio.pause(); companionNarrationAudio.removeAttribute("src"); companionNarrationAudio.load(); companionNarrationAudio = null; } companionNarrationQueue.length = 0; companionNarrationPlaying = false; if (documentarySystem?.narration?.playing) documentarySystem.narration.finish(documentarySystem.recorder.time()); } activeNarration = null; setActiveNarrationSubjects(); if (movieUi.captions) { movieUi.captions.hidden = true; movieUi.captions.classList.remove("is-speaking"); } }
 function preferredDocumentaryVoice() { if (!("speechSynthesis" in window)) return null; const voices = window.speechSynthesis.getVoices(), british = voices.filter(voice => /^en[-_]GB/i.test(voice.lang)); return british.find(voice => /male|ryan|george|daniel/i.test(voice.name)) || british[0] || voices.find(voice => /^en/i.test(voice.lang)) || null; }
 function narrationCues(text, { pauseAfterMs = null } = {}) {
   const sentences = String(text || "").match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map(sentence => sentence.trim()).filter(Boolean) || [];
@@ -1484,8 +1649,8 @@ function speakMovieNarration(text, { initialDelay = 1800, rateMultiplier = 1, cu
   if (companionNarrationPlaying || movieState.overviewPlayback) { if (movieState.shot) movieState.shot.narrationComplete = true; return; }
   stopMovieNarration(); if (!text || !movieState.active) return; const generation = narrationGeneration, cues = narrationCues(text, { pauseAfterMs: cuePauseMs }); activeNarration = text; activeNarrationRecord = documentarySystem.active ? { narrationId: documentarySystem.ids.next("narration"), text, generatedAtMs: documentarySystem.recorder.time(), status: "QUEUED", threadId: documentarySystem.director?.active?.threadId || null, speakerFocus: movieState.shot?.authorNarrationResult?.speakerFocus || null } : null; if (activeNarrationRecord) documentarySystem.recorder.write("narration_asset", activeNarrationRecord); if (movieState.shot) movieState.shot.narrationComplete = false;
   const playCue = index => {
-    if (generation !== narrationGeneration || !movieState.active) return; if (index >= cues.length) { activeNarration = null; setActiveNarrationSubjects(); if (activeNarrationRecord && documentarySystem.active) { activeNarrationRecord.status = "COMPLETED"; activeNarrationRecord.audioEndedAtMs = documentarySystem.recorder.time(); activeNarrationRecord.audioDurationMs = activeNarrationRecord.audioEndedAtMs - (activeNarrationRecord.audioStartedAtMs || activeNarrationRecord.generatedAtMs); documentarySystem.recorder.write("narration_asset", activeNarrationRecord); } activeNarrationRecord = null; if (movieState.shot?.narration === text) movieState.shot.narrationComplete = true; if (movieUi.captions) movieUi.captions.hidden = true; return; }
-    const cue = cues[index]; if (index === 0) setActiveNarrationSubjects(narrationHighlightIdsForShot()); if (index === 0 && activeNarrationRecord && documentarySystem.active) { activeNarrationRecord.status = "PLAYING"; activeNarrationRecord.audioStartedAtMs = documentarySystem.recorder.time(); documentarySystem.recorder.write("narration_asset", activeNarrationRecord); } if (movieNarrationSettings.captions && movieUi.captions) { movieUi.captions.textContent = cue.text; movieUi.captions.hidden = false; movieUi.captions.classList.remove("is-speaking"); void movieUi.captions.offsetWidth; movieUi.captions.classList.add("is-speaking"); }
+    if (generation !== narrationGeneration || !movieState.active) return; if (index >= cues.length) { acousticRenderer?.duckForNarration(false); activeNarration = null; setActiveNarrationSubjects(); if (activeNarrationRecord && documentarySystem.active) { activeNarrationRecord.status = "COMPLETED"; activeNarrationRecord.audioEndedAtMs = documentarySystem.recorder.time(); activeNarrationRecord.audioDurationMs = activeNarrationRecord.audioEndedAtMs - (activeNarrationRecord.audioStartedAtMs || activeNarrationRecord.generatedAtMs); documentarySystem.recorder.write("narration_asset", activeNarrationRecord); } activeNarrationRecord = null; if (movieState.shot?.narration === text) movieState.shot.narrationComplete = true; if (movieUi.captions) movieUi.captions.hidden = true; return; }
+    const cue = cues[index]; if (index === 0) { setActiveNarrationSubjects(narrationHighlightIdsForShot()); acousticRenderer?.duckForNarration(true); } if (index === 0 && activeNarrationRecord && documentarySystem.active) { activeNarrationRecord.status = "PLAYING"; activeNarrationRecord.audioStartedAtMs = documentarySystem.recorder.time(); documentarySystem.recorder.write("narration_asset", activeNarrationRecord); } if (movieNarrationSettings.captions && movieUi.captions) { movieUi.captions.textContent = cue.text; movieUi.captions.hidden = false; movieUi.captions.classList.remove("is-speaking"); void movieUi.captions.offsetWidth; movieUi.captions.classList.add("is-speaking"); }
     const pauseThenContinue = duration => { if (generation !== narrationGeneration || !movieState.active) return; narrationTimer = window.setTimeout(() => { if (generation !== narrationGeneration || !movieState.active) return; if (movieUi.captions) movieUi.captions.hidden = true; narrationTimer = window.setTimeout(() => playCue(index + 1), cue.pauseAfter); }, duration); };
     if (!movieNarrationSettings.enabled || !("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return pauseThenContinue(Math.max(minimumCaptionMs, cue.text.split(/\s+/).length * 320 / Math.max(.5, rateMultiplier)));
     const utterance = new SpeechSynthesisUtterance(cue.text), voice = preferredDocumentaryVoice(); if (voice) utterance.voice = voice; utterance.lang = voice?.lang || "en-GB"; utterance.rate = movieNarrationSettings.rate; utterance.pitch = .86; utterance.volume = movieNarrationSettings.volume;
@@ -1677,6 +1842,13 @@ let minimapDisplayMode = MINIMAP_MODES.has(savedMinimapMode) ? savedMinimapMode 
 if (ui.minimapMode) ui.minimapMode.value = minimapDisplayMode;
 let lastAutosaveTick = -Infinity;
 let sim = null;
+const shorelineReservations = new ShorelineReservationBook({ ttlTicks: 12 });
+let audioSettings = loadAudioSettings();
+const acousticRenderer = new ProceduralAudioRenderer({ maximumVoices: audioSettings.maximumVoices, settings: audioSettings });
+let acousticPerspective = createSensoryPerspective();
+const renderedAcousticEvents = new Map();
+let weatherTextureData = null;
+let weatherDataTexture = null;
 let worldGenerationController = null;
 let worldGenerationInProgress = false;
 let lastWorldGenerationMetrics = { terrainMs: 0, completeMs: 0 };
@@ -1905,6 +2077,10 @@ function profilerResources({ force = false } = {}) {
     visibleMovementArrows: intentCounts.movementArrows,
     visibleUrgentHalos: intentCounts.urgentHalos,
     visibleContactShadows: animalContactShadows.count,
+    visibleWeatherCloudPuffs: cloudMasses.filter(cloud => cloud.visible).length,
+    visibleWeatherShafts: precipitationShafts.filter(shaft => shaft.visible).length,
+    visibleLocalRainStreaks: cameraRainStreaks.visible ? rainStreakGeometry.drawRange.count / 2 : 0,
+    scientificWeatherOverlayVisible: Boolean(weatherFieldOverlayMesh?.visible),
     animalEyesTotal: animalEyeAttachment.total,
     animalEyesAttachedToHeads: animalEyeAttachment.attached,
     presentationTierCounts,
@@ -2040,6 +2216,12 @@ window.rssDiagnostics = Object.freeze({
     return { loaded, seed: sim.seed, cells: sim.hexWorld.cells.length, hash: authoritativeHash(sim), loadingVisible: !ui.worldGenerationProgress.hidden, resources: profilerResources() };
   },
   worldGenerationState: () => ({ active: worldGenerationInProgress, stage: worldGenerationStage, phase: ui.worldGenerationPhase?.textContent || null, detail: ui.worldGenerationDetail?.textContent || null, percent: Number(ui.worldGenerationBar?.value || 0) }),
+  weatherFieldState: () => {
+    if (!sim.weatherField?.values?.length) refreshWeatherField();
+    const intensities = (sim.weatherField?.values || []).map(value => localizedWeatherPresentation(value).precipitationIntensity);
+    const raining = intensities.filter(value => value > 0);
+    return { cells: intensities.length, dryCells: intensities.length - raining.length, rainingCells: raining.length, minimum: intensities.length ? Math.min(...intensities) : 0, maximum: intensities.length ? Math.max(...intensities) : 0 };
+  },
   highHexBenchmark: async (hexDetail = 5000, { runningState = false, performanceMode = false, frameSamples = 90 } = {}) => {
     const detail = clamp(Math.round(Number(hexDetail) || 5000), 5000, 40000), priorMode = graphicsSettings.largeMapPerformanceMode;
     graphicsSettings.largeMapPerformanceMode = Boolean(performanceMode);
@@ -2259,7 +2441,7 @@ function ecologyAuditResult(session) {
 }
 
 function ecologyAuthoritativeHash() {
-  const cells = (sim.cells || []).map((cell) => [cell.id ?? `${cell.x},${cell.z}`, cell.biomass, cell.moisture, cell.fertility, cell.waterLevel, cell.surfaceWater, cell.snowPack, cell.plantType, cell.plantStage]);
+  const cells = (sim.cells || []).map((cell) => [cell.id ?? `${cell.x},${cell.z}`, cell.biomass, cell.moisture, cell.surfaceMoisture, cell.fertility, cell.waterLevel, cell.surfaceWater, cell.snowPack, cell.plantType, cell.plantStage]);
   const animals = sim.animals.map((animal) => [animal.id, animal.alive, animal.x, animal.z, animal.velocityX, animal.velocityZ, animal.orientation, animal.health, animal.energy, animal.hydration, animal.stomach, animal.fatigue, animal.fear, animal.bodyMass, animal.lifeStage, animal.actionState?.key, animal.actionTarget, animal.predation?.phase, animal.predation?.targetId, animal.predation?.lastKillTick, animal.predation?.huntSuppressedUntil, animal.pregnant?.age, animal.pregnant?.phase, animal.pregnant?.fatherId, animal.pregnant?.offspringCount, animal.reproductiveState]);
   const corpses = sim.corpses.map((corpse) => [corpse.id, corpse.ownerId, corpse.x, corpse.z, corpse.biomass, corpse.age, corpse.cause]);
   const nests = (sim.nests || []).map((nest) => [nest.id, nest.speciesId, nest.count, nest.status, nest.viability, nest.unattendedDays, nest.laidMinute, nest.hatchMinute, nest.motherId, nest.fatherId]);
@@ -2403,7 +2585,7 @@ async function refreshGameMenuPrimaryAction() {
   try {
     let snapshot = await readSnapshot("resume"); if (!snapshot) { const legacy = localStorage.getItem(SAVE_KEY); if (legacy) snapshot = JSON.parse(legacy); }
     if (probe !== gameMenuWorldProbe) return;
-    if (snapshot?.animals && Number.isFinite(snapshot.seed)) { const saveName = String(snapshot.saveSlotName || "").trim(); if (snapshot.worldSchema !== WORLD_SCHEMA) return presentGameMenuWorld({ mode: "incompatible", source: saveName ? `Incompatible save · ${saveName}` : "Incompatible previous world", action: "Create a new world", world: snapshot, savedAt: snapshot.savedAt, explanation: "This save predates the 365-day calendar and species-specific reproductive model. It remains stored, but a new world is required." }); return presentGameMenuWorld({ mode: "saved", source: saveName ? `Selected save · ${saveName}` : "Most recent quick save", action: saveName ? `Continue “${saveName}”` : "Resume previous world", world: snapshot, savedAt: snapshot.savedAt, explanation: saveName ? `Loads the named save “${saveName}” shown above.` : "Loads the latest quick or automatic save shown above. Use Saved worlds to choose a named save instead." }); }
+    if (snapshot?.animals && Number.isFinite(snapshot.seed)) { const saveName = String(snapshot.saveSlotName || "").trim(); if (!compatibleWorldSchema(snapshot.worldSchema)) return presentGameMenuWorld({ mode: "incompatible", source: saveName ? `Incompatible save · ${saveName}` : "Incompatible previous world", action: "Create a new world", world: snapshot, savedAt: snapshot.savedAt, explanation: "This save predates the supported simulation schemas. It remains stored, but a new world is required." }); return presentGameMenuWorld({ mode: "saved", source: saveName ? `Selected save · ${saveName}` : "Most recent quick save", action: saveName ? `Continue “${saveName}”` : "Resume previous world", world: snapshot, savedAt: snapshot.savedAt, explanation: saveName ? `Loads the named save “${saveName}” shown above.` : "Loads the latest quick or automatic save shown above. Use Saved worlds to choose a named save instead." }); }
   } catch {}
   if (probe !== gameMenuWorldProbe) return;
   presentGameMenuWorld({ mode: "new", source: "New unsaved world", action: "Begin observing this world", world: sim, explanation: "Opens the generated ecosystem behind this menu. Use New world to change its setup first." });
@@ -2452,7 +2634,7 @@ const LABORATORY_OVERLAY_GROUPS = Object.freeze([
     title: "World and ecology overlays",
     description: "Display authoritative Laboratory-wide resources, trails, established claims and disputes independently of the selected animal's private evidence.",
     controls: Object.freeze([
-      ["overlayBiomass", "Biomass"], ["overlayWater", "Water"], ["overlayPheromone", "All scent trails"],
+      ["overlayBiomass", "Biomass"], ["overlayWater", "Water"], ["overlayPheromone", "All scent trails"], ["overlayEnvironmentalHistory", "Long-term environmental history"],
       ["overlayTerritories", "Territories and disputes"]
     ])
   })
@@ -2573,6 +2755,7 @@ function configureLaboratoryTabs({ controls, selectedCard, priorityCard, diagnos
     ["entity", "Entity", "The complete authoritative dossier for the selected organism or carcass."],
     ["planning", "Mind", "Concurrent needs, satisfiers, commitment, learned protocols, plans and outcomes."],
     ["predictive", "Predictive systems", "Readable animal forecasts, local evidence, decision influence, learning and Cinema author coalitions."],
+    ["acoustics", "Acoustics", "Evidence, canonical scores, contextual emissions, renderer comparisons, propagation and receiver interpretation."],
     ["society", "Society", "Relationships, groups, meta-groups, social learning and collective protocols."],
     ["map", "Map & perception", "Map navigation, sensed evidence and world presentation overlays."],
     ["records", "Records", "Save and load the live world, bookmark its seed, and inspect events, favourites and observed entities."],
@@ -2641,6 +2824,7 @@ function configureLaboratoryTabs({ controls, selectedCard, priorityCard, diagnos
   const societyEcology = document.createElement("section"); societyEcology.id = "society-ecology-workspace";
   panels.society.append(visualLanguage, society, societyEcology);
   const predictive = document.createElement("section"); predictive.id = "predictive-systems-workspace"; predictive.className = "predictive-workspace"; predictive.innerHTML = `<div id="predictive-mini-summary" data-predictive-surface="mini"></div><div class="predictive-main-detail" data-predictive-surface="main"><section class="predictive-controls predictive-observer-banner"><p id="predictive-mode-explanation" class="predictive-callout"></p></section><div id="predictive-animal-detail"></div><div id="predictive-system-overview"></div><div id="predictive-cinema-detail"></div><div id="predictive-contract-reference"></div></div>`; panels.predictive.append(predictive);
+  const acoustics = document.createElement("section"); acoustics.id = "acoustic-laboratory-workspace"; acoustics.className = "acoustic-laboratory-workspace"; panels.acoustics.append(acoustics);
   move(document.querySelector("#laboratory-benchmark"), "diagnostics"); move(diagnostics, "diagnostics");
   const performance = document.querySelector("#performance"); if (performance) { performance.hidden = false; move(performance, "diagnostics"); }
   const saveDisclosure = [...inspector.querySelectorAll("details.laboratory-disclosure")].find((d) => d.querySelector("#save"));
@@ -2657,6 +2841,7 @@ function configureLaboratoryTabs({ controls, selectedCard, priorityCard, diagnos
     for (const [panelId, panel] of Object.entries(panels)) panel.hidden = panelId !== id;
     if (id === "reference") mountReference();
     if (id === "predictive") renderPredictiveLaboratory(selectedAnimal());
+    if (id === "acoustics") renderAcousticLaboratory(selectedAnimal());
     if (id === "planning") renderLiveNeedPlanning(selectedAnimal());
     if (id === "world" || id === "entity" || id === "society") renderEcologyLaboratory(selectedAnimal(), selectedCorpse());
     if (id === "society") renderVisualLanguageLaboratory();
@@ -2813,6 +2998,28 @@ function ecologyList(values = [], empty = "none recorded") {
   return values.length ? values.map(value => escapeHtml(String(value).replaceAll("-", " "))).join(" · ") : empty;
 }
 
+function renderAcousticLaboratory(a = selectedAnimal()) {
+  const root = document.querySelector("#acoustic-laboratory-workspace"); if (!root || !sim) return;
+  const observedEventId = a?.acousticObservations?.at(-1)?.eventId, event = sim.soundEvents?.find(item => item.eventId === observedEventId) || sim.soundEvents?.find(item => item.sourceId === a?.id && item.soundClass === "vocalisation") || sim.soundEvents?.find(item => item.soundClass === "vocalisation") || sim.soundEvents?.[0];
+  if (!event) { updateLaboratoryMarkup(root, `<p class="need-plan-empty">No authoritative sound event is currently available. Step the simulation or select a calling or moving animal.</p>`); return; }
+  const observation = a?.acousticObservations?.find(item => item.eventId === event.eventId) || null, record = acousticLaboratoryRecord(event, null, observation, audioSettings.soundLanguage), score = event.acousticScore, profile = acousticProfile(event.speciesId), language = soundLanguageDefinition(audioSettings.soundLanguage);
+  const contour = score?.frequencyContour?.map(point => `${Math.round(point.time * 100)}% ×${Number(point.ratio).toFixed(2)}`).join(" → ") || "Physical/noise source: no F0 contour";
+  const formants = score?.formants?.length ? score.formants.map(formant => `${Math.round(formant.frequencyHz)} Hz ±${Math.round(formant.bandwidthHz / 2)}`).join(" · ") : "No voiced formants";
+  const sources = record.sourceIds.length ? record.sourceIds.map(id => `<code>${escapeHtml(id)}</code>`).join(" · ") : "No source identifier attached";
+  const styles = ["natural-reconstruction", "bioacoustic-signature", "analogue-ecology", "digital-ecology", "instrumental-sonification"];
+  const openingStageCards = [
+    ["1 · Free reference", "No reference recording is played at runtime. A local research file may be inspected only when its licence permits."],
+    ["2 · Extracted evidence", `${escapeHtml(record.extractionMethod)} · uncertainty ${escapeHtml(score?.evidence?.uncertainty || "not stated")}`],
+    ["3 · Canonical score", score ? `${escapeHtml(score.scoreId)} · ${score.durationSeconds.toFixed(2)} s · ${Math.round(score.fundamentalHz)} Hz F0` : "Physical procedural source"]
+  ];
+  const closingStageCards = [
+    ["9 · Individual emission", `${escapeHtml(event.sourceId)} · voice seed ${event.synthesis?.voiceSeed || "environmental"} · condition ${score?.individual?.momentaryCondition ? Object.entries(score.individual.momentaryCondition).map(([key, value]) => `${key} ${Math.round(value * 100)}%`).join(", ") : "not applicable"}`],
+    ["10 · Listener result", observation ? `${observation.detected ? "detected" : "missed"} · ${observation.detectionMarginDb.toFixed(1)} dB margin · ${Math.round(observation.confidence * 100)}% confidence` : "No selected-receiver observation for this event"]
+  ];
+  const markup = `<details class="laboratory-disclosure" open><summary>Acoustic evidence and synchronized renderer comparison</summary><p class="hint">All five buttons render the same canonical timing and behavioural meaning. Natural Reconstruction is literal synthetic reconstruction; Instrumental Sonification and the other stylized languages are explicit translations. None affects animal hearing.</p><div class="need-plan-summary"><div><span>Entity / species</span><strong>${escapeHtml(event.sourceId)} · ${escapeHtml(profile?.displayName || event.speciesId || "environment")}</strong></div><div><span>Scientific/model basis</span><strong>${escapeHtml(record.scientificName || record.modelBasis || "physical environment")}</strong></div><div><span>Call / sound type</span><strong>${escapeHtml(record.callType)}</strong></div><div><span>Evidence</span><strong>${escapeHtml(record.evidenceGrade)}</strong></div><div><span>Renderer</span><strong>${escapeHtml(language?.label || "unselected")}</strong></div><div><span>Runtime recording</span><strong>never</strong></div></div><div class="acoustic-context-grid"><article><h3>Behavioural authorization</h3><p>${escapeHtml(record.behaviouralTrigger)} · ${escapeHtml(record.movement)} · posture ${escapeHtml(record.posture)} · ${escapeHtml(record.socialContext)}</p></article><article><h3>Frequency contour</h3><p>${escapeHtml(contour)}</p></article><article><h3>Resonances</h3><p>${escapeHtml(formants)}</p></article><article><h3>Evidence sources</h3><p>${sources}</p></article></div><div class="acoustic-comparison-grid">${openingStageCards.map(([title, detail]) => `<article><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p></article>`).join("")}${styles.map((style, index) => { const definition = soundLanguageDefinition(style); return `<article><h3>${index + 4} · ${escapeHtml(definition.label)}</h3><p>${escapeHtml(definition.description)}</p><button type="button" data-acoustic-lab-preview="${style}" data-event-id="${escapeHtml(event.eventId)}">Render this score</button></article>`; }).join("")}${closingStageCards.map(([title, detail]) => `<article><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p></article>`).join("")}</div><details class="need-plan-detail"><summary>Individual and condition transformations</summary><pre>${escapeHtml(JSON.stringify(score?.individual || event.synthesis, null, 2))}</pre></details><details class="need-plan-detail"><summary>Propagation and receiver interpretation</summary><pre>${escapeHtml(JSON.stringify(observation?.explanation || { status: "No selected receiver observation" }, null, 2))}</pre></details></details>`;
+  updateLaboratoryMarkup(root, markup, { protectInteraction: true });
+}
+
 function renderEcologyLaboratory(a = selectedAnimal(), corpse = selectedCorpse()) {
   const entityRoot = document.querySelector("#entity-ecology-workspace"), worldRoot = document.querySelector("#world-ecology-workspace"), societyRoot = document.querySelector("#society-ecology-workspace");
   if (entityRoot && laboratorySurfaceVisible(entityRoot)) {
@@ -2908,7 +3115,11 @@ function commitmentLaboratoryHtml(a, graph = null) {
   const prerequisite = graph?.phase || a.needDependencyPlan?.phase || "none active", next = graph?.resumeCondition || a.actionState?.intendedOutcome || a.currentAction || "reconsider available methods";
   const completion = graph?.need === "water" ? "drink until protected hydration reserve is restored" : graph?.need === "food" ? "feed until the protected energy reserve is restored" : a.actionState?.intendedOutcome || "satisfy the committed objective";
   const ageHours = Math.max(0, (sim.tick - state.startedTick) * ecologicalHoursPerInteractionTick());
-  return `<div class="commitment-diagnostic"><section><h3>Why this matters</h3><dl><div><dt>Immediate concern</dt><dd>${escapeHtml(immediate)}</dd></div><div><dt>Supporting goal</dt><dd>${escapeHtml(supporting)}</dd></div><div><dt>Life strategy</dt><dd>${escapeHtml(strategy)}</dd></div></dl></section><section><h3>Current commitment</h3><dl><div><dt>Priority</dt><dd>${escapeHtml(state.priority || plan.currentPriority?.key || a.drive || "not selected")}</dd></div><div><dt>Current prerequisite</dt><dd>${escapeHtml(prerequisite)}</dd></div><div><dt>Next planned step</dt><dd>${escapeHtml(next)}</dd></div><div><dt>Completion condition</dt><dd>${escapeHtml(completion)}</dd></div></dl></section><section><h3>Commitment</h3><dl><div><dt>State</dt><dd>${escapeHtml(state.status)}</dd></div><div><dt>Style</dt><dd>${escapeHtml(commitmentStyle(a))}</dd></div><div><dt>Commitment age</dt><dd>${formatEta(ageHours)}</dd></div><div><dt>Progress</dt><dd>${pct(state.progress)}</dd></div><div><dt>Plan confidence</dt><dd>${pct(state.confidence)}</dd></div><div><dt>Reconsiderations / switches</dt><dd>${state.reconsiderations} / ${state.switches}</dd></div><div><dt>Switch condition</dt><dd>credible failure evidence, unsafe reserves, urgent danger, or a substantially safer method</dd></div></dl><details><summary>Behavioural architecture</summary><dl><div><dt>Decisiveness</dt><dd>${pct(profile.decisiveness)}</dd></div><div><dt>Perseverance</dt><dd>${pct(profile.perseverance)}</dd></div><div><dt>Commitment stability</dt><dd>${pct(profile.commitmentStability)}</dd></div><div><dt>Flexibility</dt><dd>${pct(profile.flexibility)}</dd></div><div><dt>Evidence threshold</dt><dd>${pct(profile.evidenceThreshold)}</dd></div><div><dt>Social susceptibility</dt><dd>${pct(profile.socialSusceptibility)}</dd></div><div><dt>Confidence</dt><dd>${pct(profile.confidence)}</dd></div></dl></details></section><section><h3>Social context</h3><dl><div><dt>Private preference</dt><dd>${escapeHtml(state.priority || "undecided")}</dd></div><div><dt>Public intention</dt><dd>${escapeHtml(state.publicIntention || "not communicated")}</dd></div><div><dt>Group response</dt><dd>${social.conflicts ? `${social.supporters} supporters; possible disagreement with ${escapeHtml(a.groupGoal || "group plan")}` : a.groupId ? "no current goal conflict" : "not grouped"}</dd></div><div><dt>Anticipated rejection</dt><dd>${pct(social.rejectionRisk)}</dd></div><div><dt>Anticipated exclusion</dt><dd>${pct(social.exclusionRisk)}</dd></div><div><dt>Reputation risk</dt><dd>${pct(social.reputationRisk)}</dd></div><div><dt>Protocol</dt><dd>${escapeHtml(state.protocolKey || "not learned")}</dd></div><div><dt>Protocol record</dt><dd>${protocol ? `${protocol.successes} successes · ${protocol.failures} failures · ${pct(protocol.confidence)} confidence${protocol.teacherId ? ` · learned from ${escapeHtml(protocol.teacherId)}` : ""}` : "no completed attempts"}</dd></div></dl></section></div>`;
+  const activePlan = migrateNeedDependencyPlan(a.needDependencyPlan, { tick: sim.tick }), priorities = a.priorities || [], waterPriority = priorities.find(item => item.drive === "water"), fleePriority = priorities.find(item => /flee|predator|fear|safety|defend/.test(item.drive));
+  const waterUrgency = activePlan?.need === "water" ? Number(activePlan.forecast?.urgency ?? waterNeedPlan(a).urgency) : waterNeedPlan(a).urgency, minimumRemaining = Math.max(0, Number(state.minimumReviewTick || sim.tick) - sim.tick), reservation = shorelineReservations.reservationFor(a.id);
+  const whyNotFlee = a.actionState?.key === "flee" ? "Fleeing was selected." : !fleePriority ? "Fleeing was absent because no current evidence produced a viable flee candidate." : waterPriority && waterPriority.score >= fleePriority.score ? `Fleeing ranked below water (${fleePriority.score} versus ${waterPriority.score}); inspect threat evidence and route risk.` : `Fleeing was available at ${fleePriority.score}, but ${escapeHtml(state.priority || a.drive || "another commitment")} was selected; inspect commitment retention and constraints.`;
+  const waterDiagnostics = `<section><h3>Water target and safety arbitration</h3><dl><div><dt>Need urgency</dt><dd>${waterUrgency.toFixed(0)} / 100</dd></div><div><dt>Water candidate score</dt><dd>${waterPriority?.score ?? "not currently eligible"}</dd></div><div><dt>Safety candidate score</dt><dd>${fleePriority?.score ?? "no current candidate"}</dd></div><div><dt>Commitment ID</dt><dd>${escapeHtml(state.commitmentId || "not assigned")}</dd></div><div><dt>Minimum hold remaining</dt><dd>${minimumRemaining} ticks</dd></div><div><dt>Plan ID</dt><dd>${escapeHtml(activePlan?.planId || "none")}</dd></div><div><dt>Stable target</dt><dd>${escapeHtml(activePlan?.targetKey || "unresolved")}</dd></div><div><dt>Shoreline reservation</dt><dd>${escapeHtml(reservation?.key || "none")}</dd></div><div><dt>Phase / phase age</dt><dd>${escapeHtml(activePlan?.phase || "none")} · ${activePlan ? Math.max(0, sim.tick - Number(activePlan.phaseStartedTick || activePlan.tick || sim.tick)) : 0} ticks</dd></div><div><dt>Target switches</dt><dd>${activePlan?.targetSwitches || 0}</dd></div><div><dt>Route status</dt><dd>${escapeHtml(a.routeState?.replanReason || "no replan recorded")}</dd></div><div><dt>Retention / suspension</dt><dd>${escapeHtml(activePlan?.suspended ? activePlan.suspensionReason || "suspended" : activePlan?.resumeReason || activePlan?.targetDecision || state.lastRetentionReason || "active")}</dd></div><div><dt>Why not flee?</dt><dd>${whyNotFlee}</dd></div></dl></section>`;
+  return `<div class="commitment-diagnostic"><section><h3>Why this matters</h3><dl><div><dt>Immediate concern</dt><dd>${escapeHtml(immediate)}</dd></div><div><dt>Supporting goal</dt><dd>${escapeHtml(supporting)}</dd></div><div><dt>Life strategy</dt><dd>${escapeHtml(strategy)}</dd></div></dl></section><section><h3>Current commitment</h3><dl><div><dt>Priority</dt><dd>${escapeHtml(state.priority || plan.currentPriority?.key || a.drive || "not selected")}</dd></div><div><dt>Current prerequisite</dt><dd>${escapeHtml(prerequisite)}</dd></div><div><dt>Next planned step</dt><dd>${escapeHtml(next)}</dd></div><div><dt>Completion condition</dt><dd>${escapeHtml(completion)}</dd></div></dl></section>${waterDiagnostics}<section><h3>Commitment</h3><dl><div><dt>State</dt><dd>${escapeHtml(state.status)}</dd></div><div><dt>Style</dt><dd>${escapeHtml(commitmentStyle(a))}</dd></div><div><dt>Commitment age</dt><dd>${formatEta(ageHours)}</dd></div><div><dt>Progress</dt><dd>${pct(state.progress)}</dd></div><div><dt>Plan confidence</dt><dd>${pct(state.confidence)}</dd></div><div><dt>Reconsiderations / switches</dt><dd>${state.reconsiderations} / ${state.switches}</dd></div><div><dt>Switch condition</dt><dd>credible failure evidence, unsafe reserves, urgent danger, or a substantially safer method</dd></div></dl><details><summary>Behavioural architecture</summary><dl><div><dt>Decisiveness</dt><dd>${pct(profile.decisiveness)}</dd></div><div><dt>Perseverance</dt><dd>${pct(profile.perseverance)}</dd></div><div><dt>Commitment stability</dt><dd>${pct(profile.commitmentStability)}</dd></div><div><dt>Flexibility</dt><dd>${pct(profile.flexibility)}</dd></div><div><dt>Evidence threshold</dt><dd>${pct(profile.evidenceThreshold)}</dd></div><div><dt>Social susceptibility</dt><dd>${pct(profile.socialSusceptibility)}</dd></div><div><dt>Confidence</dt><dd>${pct(profile.confidence)}</dd></div></dl></details></section><section><h3>Social context</h3><dl><div><dt>Private preference</dt><dd>${escapeHtml(state.priority || "undecided")}</dd></div><div><dt>Public intention</dt><dd>${escapeHtml(state.publicIntention || "not communicated")}</dd></div><div><dt>Group response</dt><dd>${social.conflicts ? `${social.supporters} supporters; possible disagreement with ${escapeHtml(a.groupGoal || "group plan")}` : a.groupId ? "no current goal conflict" : "not grouped"}</dd></div><div><dt>Anticipated rejection</dt><dd>${pct(social.rejectionRisk)}</dd></div><div><dt>Anticipated exclusion</dt><dd>${pct(social.exclusionRisk)}</dd></div><div><dt>Reputation risk</dt><dd>${pct(social.reputationRisk)}</dd></div><div><dt>Protocol</dt><dd>${escapeHtml(state.protocolKey || "not learned")}</dd></div><div><dt>Protocol record</dt><dd>${protocol ? `${protocol.successes} successes · ${protocol.failures} failures · ${pct(protocol.confidence)} confidence${protocol.teacherId ? ` · learned from ${escapeHtml(protocol.teacherId)}` : ""}` : "no completed attempts"}</dd></div></dl></section></div>`;
 }
 
 function riskRewardLaboratoryHtml(a, graph = null) {
@@ -3177,13 +3388,13 @@ function buildSpeciesSetupControls() {
   for (const id of SPECIES_IDS) {
     const profile = species[id], label = document.createElement("label"); label.className = "world-setting number-setting species-population-setting";
     const title = document.createElement("span"); title.textContent = `${profile.label} · ${profile.guild} · ${profile.sizeClass}`;
-    const input = document.createElement("input"); input.id = `start-species-${id}`; input.type = "number"; input.min = "0"; input.step = "1"; input.value = String(ecologyPresetCounts("compact")[id] || 0);
+    const input = document.createElement("input"); input.id = `start-species-${id}`; input.type = "number"; input.min = "0"; input.step = "1"; input.value = String(ecologyPresetCounts(DEFAULT_ECOLOGY_PRESET)[id] || 0);
     const output = document.createElement("output"); output.textContent = `${profile.feeding} · ${profile.habitat}`;
     label.append(title, input, output); anchor.before(label); ui.startSpecies[id] = input;
   }
 }
 buildSpeciesSetupControls();
-for (const id of SPECIES_IDS) ui.startSpecies[id].value = String(ecologyPresetCounts("compact")[id] || 0); if (ui.ecologyPreset) ui.ecologyPreset.value = "compact";
+for (const id of SPECIES_IDS) ui.startSpecies[id].value = String(ecologyPresetCounts(DEFAULT_ECOLOGY_PRESET)[id] || 0); if (ui.ecologyPreset) ui.ecologyPreset.value = DEFAULT_ECOLOGY_PRESET;
 configureLaboratoryLayout();
 const worldSymbolDisclosure = ui.symbolKeyContent?.closest("details.world-symbol-key");
 worldSymbolDisclosure?.addEventListener("toggle", () => { if (worldSymbolDisclosure.open) renderWorldSymbolKey(); });
@@ -3518,6 +3729,17 @@ ui.newWorldClose.addEventListener("click", () => { closeNewWorldPanel(); if (ret
 ui.newWorldGenerate.addEventListener("click", async () => { const seedDate = requestedNewWorldSeedDate(); if (!seedDate) return; const request = selectedEmbodimentRequest(), setup = selectedWorldSetup(), capabilities = difficultyProfile(request.difficulty); if (request.experience === "embodied") { const result = validateEmbodiedSetup({ role: request.role, ...request.setupRequest }, setup, capabilities, species); if (!result.valid) { ui.embodimentReview.textContent = result.errors.join(" "); ui.embodimentReview.classList.add("has-warning"); return; } } pendingEmbodiment = request; closeNewWorldPanel(); const loaded = await loadSeedWorldAsync(seedDate.seed, setup, request, { targetDay: seedDate.day }); returnToGameMenuAfterModal = false; if (loaded) enterGame(); });
 function syncGraphicsControls() {
   ui.graphicsPreset.value = graphicsSettings.preset; ui.graphicsIconQuality.value = String(graphicsSettings.iconTextureQuality); ui.graphicsResolution.value = String(graphicsSettings.renderScale); ui.graphicsVegetation.value = String(graphicsSettings.vegetationStride); ui.graphicsAnimals.value = String(graphicsSettings.animalDetail); ui.graphicsEntityPublicPanel.value = String(graphicsSettings.entityPublicPanelScale); ui.graphicsEntitySelectedPanel.value = String(graphicsSettings.entitySelectedPanelScale); ui.graphicsEntityPanelText.value = String(graphicsSettings.entityPanelTextScale); ui.interfaceScale.value = String(graphicsSettings.interfaceScale); ui.fontScale.value = String(graphicsSettings.fontScale); ui.fontSmallScale.value = String(graphicsSettings.smallTextScale); ui.fontBodyScale.value = String(graphicsSettings.bodyTextScale); ui.fontControlScale.value = String(graphicsSettings.controlTextScale); ui.fontHeadingScale.value = String(graphicsSettings.headingTextScale); ui.fontTitleScale.value = String(graphicsSettings.titleTextScale); ui.graphicsFrameCap.value = String(graphicsSettings.frameCap); ui.graphicsEffects.checked = graphicsSettings.effects; ui.graphicsShadows.checked = graphicsSettings.contactShadows; ui.graphicsAdaptiveResolution.checked = graphicsSettings.adaptiveResolution; ui.graphicsAdaptiveMin.value = String(graphicsSettings.adaptiveMinScale); ui.graphicsAdaptiveMax.value = String(graphicsSettings.adaptiveMaxScale);
+  if (ui.weatherCloudQuality) ui.weatherCloudQuality.value = graphicsSettings.weatherCloudQuality;
+  if (ui.weatherParticleDensity) ui.weatherParticleDensity.value = String(graphicsSettings.weatherParticleDensity);
+  if (ui.weatherLocalPrecipitation) ui.weatherLocalPrecipitation.checked = graphicsSettings.weatherLocalPrecipitation;
+  if (ui.weatherDistantShafts) ui.weatherDistantShafts.checked = graphicsSettings.weatherDistantShafts;
+  if (ui.weatherCloudShadows) ui.weatherCloudShadows.checked = graphicsSettings.weatherCloudShadows;
+  if (ui.weatherWetGround) ui.weatherWetGround.checked = graphicsSettings.weatherWetGround;
+  if (ui.weatherSplashes) ui.weatherSplashes.checked = graphicsSettings.weatherSplashes;
+  if (ui.weatherLightning) ui.weatherLightning.checked = graphicsSettings.weatherLightning;
+  if (ui.weatherHaze) ui.weatherHaze.checked = graphicsSettings.weatherHaze;
+  if (ui.weatherScientificOverlay) ui.weatherScientificOverlay.checked = graphicsSettings.weatherScientificOverlay;
+  if (ui.weatherOverlayLayer) ui.weatherOverlayLayer.value = graphicsSettings.weatherOverlayLayer;
   if (ui.graphicsEntityPublicPanelsVisible) ui.graphicsEntityPublicPanelsVisible.checked = graphicsSettings.entityPublicPanelsVisible !== false;
   if (ui.graphicsLargeMapPerformance) ui.graphicsLargeMapPerformance.checked = graphicsSettings.largeMapPerformanceMode === true;
   if (ui.graphicsObserverZoom) ui.graphicsObserverZoom.value = graphicsSettings.observerZoomLevel;
@@ -3629,22 +3851,26 @@ function resetIconTextureCaches() {
   heartSpriteMaterial = rejectionSpriteMaterial = acceptanceSpriteMaterial = attackSpriteMaterial = null;
 }
 function applyGraphicsSettings(next, rebuild = true) {
-  const previousStride = graphicsSettings.vegetationStride, previousIconQuality = graphicsSettings.iconTextureQuality;
+  const previousStride = graphicsSettings.vegetationStride, previousIconQuality = graphicsSettings.iconTextureQuality, previousWeatherQuality = graphicsSettings.weatherCloudQuality, previousWeatherDensity = graphicsSettings.weatherParticleDensity;
   graphicsSettings = normalizeGraphicsSettings(next); localStorage.setItem(GRAPHICS_KEY, JSON.stringify(graphicsSettings));
   effectiveRenderScale = adaptiveResolution.reset(graphicsSettings.adaptiveResolution ? graphicsSettings.adaptiveMaxScale : graphicsSettings.renderScale, graphicsSettings.adaptiveMinScale); renderer.setPixelRatio(TEST_MODE ? 1 : Math.min(2, window.devicePixelRatio * effectiveRenderScale)); renderer.setSize(ui.viewport.clientWidth, ui.viewport.clientHeight, false);
   if (previousStride !== graphicsSettings.vegetationStride) { lastTerrainDetail = -1; landscapeDirty = true; }
   if (previousIconQuality !== graphicsSettings.iconTextureQuality) { clearEntityPresentation(); resetIconTextureCaches(); renderWorldSymbolKey(); }
+  if (previousWeatherQuality !== graphicsSettings.weatherCloudQuality || previousWeatherDensity !== graphicsSettings.weatherParticleDensity) weatherPresentationFieldMarker = null;
+  if (weatherTerrainShader) { weatherTerrainShader.uniforms.weatherCloudShadowStrength.value = graphicsSettings.weatherCloudShadows ? 1 : 0; weatherTerrainShader.uniforms.weatherWetGroundStrength.value = graphicsSettings.weatherWetGround ? 1 : 0; }
+  if (weatherOverlayMaterial) weatherOverlayMaterial.uniforms.weatherLayer.value = weatherShaderLayerIndex(graphicsSettings.weatherOverlayLayer);
   applyObserverCameraEnvelope();
   syncGraphicsControls(); applyInterfacePresentation(); if (rebuild) { renderAll(); updateUI(); applyInterfacePresentation(); }
 }
-function readCustomGraphicsControls() { const modules = ui.graphicsEntityPanelModules || {}, entityAttachedPanelsVisible = ui.graphicsEntityPublicPanelsVisible?.checked === true, entityPublicPanelsVisible = entityAttachedPanelsVisible, entitySelectedPresentationVisible = entityAttachedPanelsVisible; return { preset: "custom", largeMapPerformanceMode: ui.graphicsLargeMapPerformance?.checked === true, observerZoomLevel: ui.graphicsObserverZoom?.value || graphicsSettings.observerZoomLevel, observerHazeMode: ui.graphicsObserverHaze?.value || graphicsSettings.observerHazeMode, iconTextureQuality: Number(ui.graphicsIconQuality.value), renderScale: Number(ui.graphicsResolution.value), adaptiveMinScale: Number(ui.graphicsAdaptiveMin.value), adaptiveMaxScale: Number(ui.graphicsAdaptiveMax.value), vegetationStride: Number(ui.graphicsVegetation.value), animalDetail: Number(ui.graphicsAnimals.value), entityPanelsVisible: entityAttachedPanelsVisible, entityAttachedPanelsVisible, entityPublicPanelsVisible, entitySelectedPresentationVisible, entityPublicPanelScale: Number(ui.graphicsEntityPublicPanel.value), entitySelectedPanelScale: Number(ui.graphicsEntitySelectedPanel.value), entityPanelTextScale: Number(ui.graphicsEntityPanelText.value), entityBubbleScale: Number(ui.graphicsEntityBubbleScale?.value || 1), entityPanelIdentityVisible: modules.identity?.checked !== false, entityPanelExpressionVisible: modules.expression?.checked !== false, entityPanelPublicCueVisible: modules["public-cue"]?.checked !== false, entityPanelHealthVisible: modules.health?.checked !== false, entityPanelConcernVisible: graphicsSettings.entityPanelConcernVisible, entityPanelForecastEffectVisible: graphicsSettings.entityPanelForecastEffectVisible, entityPanelMetabolicVisible: graphicsSettings.entityPanelMetabolicVisible, entityPanelPerformanceVisible: graphicsSettings.entityPanelPerformanceVisible, entityPanelThoughtVisible: modules.thought?.checked !== false, entityPanelForecastVisible: modules.forecast?.checked !== false, entityExpressionScale: graphicsSettings.entityExpressionScale, entityIdentityScale: graphicsSettings.entityIdentityScale, entityIconScale: graphicsSettings.entityIconScale, thoughtScale: graphicsSettings.thoughtScale, predictionScale: graphicsSettings.predictionScale, diagnosticScale: graphicsSettings.diagnosticScale, diagnosticTextScale: graphicsSettings.diagnosticTextScale, interfaceScale: Number(ui.interfaceScale.value), fontScale: Number(ui.fontScale.value), smallTextScale: Number(ui.fontSmallScale.value), bodyTextScale: Number(ui.fontBodyScale.value), controlTextScale: Number(ui.fontControlScale.value), headingTextScale: Number(ui.fontHeadingScale.value), titleTextScale: Number(ui.fontTitleScale.value), frameCap: Number(ui.graphicsFrameCap.value), effects: ui.graphicsEffects.checked, contactShadows: ui.graphicsShadows.checked, adaptiveResolution: ui.graphicsAdaptiveResolution.checked }; }
+function readWeatherVisualControls() { return { weatherCloudQuality: ui.weatherCloudQuality?.value || graphicsSettings.weatherCloudQuality, weatherParticleDensity: Number(ui.weatherParticleDensity?.value || graphicsSettings.weatherParticleDensity), weatherLocalPrecipitation: ui.weatherLocalPrecipitation?.checked !== false, weatherDistantShafts: ui.weatherDistantShafts?.checked !== false, weatherCloudShadows: ui.weatherCloudShadows?.checked !== false, weatherWetGround: ui.weatherWetGround?.checked !== false, weatherSplashes: ui.weatherSplashes?.checked !== false, weatherLightning: ui.weatherLightning?.checked !== false, weatherHaze: ui.weatherHaze?.checked !== false, weatherScientificOverlay: ui.weatherScientificOverlay?.checked === true, weatherOverlayLayer: ui.weatherOverlayLayer?.value || graphicsSettings.weatherOverlayLayer }; }
+function readCustomGraphicsControls() { const modules = ui.graphicsEntityPanelModules || {}, entityAttachedPanelsVisible = ui.graphicsEntityPublicPanelsVisible?.checked === true, entityPublicPanelsVisible = entityAttachedPanelsVisible, entitySelectedPresentationVisible = entityAttachedPanelsVisible; return { preset: "custom", ...readWeatherVisualControls(), largeMapPerformanceMode: ui.graphicsLargeMapPerformance?.checked === true, observerZoomLevel: ui.graphicsObserverZoom?.value || graphicsSettings.observerZoomLevel, observerHazeMode: ui.graphicsObserverHaze?.value || graphicsSettings.observerHazeMode, iconTextureQuality: Number(ui.graphicsIconQuality.value), renderScale: Number(ui.graphicsResolution.value), adaptiveMinScale: Number(ui.graphicsAdaptiveMin.value), adaptiveMaxScale: Number(ui.graphicsAdaptiveMax.value), vegetationStride: Number(ui.graphicsVegetation.value), animalDetail: Number(ui.graphicsAnimals.value), entityPanelsVisible: entityAttachedPanelsVisible, entityAttachedPanelsVisible, entityPublicPanelsVisible, entitySelectedPresentationVisible, entityPublicPanelScale: Number(ui.graphicsEntityPublicPanel.value), entitySelectedPanelScale: Number(ui.graphicsEntitySelectedPanel.value), entityPanelTextScale: Number(ui.graphicsEntityPanelText.value), entityBubbleScale: Number(ui.graphicsEntityBubbleScale?.value || 1), entityPanelIdentityVisible: modules.identity?.checked !== false, entityPanelExpressionVisible: modules.expression?.checked !== false, entityPanelPublicCueVisible: modules["public-cue"]?.checked !== false, entityPanelHealthVisible: modules.health?.checked !== false, entityPanelConcernVisible: graphicsSettings.entityPanelConcernVisible, entityPanelForecastEffectVisible: graphicsSettings.entityPanelForecastEffectVisible, entityPanelMetabolicVisible: graphicsSettings.entityPanelMetabolicVisible, entityPanelPerformanceVisible: graphicsSettings.entityPanelPerformanceVisible, entityPanelThoughtVisible: modules.thought?.checked !== false, entityPanelForecastVisible: modules.forecast?.checked !== false, entityExpressionScale: graphicsSettings.entityExpressionScale, entityIdentityScale: graphicsSettings.entityIdentityScale, entityIconScale: graphicsSettings.entityIconScale, thoughtScale: graphicsSettings.thoughtScale, predictionScale: graphicsSettings.predictionScale, diagnosticScale: graphicsSettings.diagnosticScale, diagnosticTextScale: graphicsSettings.diagnosticTextScale, interfaceScale: Number(ui.interfaceScale.value), fontScale: Number(ui.fontScale.value), smallTextScale: Number(ui.fontSmallScale.value), bodyTextScale: Number(ui.fontBodyScale.value), controlTextScale: Number(ui.fontControlScale.value), headingTextScale: Number(ui.fontHeadingScale.value), titleTextScale: Number(ui.fontTitleScale.value), frameCap: Number(ui.graphicsFrameCap.value), effects: ui.graphicsEffects.checked, contactShadows: ui.graphicsShadows.checked, adaptiveResolution: ui.graphicsAdaptiveResolution.checked }; }
 ui.graphicsOpen.addEventListener("click", () => { ui.graphicsPanel.hidden = false; ui.realityPanel.hidden = true; ui.newWorldPanel.hidden = true; syncGraphicsControls(); void discoverMenuBackgrounds(); });
 ui.graphicsClose.addEventListener("click", () => { ui.graphicsPanel.hidden = true; if (returnToGameMenuAfterModal) showGameMenu(); else document.body.classList.remove("menu-modal-open"); returnToGameMenuAfterModal = false; });
 const currentTypographySettings = () => ({ entityPanelTextScale: graphicsSettings.entityPanelTextScale, interfaceScale: graphicsSettings.interfaceScale, fontScale: graphicsSettings.fontScale, smallTextScale: graphicsSettings.smallTextScale, bodyTextScale: graphicsSettings.bodyTextScale, controlTextScale: graphicsSettings.controlTextScale, headingTextScale: graphicsSettings.headingTextScale, titleTextScale: graphicsSettings.titleTextScale });
 const currentObserverPresentationSettings = () => ({ largeMapPerformanceMode: graphicsSettings.largeMapPerformanceMode, observerZoomLevel: graphicsSettings.observerZoomLevel, observerHazeMode: graphicsSettings.observerHazeMode });
 ui.graphicsPreset.addEventListener("change", () => { if (ui.graphicsPreset.value !== "custom") applyGraphicsSettings({ ...graphicsPreset(ui.graphicsPreset.value), ...currentTypographySettings(), ...currentObserverPresentationSettings() }); });
 for (const control of Object.values(ui.graphicsEntityPanelModules || {})) control?.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
-for (const control of [ui.graphicsIconQuality, ui.graphicsResolution, ui.graphicsVegetation, ui.graphicsAnimals, ui.graphicsLargeMapPerformance, ui.graphicsObserverZoom, ui.graphicsObserverHaze, ui.graphicsEntityPublicPanelsVisible, ui.graphicsEntityPublicPanel, ui.graphicsEntitySelectedPanel, ui.graphicsEntityPanelText, ui.graphicsEntityBubbleScale, ui.interfaceScale, ui.fontScale, ui.fontSmallScale, ui.fontBodyScale, ui.fontControlScale, ui.fontHeadingScale, ui.fontTitleScale, ui.graphicsFrameCap, ui.graphicsEffects, ui.graphicsShadows, ui.graphicsAdaptiveResolution, ui.graphicsAdaptiveMin, ui.graphicsAdaptiveMax].filter(Boolean)) control.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
+for (const control of [ui.graphicsIconQuality, ui.graphicsResolution, ui.graphicsVegetation, ui.graphicsAnimals, ui.graphicsLargeMapPerformance, ui.graphicsObserverZoom, ui.graphicsObserverHaze, ui.graphicsEntityPublicPanelsVisible, ui.graphicsEntityPublicPanel, ui.graphicsEntitySelectedPanel, ui.graphicsEntityPanelText, ui.graphicsEntityBubbleScale, ui.interfaceScale, ui.fontScale, ui.fontSmallScale, ui.fontBodyScale, ui.fontControlScale, ui.fontHeadingScale, ui.fontTitleScale, ui.graphicsFrameCap, ui.graphicsEffects, ui.graphicsShadows, ui.graphicsAdaptiveResolution, ui.graphicsAdaptiveMin, ui.graphicsAdaptiveMax, ui.weatherCloudQuality, ui.weatherParticleDensity, ui.weatherLocalPrecipitation, ui.weatherDistantShafts, ui.weatherCloudShadows, ui.weatherWetGround, ui.weatherSplashes, ui.weatherLightning, ui.weatherHaze, ui.weatherScientificOverlay, ui.weatherOverlayLayer].filter(Boolean)) control.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
 ui.fontScalesReset?.addEventListener("click", () => applyGraphicsSettings({ ...graphicsSettings, preset: "custom", fontScale: 1, smallTextScale: 1, bodyTextScale: 1, controlTextScale: 1, headingTextScale: 1, titleTextScale: 1 }));
 syncGraphicsControls(); applyInterfacePresentation();
 const pendingTypographyRoots = new Set();
@@ -4158,7 +4384,7 @@ ui.hudDetail.addEventListener("click", (event) => {
     applyGraphicsSettings({ ...graphicsSettings, preset: "custom", entityAttachedPanelsVisible: visible, entityPanelsVisible: visible, entityPublicPanelsVisible: visible, entitySelectedPresentationVisible: visible });
     return;
   }
-  const source = ({ vision: ui.overlayVision, personal: ui.overlayPersonalSpace, intent: ui.overlayPredatorIntent, fog: ui.overlayKnowledgeFog, smell: ui.overlaySmell, sound: ui.overlaySound, calls: ui.overlayCalls, memory: ui.overlayMemory, ring: ui.overlaySelectionRing, navigation: ui.overlayNavigationCues, trails: ui.overlayMotionTrails, focus: ui.overlayEntityFocus, symbols: ui.overlayEntitySymbols, names: ui.overlayEntityNames, health: ui.overlayHealthBars, endurance: ui.overlayEnduranceBar, composition: ui.overlayCompositionBar, stage: ui.overlayAnalysisStage, clean: ui.overlayOrganismOnly, biomass: ui.overlayBiomass, water: ui.overlayWater, scent: ui.overlayPheromone, territories: ui.overlayTerritories })[overlay];
+  const source = ({ vision: ui.overlayVision, personal: ui.overlayPersonalSpace, intent: ui.overlayPredatorIntent, fog: ui.overlayKnowledgeFog, smell: ui.overlaySmell, sound: ui.overlaySound, calls: ui.overlayCalls, memory: ui.overlayMemory, history: ui.overlayEnvironmentalHistory, ring: ui.overlaySelectionRing, navigation: ui.overlayNavigationCues, trails: ui.overlayMotionTrails, focus: ui.overlayEntityFocus, symbols: ui.overlayEntitySymbols, names: ui.overlayEntityNames, health: ui.overlayHealthBars, endurance: ui.overlayEnduranceBar, composition: ui.overlayCompositionBar, stage: ui.overlayAnalysisStage, clean: ui.overlayOrganismOnly, biomass: ui.overlayBiomass, water: ui.overlayWater, scent: ui.overlayPheromone, territories: ui.overlayTerritories })[overlay];
   if (source) { source.checked = event.target.checked; source.dispatchEvent(new Event("change")); }
 });
 ui.selectedMemory.addEventListener("click", focusSocialNetworkNode);
@@ -4410,7 +4636,84 @@ ui.eventLimit?.addEventListener("change", updateUI);
 ui.benchmarkDuration?.addEventListener("change", () => { if (!populationBenchmarkSweep) ui.benchmarkStatus.textContent = `Ready · full sweep duration ${Number(ui.benchmarkDuration.value) * BENCHMARK_POPULATIONS.length} minutes.`; });
 try { if (ui.overlayEntityNames) ui.overlayEntityNames.checked = localStorage.getItem("rss-laboratory-entity-names-v1") === "true"; } catch {}
 ui.overlayEntityNames?.addEventListener("change", () => { try { localStorage.setItem("rss-laboratory-entity-names-v1", String(ui.overlayEntityNames.checked)); } catch {} });
-[ui.overlayVision, ui.overlayPersonalSpace, ui.overlayPredatorIntent, ui.overlayKnowledgeFog, ui.overlaySmell, ui.overlaySound, ui.overlayCalls, ui.overlayMemory, ui.overlaySelectionRing, ui.overlayNavigationCues, ui.overlayMotionTrails, ui.overlayEntityFocus, ui.overlayEntitySymbols, ui.overlayEntityNames, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar, ui.overlayAnalysisStage, ui.overlayOrganismOnly, ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone, ui.overlayTerritories].forEach((el) => el?.addEventListener("change", () => { renderAll(); updateUI(); }));
+[ui.overlayVision, ui.overlayPersonalSpace, ui.overlayPredatorIntent, ui.overlayKnowledgeFog, ui.overlaySmell, ui.overlaySound, ui.overlayCalls, ui.overlayMemory, ui.overlayEnvironmentalHistory, ui.overlaySelectionRing, ui.overlayNavigationCues, ui.overlayMotionTrails, ui.overlayEntityFocus, ui.overlayEntitySymbols, ui.overlayEntityNames, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar, ui.overlayAnalysisStage, ui.overlayOrganismOnly, ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone, ui.overlayTerritories].forEach((el) => el?.addEventListener("change", () => { renderAll(); updateUI(); }));
+function syncAudioControls() {
+  const setValue = (control, value) => { if (control) control.value = String(value); };
+  setValue(ui.audioVolume, audioSettings.masterVolume); setValue(ui.audioDynamicRange, audioSettings.dynamicRange); setValue(ui.audioLanguage, audioSettings.soundLanguage || ""); setValue(ui.settingsAudioLanguage, audioSettings.soundLanguage || "");
+  setValue(ui.settingsAudioMaster, audioSettings.masterVolume); setValue(ui.settingsAudioAnimals, audioSettings.animalVolume); setValue(ui.settingsAudioMovement, audioSettings.movementVolume);
+  setValue(ui.settingsAudioWind, audioSettings.windVolume); setValue(ui.settingsAudioVegetation, audioSettings.vegetationVolume); setValue(ui.settingsAudioRain, audioSettings.rainVolume); setValue(ui.settingsAudioThunder, audioSettings.thunderVolume); setValue(ui.settingsAudioRiver, audioSettings.riverVolume); setValue(ui.settingsAudioShoreline, audioSettings.shorelineVolume);
+  setValue(ui.settingsAudioInterface, audioSettings.interfaceVolume); setValue(ui.settingsAudioCinema, audioSettings.cinemaVolume); setValue(ui.settingsAudioDensity, audioSettings.environmentalDetailDensity);
+  setValue(ui.settingsAudioEnvironment, audioSettings.nearFarBalance); setValue(ui.settingsAudioReverberation, audioSettings.reverberation); setValue(ui.settingsAudioDynamicRange, audioSettings.dynamicRange); setValue(ui.settingsAudioSpatialization, audioSettings.spatialization); setValue(ui.settingsAudioVoices, audioSettings.maximumVoices);
+  if (ui.settingsAudioTranslated) ui.settingsAudioTranslated.checked = audioSettings.translatedChannels; if (ui.settingsAudioCaptions) ui.settingsAudioCaptions.checked = audioSettings.captions; if (ui.settingsAudioVisualOverlay) ui.settingsAudioVisualOverlay.checked = audioSettings.visualSoundOverlay; if (ui.overlaySound) ui.overlaySound.checked = audioSettings.visualSoundOverlay;
+  if (ui.audioEnabled) ui.audioEnabled.checked = acousticRenderer.enabled; if (ui.settingsAudioEnabled) ui.settingsAudioEnabled.checked = acousticRenderer.enabled;
+  if (ui.soundCaptionLive) ui.soundCaptionLive.hidden = !audioSettings.captions || !acousticRenderer.enabled;
+  const language = soundLanguageDefinition(audioSettings.soundLanguage);
+  if (ui.settingsAudioStatus) ui.settingsAudioStatus.textContent = acousticRenderer.enabled ? `Active · ${language?.label} · ${audioSettings.maximumVoices} voices · ${audioSettings.spatialization.toUpperCase()} · ${audioSettings.dynamicRange} range` : language ? `${language.label} retained · playback disabled by default. Enable it manually when needed.` : "Playback disabled by default. Choose a language only if you want to audition the paused sound work.";
+}
+function readAudioSettingsControls(overrides = {}) {
+  return saveAudioSettings({ ...audioSettings,
+    soundLanguage: ui.settingsAudioLanguage?.value || ui.audioLanguage?.value || audioSettings.soundLanguage,
+    masterVolume: Number(ui.settingsAudioMaster?.value ?? ui.audioVolume?.value ?? audioSettings.masterVolume), animalVolume: Number(ui.settingsAudioAnimals?.value ?? audioSettings.animalVolume), movementVolume: Number(ui.settingsAudioMovement?.value ?? audioSettings.movementVolume),
+    windVolume: Number(ui.settingsAudioWind?.value ?? audioSettings.windVolume), vegetationVolume: Number(ui.settingsAudioVegetation?.value ?? audioSettings.vegetationVolume), rainVolume: Number(ui.settingsAudioRain?.value ?? audioSettings.rainVolume), thunderVolume: Number(ui.settingsAudioThunder?.value ?? audioSettings.thunderVolume), riverVolume: Number(ui.settingsAudioRiver?.value ?? audioSettings.riverVolume), shorelineVolume: Number(ui.settingsAudioShoreline?.value ?? audioSettings.shorelineVolume),
+    interfaceVolume: Number(ui.settingsAudioInterface?.value ?? audioSettings.interfaceVolume), cinemaVolume: Number(ui.settingsAudioCinema?.value ?? audioSettings.cinemaVolume), environmentalDetailDensity: Number(ui.settingsAudioDensity?.value ?? audioSettings.environmentalDetailDensity), nearFarBalance: Number(ui.settingsAudioEnvironment?.value ?? audioSettings.nearFarBalance), reverberation: Number(ui.settingsAudioReverberation?.value ?? audioSettings.reverberation),
+    dynamicRange: ui.settingsAudioDynamicRange?.value || ui.audioDynamicRange?.value || audioSettings.dynamicRange, spatialization: ui.settingsAudioSpatialization?.value || audioSettings.spatialization, maximumVoices: Number(ui.settingsAudioVoices?.value || audioSettings.maximumVoices),
+    translatedChannels: ui.settingsAudioTranslated?.checked !== false, captions: ui.settingsAudioCaptions?.checked !== false, visualSoundOverlay: ui.settingsAudioVisualOverlay?.checked !== false, ...overrides
+  });
+  acoustics.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-acoustic-lab-preview]"); if (!button) return;
+    const soundEvent = sim?.soundEvents?.find(item => item.eventId === button.dataset.eventId); if (!soundEvent) return;
+    await acousticRenderer.previewEvent(soundEvent, button.dataset.acousticLabPreview, { gain: .48, position: soundEvent.position, translated: audioSettings.translatedChannels && (soundEvent.centreFrequencyHz < 20 || soundEvent.centreFrequencyHz > 20000) });
+  });
+}
+function applyAudioSettings(overrides = {}) { audioSettings = readAudioSettingsControls(overrides); acousticRenderer.setSettings(audioSettings); syncAudioControls(); renderAll(); }
+async function setAudioEnabled(enabled) {
+  if (enabled) {
+    if (!audioSettings.soundLanguage) { acousticRenderer.disable(); if (ui.soundLanguageSelector) ui.soundLanguageSelector.hidden = false; syncAudioControls(); return; }
+    try { await acousticRenderer.enable(); acousticRenderer.setSettings(audioSettings); addEvent("Procedural ecological soundscape enabled"); }
+    catch (error) { acousticRenderer.disable(); addEvent(`Audio unavailable: ${error.message}`); }
+  } else acousticRenderer.disable();
+  syncAudioControls(); updateUI();
+}
+ui.audioEnabled?.addEventListener("change", () => setAudioEnabled(ui.audioEnabled.checked));
+ui.settingsAudioEnabled?.addEventListener("change", () => setAudioEnabled(ui.settingsAudioEnabled.checked));
+ui.audioVolume?.addEventListener("input", () => applyAudioSettings({ masterVolume: Number(ui.audioVolume.value) }));
+ui.audioDynamicRange?.addEventListener("change", () => applyAudioSettings({ dynamicRange: ui.audioDynamicRange.value }));
+ui.audioLanguage?.addEventListener("change", () => { if (!ui.audioLanguage.value) { if (ui.soundLanguageSelector) ui.soundLanguageSelector.hidden = false; return; } applyAudioSettings({ soundLanguage: ui.audioLanguage.value }); });
+ui.settingsAudioLanguage?.addEventListener("change", () => { if (!ui.settingsAudioLanguage.value) { if (ui.soundLanguageSelector) ui.soundLanguageSelector.hidden = false; return; } applyAudioSettings({ soundLanguage: ui.settingsAudioLanguage.value }); });
+for (const control of [ui.settingsAudioMaster, ui.settingsAudioAnimals, ui.settingsAudioMovement, ui.settingsAudioWind, ui.settingsAudioVegetation, ui.settingsAudioRain, ui.settingsAudioThunder, ui.settingsAudioRiver, ui.settingsAudioShoreline, ui.settingsAudioInterface, ui.settingsAudioCinema, ui.settingsAudioDensity, ui.settingsAudioEnvironment, ui.settingsAudioReverberation, ui.settingsAudioDynamicRange, ui.settingsAudioSpatialization, ui.settingsAudioVoices, ui.settingsAudioTranslated, ui.settingsAudioCaptions, ui.settingsAudioVisualOverlay].filter(Boolean)) control.addEventListener(control.type === "range" ? "input" : "change", () => applyAudioSettings());
+
+function representativeSoundPreviewEvents() {
+  const position = { x: camera.position.x, y: camera.position.y, z: camera.position.z - 4 }, animal = sim?.animals?.find(candidate => candidate.alive && candidate.speciesId === "grazer") || selectedAnimal() || sim?.animals?.find(candidate => candidate.alive);
+  const call = animal ? createAnimalSoundEvent(animal, { tick: sim?.tick || 0, call: { signalKind: "courtship", since: performance.now(), behaviouralTrigger: "matched settings preview" } }) : null;
+  const footstep = animal ? createAnimalSoundEvent(animal, { tick: (sim?.tick || 0) + 1, movementNoise: .72, receiverCell: { plantType: "grass", grassHeight: .45, moisture: .35 }, gait: "walk" }) : null;
+  return [call, footstep, createEnvironmentalSoundEvent({ id: "preview-wind", kind: "wind", position, intensity: .7, tick: performance.now(), durationSeconds: 1.4 }), createEnvironmentalSoundEvent({ id: "preview-rain", kind: "rain", position, intensity: .72, tick: performance.now() + 1, durationSeconds: 1.4 }), createEnvironmentalSoundEvent({ id: "preview-water", kind: "river", position, intensity: .72, tick: performance.now() + 2, durationSeconds: 1.8 })].filter(Boolean).map(event => ({ ...event, position }));
+}
+async function previewSoundLanguage(language) {
+  const definition = soundLanguageDefinition(language); if (!definition) return;
+  if (ui.soundLanguagePreviewStatus) ui.soundLanguagePreviewStatus.textContent = `Playing ${definition.label}: call → foot contact → wind → rain → water.`;
+  for (const [index, event] of representativeSoundPreviewEvents().entries()) setTimeout(() => acousticRenderer.previewEvent(event, language, { gain: event.soundClass === "vocalisation" ? .46 : .35, position: event.position }), index * 900);
+}
+for (const button of document.querySelectorAll("[data-sound-language-preview]")) button.addEventListener("click", () => previewSoundLanguage(button.dataset.soundLanguagePreview));
+for (const button of document.querySelectorAll("[data-sound-language-select]")) button.addEventListener("click", () => { applyAudioSettings({ soundLanguage: button.dataset.soundLanguageSelect }); if (ui.soundLanguageSelector) ui.soundLanguageSelector.hidden = true; syncAudioControls(); });
+ui.settingsAudioCompareLanguages?.addEventListener("click", () => { if (ui.soundLanguageSelector) ui.soundLanguageSelector.hidden = false; });
+for (const button of document.querySelectorAll("[data-audio-test]")) button.addEventListener("click", async () => {
+  if (!acousticRenderer.enabled) await setAudioEnabled(true); if (!acousticRenderer.enabled) return;
+  const kind = button.dataset.audioTest, position = { x: camera.position.x, y: camera.position.y, z: camera.position.z - 4 };
+  if (kind === "animal") {
+    const animal = selectedAnimal() || sim?.animals?.find(candidate => candidate.alive), callProfile = acousticProfile(animal)?.repertoire?.[0], event = animal && callProfile ? createAnimalSoundEvent(animal, { tick: sim?.tick || 0, call: { signalKind: callProfile.signalKind, since: (sim?.tick || 0) + performance.now() } }) : null;
+    if (event) acousticRenderer.renderEvent({ ...event, position }, { gain: .52, position, translated: audioSettings.translatedChannels && (event.centreFrequencyHz < 20 || event.centreFrequencyHz > 20000) }); else addEvent("Select an animal with a supported vocal repertoire");
+  } else {
+    const environmentalKind = kind === "water" ? "river" : kind, event = createEnvironmentalSoundEvent({ id: `settings-test-${kind}`, kind: environmentalKind, position, intensity: .72, tick: performance.now(), durationSeconds: 2.4 });
+    if (event) acousticRenderer.renderEvent(event, { gain: .48, position });
+  }
+});
+syncAudioControls();
+ui.sensoryPerspective?.addEventListener("change", () => {
+  const selected = selectedAnimal(), mode = ui.sensoryPerspective.value;
+  acousticPerspective = createSensoryPerspective({ mode, speciesId: selected?.speciesId || null, entityId: mode === SENSORY_PERSPECTIVE_MODES.ENTITY_EXPERIENCE ? selected?.id || null : null });
+  if (mode === SENSORY_PERSPECTIVE_MODES.ENTITY_EXPERIENCE && !selected) addEvent("Select a living organism to use Entity Experience");
+  renderAll(); updateUI();
+});
 ui.overlayHideEntityPresentation?.addEventListener("change", () => {
   const visible = !ui.overlayHideEntityPresentation.checked;
   applyGraphicsSettings({ ...graphicsSettings, preset: "custom", entityAttachedPanelsVisible: visible, entityPanelsVisible: visible, entityPublicPanelsVisible: visible, entitySelectedPresentationVisible: visible });
@@ -4538,6 +4841,124 @@ window.addEventListener("visibilitychange", () => { if (document.visibilityState
 window.addEventListener("pagehide", () => { saveProgress(true); if (documentarySystem.active) documentarySystem.stopBestEffort("page-unload"); });
 
 let lastGraphicsFrame = 0, animalMotionTimeMs = 0;
+let lastAcousticPresentationAt = -Infinity;
+function localSoundscapeAt(position) {
+  const weather = localizedWeatherPresentation(regionalWeatherAt(position)), origin = cellAt(position.x, position.z);
+  if (!origin) return { rain: weather.precipitationIntensity, wind: weather.gustStrength, gust: weather.gustStrength, vegetation: 0, water: 0, waterAnchor: null, rainSurfaces: { foliage: 0, soil: 1, water: 0 } };
+  const visited = new Set([origin.id]), queue = [{ cell: origin, depth: 0 }]; let water = 0, vegetation = 0, waterAnchor = null;
+  while (queue.length) {
+    const { cell, depth } = queue.shift(), distance = Math.max(.5, Math.hypot(position.x - cell.x, position.z - cell.z)), attenuation = 1 / (1 + distance * .075) ** 2;
+    const plantDensity = clamp(Number(cell.canopyDensity ?? cell.canopyCover ?? 0) + Number(cell.understoryDensity ?? 0) * .65 + Number(cell.grassHeight ?? 0) * .16 + (cell.woodland ? .45 : cell.shrubland ? .28 : 0), 0, 1.5);
+    vegetation = Math.max(vegetation, plantDensity * attenuation);
+    if (cell.water || Number(cell.waterDepth || 0) > 0) { const flow = Number(cell.discharge ?? cell.streamFlow ?? 0), turbulence = clamp(.16 + Math.log1p(Math.max(0, flow)) * .22 + Number(cell.slope || 0) * .6 + Number(cell.waterDepth || 0) * .08, .08, 1.5), strength = turbulence * attenuation; if (strength > water) { water = strength; waterAnchor = { id: cell.id, x: cell.x, y: terrainRenderHeight(cell.x, cell.z) + .15, z: cell.z, intensity: strength }; } }
+    if (depth >= 4) continue;
+    for (const neighbour of cell.neighbours || []) if (neighbour && !visited.has(neighbour.id)) { visited.add(neighbour.id); queue.push({ cell: neighbour, depth: depth + 1 }); }
+  }
+  const waterSurface = origin.water || Number(origin.waterDepth || 0) > .04 ? .82 : clamp(water * .45, 0, .45), foliageSurface = clamp(vegetation * .85, 0, .8), soilSurface = clamp(1 - waterSurface * .7 - foliageSurface * .55, .12, 1);
+  return { rain: weather.precipitationIntensity, wind: clamp(regionalWeatherAt(position).wind || 0, 0, 1.5), gust: weather.gustStrength, vegetation, water, waterAnchor, rainSurfaces: { foliage: foliageSurface, soil: soilSurface, water: waterSurface } };
+}
+function updateAcousticPresentation(now = performance.now()) {
+  if (now - lastAcousticPresentationAt < 80) return;
+  lastAcousticPresentationAt = now;
+  if (!acousticRenderer.enabled || !sim) return;
+  const selected = selectedAnimal(), mode = acousticPerspective.mode;
+  const entityListener = mode === SENSORY_PERSPECTIVE_MODES.ENTITY_EXPERIENCE ? selected : null;
+  const listenerPosition = entityListener ? { x: entityListener.x, y: terrainRenderHeight(entityListener.x, entityListener.z) + .8, z: entityListener.z } : { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+  const forward = new THREE.Vector3(); camera.getWorldDirection(forward);
+  acousticRenderer.setListener({ ...listenerPosition, forwardX: forward.x, forwardZ: forward.z });
+  const soundscape = localSoundscapeAt(listenerPosition), captions = [];
+  acousticRenderer.updateAmbience(soundscape);
+  const timeCompressed = Number(ui.speed?.value || 1) > 4;
+  if (timeCompressed) captions.push("time-compressed representative audio");
+  if (soundscape.rain > 0) captions.push(soundscape.rain > .62 ? "heavy rain" : soundscape.rain > .22 ? "steady rain" : "light rain");
+  if (soundscape.wind > .16) captions.push(soundscape.vegetation > .12 ? "wind through vegetation" : "wind");
+  if (soundscape.water > .08) captions.push("nearby moving water");
+  if (!sim.soundEvents?.length) { if (ui.soundCaptionLive) { ui.soundCaptionLive.hidden = !audioSettings.captions || !captions.length; ui.soundCaptionLive.textContent = captions.length ? `Soundscape: ${[...new Set(captions)].join(" · ")}` : ""; } return; }
+  const audiblePriority = event => { const distance = Math.max(1, Math.hypot(listenerPosition.x - event.position.x, listenerPosition.z - event.position.z)); return event.sourceLevelDb - 20 * Math.log10(distance) + (event.semanticContract ? 3 : 0); };
+  const rankedCandidates = sim.soundEvents.filter(event => !event.context?.continuous).sort((left, right) => audiblePriority(right) - audiblePriority(left));
+  const candidates = timeCompressed ? rankedCandidates.filter((event, index, all) => all.findIndex(other => `${other.sourceId}:${other.soundClass}:${other.synthesis?.mechanism}` === `${event.sourceId}:${event.soundClass}:${event.synthesis?.mechanism}`) === index).slice(0, Math.min(6, audioSettings.maximumVoices)) : rankedCandidates.slice(0, Math.min(18, audioSettings.maximumVoices));
+  for (const event of candidates) {
+    if (renderedAcousticEvents.has(event.eventId)) continue;
+    let gain = 0, lowpassHz = 18000, translated = false;
+    if (mode === SENSORY_PERSPECTIVE_MODES.ENTITY_EXPERIENCE) {
+      const observation = entityListener?.acousticObservations?.find(item => item.eventId === event.eventId);
+      if (!observation?.detected) { renderedAcousticEvents.set(event.eventId, sim.tick); continue; }
+      gain = clamp(.08 + observation.confidence * .65, .05, .8);
+      lowpassHz = Math.max(250, observation.explanation?.strongestBandHz * 2 || 8000);
+      translated = audioSettings.translatedChannels && (event.centreFrequencyHz > 20000 || event.centreFrequencyHz < 20);
+    } else if (mode === SENSORY_PERSPECTIVE_MODES.SPECIES_LENS) {
+      const template = { id: "species-lens", speciesId: acousticPerspective.speciesId || selected?.speciesId || "grazer", x: listenerPosition.x, z: listenerPosition.z };
+      const receiverCell = cellAt(template.x, template.z), propagation = propagateSound(event, template, { path: lineSamplePath(event.position, template, cellAt), receiverWeather: regionalWeatherAt(template), receiverCell });
+      const observation = observeSound(template, event, propagation);
+      if (!observation?.detected) { renderedAcousticEvents.set(event.eventId, sim.tick); continue; }
+      gain = clamp(.08 + observation.confidence * .62, .05, .75); lowpassHz = Math.max(250, observation.explanation?.strongestBandHz * 2 || 8000); translated = audioSettings.translatedChannels && (event.centreFrequencyHz > 20000 || event.centreFrequencyHz < 20);
+    } else {
+      const receiverCell = cellAt(listenerPosition.x, listenerPosition.z), [windX, windZ] = windDirectionVector(), physical = propagateSound(event, { id: "human-observer", x: listenerPosition.x, z: listenerPosition.z }, { path: lineSamplePath(event.position, listenerPosition, cellAt), receiverWeather: regionalWeatherAt(listenerPosition), receiverCell, windVector: { x: windX, z: windZ } });
+      const strongestLevel = Math.max(...physical.receivedSpectrumDb), strongestIndex = physical.receivedSpectrumDb.indexOf(strongestLevel), physicalGain = clamp((strongestLevel - 18) / 72, 0, .68);
+      gain = mode === SENSORY_PERSPECTIVE_MODES.PHYSICAL_SCIENTIFIC ? clamp(physicalGain * 1.08, .015, .7) : physicalGain;
+      lowpassHz = clamp(ACOUSTIC_FREQUENCY_BANDS_HZ[strongestIndex] * 2.5, 250, 20000);
+      translated = audioSettings.translatedChannels && mode === SENSORY_PERSPECTIVE_MODES.PHYSICAL_SCIENTIFIC && (event.centreFrequencyHz > 20000 || event.centreFrequencyHz < 20);
+    }
+    if (gain > .015 && acousticRenderer.renderEvent(event, { gain, lowpassHz, translated })) {
+      const profile = acousticProfile(event.speciesId), callLabel = event.acousticScore?.callId || event.semanticContract || "call", translation = translated ? " · non-human frequency translated" : "";
+      captions.push(event.soundClass === "vocalisation" ? `${profile?.displayName || event.speciesId} · ${callLabel}${translation}` : `${event.synthesis?.contact ? `${event.synthesis.contact.anatomy} on ${event.synthesis.contact.substrate}` : event.synthesis?.mechanism || event.soundClass}${translation}`);
+    }
+    renderedAcousticEvents.set(event.eventId, sim.tick);
+  }
+  for (const [eventId, tick] of renderedAcousticEvents) if (sim.tick - tick > 120) renderedAcousticEvents.delete(eventId);
+  if (ui.soundCaptionLive) { ui.soundCaptionLive.hidden = !audioSettings.captions || !captions.length; ui.soundCaptionLive.textContent = captions.length ? `Soundscape: ${[...new Set(captions)].join(" · ")}` : ""; }
+}
+function weatherVisualNoise(index, salt = 0) { const value = Math.sin((index + 1) * 12.9898 + (salt + 1) * 78.233 + Number(sim?.seed || 0) * .001) * 43758.5453; return value - Math.floor(value); }
+function weatherFieldSamples() {
+  const field = sim?.weatherField; if (!field?.width || !field.values?.length) return [];
+  return field.values.map((weather, index) => { const gx = index % field.width, gz = Math.floor(index / field.width); return { index, x: clamp(-HALF + (gx + .5) * field.step, -HALF + .5, HALF - .5), z: clamp(-HALF + (gz + .5) * field.step, -HALF + .5, HALF - .5), weather, state: localizedWeatherPresentation(weather) }; });
+}
+function updateScientificWindArrows(samples) {
+  if (!weatherWindArrows) return;
+  const stride = Math.max(1, Math.ceil(Math.sqrt(samples.length) / 5)), chosen = samples.filter((_, index) => index % stride === 0).slice(0, weatherWindArrows.instanceMatrix.count ? 36 : 25);
+  weatherWindArrows.count = chosen.length;
+  for (let index = 0; index < chosen.length; index += 1) { const sample = chosen[index], wind = localWindAt(sample), strength = clamp(wind.speed, .1, 1.5), heading = Math.atan2(wind.z, wind.x); weatherInstanceDummy.position.set(sample.x, terrainRenderHeight(sample.x, sample.z) + .24, sample.z); weatherInstanceDummy.rotation.set(-Math.PI / 2, 0, heading); weatherInstanceDummy.scale.set(2.4 + strength * 2.4, 2.4 + strength * 2.4, 1); weatherInstanceDummy.updateMatrix(); weatherWindArrows.setMatrixAt(index, weatherInstanceDummy.matrix); }
+  if (chosen.length) weatherWindArrows.instanceMatrix.needsUpdate = true;
+}
+function rebuildWeatherFieldGeometry() {
+  const samples = weatherFieldSamples(), budget = weatherVisualBudget(graphicsSettings.weatherCloudQuality, graphicsSettings.weatherParticleDensity, graphicsSettings.largeMapPerformanceMode);
+  const cloudSamples = samples.filter(sample => sample.state.cloudCover > .2).sort((left, right) => right.state.cloudCover + right.state.precipitationIntensity * .35 - left.state.cloudCover - left.state.precipitationIntensity * .35).slice(0, budget.cloudClusters);
+  for (let index = 0; index < cloudMasses.length; index += 1) { const cloud = cloudMasses[index], sample = cloudSamples[index]; cloud.userData.cloudActive = Boolean(sample); if (!sample) { cloud.visible = false; continue; } const baseHeight = terrainRenderHeight(sample.x, sample.z) + 14 + weatherVisualNoise(sample.index, 2) * 7, width = 11 + sample.state.cloudCover * 12 + weatherVisualNoise(sample.index, 5) * 5, height = width * (.34 + weatherVisualNoise(sample.index, 6) * .1); cloud.position.set(sample.x, baseHeight, sample.z); cloud.scale.set(width, height, 1); cloud.material.opacity = clamp(.2 + sample.state.cloudCover * .2, .2, .4); cloud.material.color.setHex(sample.state.precipitationIntensity > .22 ? 0xb8c5c9 : 0xe4ebeb); cloud.visible = graphicsSettings.weatherCloudQuality !== "off"; }
+  const shaftSamples = samples.filter(sample => sample.state.precipitationIntensity > .07).sort((left, right) => right.state.precipitationIntensity - left.state.precipitationIntensity).slice(0, Math.min(MAX_WEATHER_SHAFTS, budget.precipitationShafts));
+  for (let index = 0; index < precipitationShafts.length; index += 1) { const shaft = precipitationShafts[index], sample = shaftSamples[index]; shaft.userData.precipitationActive = Boolean(sample); if (!sample) { shaft.visible = false; continue; } const jitterX = (weatherVisualNoise(sample.index, 81) - .5) * sim.weatherField.step * .55, jitterZ = (weatherVisualNoise(sample.index, 82) - .5) * sim.weatherField.step * .55, x = sample.x + jitterX, z = sample.z + jitterZ, ground = terrainRenderHeight(x, z), height = 10 + sample.state.precipitationIntensity * 15, width = sim.weatherField.step * (.17 + weatherVisualNoise(sample.index, 84) * .25); shaft.position.set(x, ground + height * .5 + .3, z); shaft.scale.set(width, height, 1); shaft.material.opacity = clamp(.05 + sample.state.precipitationIntensity * .26, .05, .3); shaft.material.color.setHex(sample.state.precipitationType === "snow" ? 0xdcecef : 0x91adba); shaft.visible = graphicsSettings.weatherDistantShafts; }
+  updateScientificWindArrows(samples);
+  weatherPresentationFieldMarker = sim.weatherFieldMarker;
+}
+function updateLocalPrecipitation(now, local, budget) {
+  const cameraGround = terrainRenderHeight(camera.position.x, camera.position.z), insideFallingColumn = camera.position.y <= cameraGround + 24, enabled = graphicsSettings.weatherLocalPrecipitation && insideFallingColumn && local.precipitationIntensity > 0, rain = enabled && local.precipitationType === "rain", snow = enabled && local.precipitationType === "snow", count = Math.min(MAX_LOCAL_PRECIPITATION, Math.round(budget.localDrops * clamp(.18 + local.precipitationIntensity, 0, 1)));
+  cameraRainStreaks.visible = rain; cameraSnow.visible = snow;
+  if (rain) { const attribute = rainStreakGeometry.getAttribute("position"), fall = now * (.015 + local.precipitationIntensity * .024), [windX, windZ] = windDirectionVector(); for (let index = 0; index < count; index += 1) { const angle = index * 2.399963, radius = Math.sqrt((index + .5) / count) * 24, y = ((index * 7.13 - fall) % 28 + 28) % 28 - 14, x = Math.cos(angle) * radius, z = Math.sin(angle) * radius, offset = index * 6, lean = .2 + local.gustStrength * .48; rainStreakPositions[offset] = x; rainStreakPositions[offset + 1] = y + .95; rainStreakPositions[offset + 2] = z; rainStreakPositions[offset + 3] = x + windX * lean; rainStreakPositions[offset + 4] = y - .15; rainStreakPositions[offset + 5] = z + windZ * lean; } attribute.needsUpdate = true; rainStreakGeometry.setDrawRange(0, count * 2); cameraRainStreaks.position.copy(camera.position); rainStreakMaterial.opacity = clamp(.18 + local.precipitationIntensity * .55, .18, .72); }
+  if (snow) { const attribute = snowGeometry.getAttribute("position"), fall = now * .0028; for (let index = 0; index < count; index += 1) { const angle = index * 2.399963, radius = Math.sqrt((index + .5) / count) * 22, offset = index * 3; snowPositions[offset] = Math.cos(angle) * radius + Math.sin(now * .0007 + index) * .7; snowPositions[offset + 1] = ((index * 5.37 - fall) % 24 + 24) % 24 - 12; snowPositions[offset + 2] = Math.sin(angle) * radius; } attribute.needsUpdate = true; snowGeometry.setDrawRange(0, count); cameraSnow.position.copy(camera.position); }
+  const splashCount = rain && graphicsSettings.weatherSplashes && camera.position.y - terrainRenderHeight(camera.position.x, camera.position.z) < 55 ? Math.min(MAX_WEATHER_SPLASHES, Math.round(budget.splashes * local.precipitationIntensity)) : 0; cameraRainSplashes.visible = splashCount > 0; splashGeometry.setDrawRange(0, splashCount); let rippleCount = 0;
+  if (splashCount) { const attribute = splashGeometry.getAttribute("position"); for (let index = 0; index < splashCount; index += 1) { const angle = index * 2.399963 + now * .00007, radius = Math.sqrt((index + .5) / splashCount) * 17, x = clamp(camera.position.x + Math.cos(angle) * radius, -HALF, HALF), z = clamp(camera.position.z + Math.sin(angle) * radius, -HALF, HALF), offset = index * 3, cell = cellAt(x, z); splashPositions[offset] = x; splashPositions[offset + 1] = terrainRenderHeight(x, z) + .1 + ((index + Math.floor(now / 85)) % 4) * .025; splashPositions[offset + 2] = z; if (cell?.water && rippleCount < MAX_WEATHER_SPLASHES) { const phase = ((now * .0018 + index * .37) % 1), size = .7 + phase * 2.2; weatherInstanceDummy.position.set(x, Number(cell.waterSurface ?? cell.elevation) + .055, z); weatherInstanceDummy.rotation.set(-Math.PI / 2, 0, angle); weatherInstanceDummy.scale.set(size, size, size); weatherInstanceDummy.updateMatrix(); cameraRainRipples.setMatrixAt(rippleCount++, weatherInstanceDummy.matrix); } } attribute.needsUpdate = true; }
+  cameraRainRipples.count = rippleCount; cameraRainRipples.visible = rippleCount > 0; if (rippleCount) cameraRainRipples.instanceMatrix.needsUpdate = true;
+}
+function syncWeatherFieldLegend(localWeather, local) {
+  if (!ui.weatherFieldLegend) return; const visible = graphicsSettings.weatherScientificOverlay && Boolean(weatherDataTexture); ui.weatherFieldLegend.hidden = !visible; if (!visible) return;
+  const legend = weatherOverlayLegend(graphicsSettings.weatherOverlayLayer), band = precipitationBand(local.precipitationIntensity, localWeather.temp), direction = worldSetup.windDirection.replace("southwest", "south-west").replace("southeast", "south-east"), travel = ({ west: "east", southwest: "north-east", south: "north", southeast: "north-west", east: "west" })[worldSetup.windDirection] || "east";
+  ui.weatherFieldTitle.textContent = legend.title; ui.weatherFieldStops.innerHTML = legend.stops.map(([label, colour]) => `<span class="weather-field-stop"><i style="background:${colour}"></i>${label}</span>`).join(""); ui.weatherFieldStatus.textContent = `Camera: ${band.label} · cloud ${Math.round(local.cloudCover * 100)}% · visibility ${Math.round(local.visibility * 100)}% · wind from ${direction} · systems travel ${travel} · ${sim.weatherSystems?.filter(system => system.kind === "low").length || 0} low-pressure cells`;
+}
+function updateLocalizedWeatherPresentation(now) {
+  if (!sim) { groups.weather.visible = false; return; }
+  groups.weather.visible = true;
+  ensureLocalizedWeatherField();
+  const sample = { x: clamp(camera.position.x, -HALF + .001, HALF - .001), z: clamp(camera.position.z, -HALF + .001, HALF - .001) }, localWeather = regionalWeatherAt(sample), local = localizedWeatherPresentation(localWeather), budget = weatherVisualBudget(graphicsSettings.weatherCloudQuality, graphicsSettings.weatherParticleDensity, graphicsSettings.largeMapPerformanceMode);
+  if (weatherPresentationFieldMarker !== sim.weatherFieldMarker) rebuildWeatherFieldGeometry();
+  for (const cloud of cloudMasses) cloud.visible = Boolean(cloud.userData.cloudActive && graphicsSettings.weatherCloudQuality !== "off"); camera.getWorldDirection(weatherViewDirection); const showDistantShafts = graphicsSettings.weatherDistantShafts && Math.abs(weatherViewDirection.y) < .84; for (const shaft of precipitationShafts) shaft.visible = Boolean(shaft.userData.precipitationActive && showDistantShafts);
+  updateLocalPrecipitation(now, local, budget);
+  mats.water.roughness = clamp(.16 + local.waterRoughness * .55, .16, .8); mats.shallowWater.roughness = mats.deepWater.roughness = mats.riverWater.roughness = mats.water.roughness;
+  if (weatherTerrainShader) { weatherTerrainShader.uniforms.weatherCloudShadowStrength.value = graphicsSettings.weatherCloudShadows ? 1 : 0; weatherTerrainShader.uniforms.weatherWetGroundStrength.value = graphicsSettings.weatherWetGround ? 1 : 0; weatherTerrainShader.uniforms.weatherWorldHalf.value = Math.max(1, HALF); }
+  if (weatherFieldOverlayMesh) weatherFieldOverlayMesh.visible = graphicsSettings.weatherScientificOverlay && Boolean(weatherDataTexture); if (weatherWindArrows) weatherWindArrows.visible = graphicsSettings.weatherScientificOverlay; if (weatherOverlayMaterial) { weatherOverlayMaterial.uniforms.weatherLayer.value = weatherShaderLayerIndex(graphicsSettings.weatherOverlayLayer); weatherOverlayMaterial.uniforms.weatherWorldHalf.value = Math.max(1, HALF); }
+  if (graphicsSettings.weatherHaze && local.precipitationIntensity > 0) { if (!scene.fog) scene.fog = new THREE.Fog(0x526770, 95, 720); scene.fog.color.setHex(local.precipitationType === "snow" ? 0x7a888b : 0x526770); scene.fog.near *= clamp(.52 + local.visibility * .48, .55, 1); scene.fog.far *= clamp(.38 + local.visibility * .62, .42, 1); }
+  const storm = clamp(Number(localWeather.stormFactor || 0), 0, 1); if (graphicsSettings.weatherLightning && storm > .7 && sim.tick !== lastLightningTick && (sim.tick + Number(sim.seed || 0)) % 173 === 0) { lastLightningTick = sim.tick; lightningFlashUntil = now + 155; }
+  const flash = now < lightningFlashUntil ? 1 : 0; sun.intensity = 2.4 * (.68 + local.solarIllumination * .32) + flash * 3.4; skyLight.intensity = 2.2 * (.72 + local.solarIllumination * .28) + flash * .9;
+  syncWeatherFieldLegend(localWeather, local); lastWeatherPresentationAt = now;
+}
 function loop(now) {
   const minimumFrameInterval = graphicsSettings.frameCap ? 1000 / graphicsSettings.frameCap : 0;
   if (minimumFrameInterval && now - lastGraphicsFrame < minimumFrameInterval - .5) return;
@@ -4578,10 +4999,12 @@ function loop(now) {
       const panLimit = Math.max(8, HALF - 4), clampedX = clamp(controls.target.x, -panLimit, panLimit), clampedZ = clamp(controls.target.z, -panLimit, panLimit);
       if (clampedX !== controls.target.x || clampedZ !== controls.target.z) { camera.position.x += clampedX - controls.target.x; camera.position.z += clampedZ - controls.target.z; controls.target.set(clampedX, controls.target.y, clampedZ); }
       if (controls.enabled) controls.update();
-      if (!embodiedCameraActive) constrainCameraToTerrain(camera.position, controls.target, (x, z) => terrainRenderHeight(clamp(x, -HALF, HALF), clamp(z, -HALF, HALF)));
+      if (!embodiedCameraActive) constrainCameraToTerrain(camera.position, controls.target, (x, z) => terrainRenderHeight(clamp(x, -HALF, HALF), clamp(z, -HALF, HALF)), { cameraClearance: observerCameraClearance(controls.getDistance()) });
     }
   });
   applyObserverCameraEnvelope({ cinema: movieState.active });
+  updateAcousticPresentation(now);
+  updateLocalizedWeatherPresentation(now);
   // A full camera-driven refresh can create or re-admit animal roots with
   // their UI hidden by default. Perform it before the per-frame projection so
   // those roots receive their layout in this same rendered frame, avoiding a
@@ -4791,7 +5214,7 @@ function createWorld(seed, setup = worldSetup, embodimentRequest = null, prepare
   for (const speciesId of SPECIES_IDS) {
     const plan = startingDemographicPlan(speciesId, counts[speciesId], rng), prefix = species[speciesId].symbol;
     if (resolvedEmbodiedSetup?.speciesId === speciesId && plan.length) plan[0] = { sex: resolvedEmbodiedSetup.sex, age: resolvedEmbodiedSetup.age, stage: resolvedEmbodiedSetup.lifeStage };
-    for (let i = 0; i < plan.length; i++) { const profile = plan[i], animal = makeAnimal(`${prefix}${i + 1}`, speciesId, profile.sex, randomLandHex({ speciesId, lifeStage: profile.stage, health: 100, fatigue: 0 }), rng, profile.age, profile.stage === "dependent" ? "pending-caregiver" : null); if (resolvedEmbodiedSetup?.speciesId === speciesId && i === 0) { inhabitedAnimalId = animal.id; Object.assign(animal, { health: resolvedEmbodiedSetup.condition.health, energy: resolvedEmbodiedSetup.condition.energy, hydration: resolvedEmbodiedSetup.condition.hydration, stomach: resolvedEmbodiedSetup.condition.stomach, fatigue: resolvedEmbodiedSetup.condition.fatigue, injuries: resolvedEmbodiedSetup.condition.injuries }); } animals.push(animal); }
+    for (let i = 0; i < plan.length; i++) { const profile = plan[i], animal = makeAnimal(`${prefix}${i + 1}`, speciesId, profile.sex, randomLandHex({ speciesId, lifeStage: profile.stage, health: 100, fatigue: 0 }), rng, profile.age, profile.stage === "dependent" ? "pending-caregiver" : null, seed); if (resolvedEmbodiedSetup?.speciesId === speciesId && i === 0) { inhabitedAnimalId = animal.id; Object.assign(animal, { health: resolvedEmbodiedSetup.condition.health, energy: resolvedEmbodiedSetup.condition.energy, hydration: resolvedEmbodiedSetup.condition.hydration, stomach: resolvedEmbodiedSetup.condition.stomach, fatigue: resolvedEmbodiedSetup.condition.fatigue, injuries: resolvedEmbodiedSetup.condition.injuries }); } animals.push(animal); }
   }
   seedStartingPregnancies(animals, rng);
   if (inhabitedAnimalId) { const inhabited = animals.find(a => a.id === inhabitedAnimalId), reproductive = resolvedEmbodiedSetup.reproduction || {}; if (reproductive.pregnant === false) inhabited.pregnant = null; else if (reproductive.pregnant === true && inhabited.sex === "F" && ["adult", "old"].includes(inhabited.lifeStage)) { const profile = species[inhabited.speciesId], eggLayer = profile.reproduction.mode === "surface-eggs", termDays = eggLayer ? profile.reproduction.preLayDays : profile.reproduction.gestationDays; inhabited.pregnant = { age: termDays * Math.max(0, Math.min(1, reproductive.gestationProgress ?? .5)), mode: profile.reproduction.mode, phase: eggLayer ? "pre-lay" : "gestating", fatherId: null, viability: 1, offspringCount: chooseOffspringCount(profile.reproduction.broodRange, embodimentRng()), startedBeforeObservation: true }; } }
@@ -4813,7 +5236,8 @@ function createWorld(seed, setup = worldSetup, embodimentRequest = null, prepare
   const season = seasons.includes(worldSetup.startSeason) ? worldSetup.startSeason : "Spring";
   const seasonal = seasonMods[season];
   const lineageRecords = {}; for (const animal of animals) { migratePersonalSpace(animal); storeLineage(lineageRecords, migrateKinship(animal)); }
-  const world = { worldSchema: WORLD_SCHEMA, seed, worldSetup: { ...worldSetup }, rngState: seed, tick: 0, ecologicalMinute: 0, day: 1, season, weather: { type: season === "Winter" ? "Cold clear" : season === "Summer" ? "Warm settled" : "Settled", temp: seasonal.temp, rain: seasonal.rain, wind: 0.3 }, weatherSystems: [], activeScent: {}, hexWorld, cells: hexWorld.cells, water: hexWorld.cells.filter((c) => c.water).map((c) => c.id), hydrology: { model: "hex-basin-hydrology-v2" }, animals, lineageRecords, relationships: [], corpses, nests: [], events: [], births: 0, deaths: 0, nextId: 1000, nextDecisionOrder, embodiment: normalizeEmbodiment({ ...requestedEmbodiment, inhabitedAnimalId, setupRequest: resolvedEmbodiedSetup || requestedEmbodiment.setupRequest, state: requestedEmbodiment.experience === "embodied" ? "starting" : "observer" }) };
+  const world = { worldSchema: WORLD_SCHEMA, acousticSchema: 2, seed, worldSetup: { ...worldSetup }, rngState: seed, tick: 0, ecologicalMinute: 0, day: 1, season, weather: { type: season === "Winter" ? "Cold clear" : season === "Summer" ? "Warm settled" : "Settled", temp: seasonal.temp, rain: seasonal.rain, wind: 0.3 }, weatherSystems: [], weatherFieldMarker: null, activeScent: {}, airborneScentField: {}, traceField: {}, soundEvents: [], signalEmissions: [], hexWorld, cells: hexWorld.cells, water: hexWorld.cells.filter((c) => c.water).map((c) => c.id), hydrology: { model: "hex-basin-hydrology-v2" }, animals, lineageRecords, relationships: [], corpses, nests: [], events: [], births: 0, deaths: 0, nextId: 1000, nextDecisionOrder, embodiment: normalizeEmbodiment({ ...requestedEmbodiment, inhabitedAnimalId, setupRequest: resolvedEmbodiedSetup || requestedEmbodiment.setupRequest, state: requestedEmbodiment.experience === "embodied" ? "starting" : "observer" }) };
+  world.needPlanSchema = NEED_DEPENDENCY_PLAN_SCHEMA;
   seedStartingKnowledge(world, rng);
   seedStartingPlans(world, rng);
   return world;
@@ -4914,14 +5338,14 @@ function legacySquareWorld(seed, setup = worldSetup) {
   // Alternate sexes at creation: every even population is exactly 50/50;
   // an odd population differs by only one individual.
   const grazerPlan = startingDemographicPlan("grazer", worldSetup.herbivores, rng), hunterPlan = startingDemographicPlan("hunter", worldSetup.carnivores, rng);
-  for (let i = 0; i < grazerPlan.length; i++) { const profile = grazerPlan[i]; animals.push(makeAnimal(`H${i + 1}`, "grazer", profile.sex, randomLandCell(rng, occupied), rng, profile.age, profile.stage === "dependent" ? "pending-caregiver" : null)); }
-  for (let i = 0; i < hunterPlan.length; i++) { const profile = hunterPlan[i]; animals.push(makeAnimal(`C${i + 1}`, "hunter", profile.sex, randomLandCell(rng, occupied), rng, profile.age, profile.stage === "dependent" ? "pending-caregiver" : null)); }
+  for (let i = 0; i < grazerPlan.length; i++) { const profile = grazerPlan[i]; animals.push(makeAnimal(`H${i + 1}`, "grazer", profile.sex, randomLandCell(rng, occupied), rng, profile.age, profile.stage === "dependent" ? "pending-caregiver" : null, seed)); }
+  for (let i = 0; i < hunterPlan.length; i++) { const profile = hunterPlan[i]; animals.push(makeAnimal(`C${i + 1}`, "hunter", profile.sex, randomLandCell(rng, occupied), rng, profile.age, profile.stage === "dependent" ? "pending-caregiver" : null, seed)); }
   seedStartingPregnancies(animals, rng);
   wireStartingFamilies(animals, (child, mother, index) => { const angle = index * 2.399963; child.x = child.fx = clamp(mother.x + Math.cos(angle) * .45, -HALF + 1, HALF - 1); child.z = child.fz = clamp(mother.z + Math.sin(angle) * .45, -HALF + 1, HALF - 1); });
   for (const animal of animals) initializeMetabolism(animal);
   const nextDecisionOrder = assignDecisionOrder(animals);
   const lineageRecords = {}; for (const animal of animals) { migratePersonalSpace(animal); storeLineage(lineageRecords, migrateKinship(animal)); }
-  return { seed, worldSetup: { ...worldSetup }, rngState: seed, tick: 0, ecologicalMinute: 0, day: 1, season: "Spring", weather: { type: "Clear", temp: 14, rain: 0, wind: 0.3 }, weatherSystems: createWeatherSystems(), activeScent: {}, cells, water: [...water], hydrology, animals, lineageRecords, relationships: [], corpses: [], events: [], births: 0, deaths: 0, nextId: 1000, nextDecisionOrder };
+  return { worldSchema: WORLD_SCHEMA, acousticSchema: 2, seed, worldSetup: { ...worldSetup }, rngState: seed, tick: 0, ecologicalMinute: 0, day: 1, season: "Spring", weather: { type: "Clear", temp: 14, rain: 0, wind: 0.3 }, weatherSystems: createWeatherSystems(), weatherFieldMarker: null, activeScent: {}, airborneScentField: {}, traceField: {}, soundEvents: [], signalEmissions: [], cells, water: [...water], hydrology, animals, lineageRecords, relationships: [], corpses: [], events: [], births: 0, deaths: 0, nextId: 1000, nextDecisionOrder };
 }
 
 function deriveTerrainFields(cells, rng) {
@@ -4992,7 +5416,7 @@ function deriveTerrainFields(cells, rng) {
   return { order, model: "terrain-drainage-v1" };
 }
 
-function makeAnimal(id, speciesId, sex, pos, rng, age = 0, motherId = null) {
+function makeAnimal(id, speciesId, sex, pos, rng, age = 0, motherId = null, acousticSeed = sim?.seed || 0) {
   const s = species[speciesId];
   const lifeStage = stageForAge(s, age, motherId);
   const body = bodyScale(s, age);
@@ -5004,7 +5428,9 @@ function makeAnimal(id, speciesId, sex, pos, rng, age = 0, motherId = null) {
   const initialEnergyScale = eatsMeat(speciesId) ? 3 : 1;
   const initialStomach = initialStomachPercent(speciesId, lifeStage, rng());
   const cycleOffset = rng() * Math.max(1, s.reproduction.cycleDays || (s.reproduction.strategy === "annual-monoestrous" ? 21 : 1));
-  return migrateKinship(migrateBodyComposition(migrateExertionState({ id, speciesId, sex, x: pos.x, z: pos.z, fx: pos.x, fz: pos.z, orientation: rng() * Math.PI * 2, stationaryTicks: 0, age, lifeStage, sizeTrait, bodyCondition, bodyMass: s.adultMass * body * sizeTrait * bodyCondition, aggression, scentSkill, waterSkill, foodSkill, mateSkill, careAffinity, libido: socialDefaults.libido, health: 100, healthCap: 100, energy: (86 + rng() * 18) * initialEnergyScale, energyCapacityScale: initialEnergyScale, hydration: 96 + rng() * 4, hydrationCapacityMultiplier: HYDRATION_CAPACITY_MULTIPLIER, stomach: initialStomach, seedLoad: [], fatigue: 0, fear: 0, injuries: [], lifeHistory: { observedHours: age * 24, weightedBurdenHours: age * 12, fearHours: 0, fleeingHours: 0, injuryHours: 0, extremeExertionHours: 0, thermalStressHours: 0, deprivationHours: 0, injuriesSustained: 0, emergencyExertions: 0 }, bodyTemperature: initialBodyTemperature(speciesId), tempStress: 0, thermalStatus: "comfortable", thermalSources: {}, capabilities: {}, sensoryBuffer: [], receivedSignals: [], heardEvents: [], mapReveals: [], threatAssessment: null, decisionTrace: null, goalPlan: { shortTerm: null, mediumTerm: null, longTerm: null }, predation: createPredationState(0), socialSignal: null, signalCooldownUntil: 0, groupAlert: null, alive: true, pregnant: null, pregnancyHormones: null, courtship: null, mating: null, birthEvent: null, acceptedUntil: 0, lactation: 0, postpartum: 0, cycleOffset, reproductiveState: { cycleOffsetDays: cycleOffset, annualWindowOffsetDays: Math.floor(cycleOffset), broodsByYear: {}, environment: { samples: [], qualifyingStreak: 0, nonqualifyingStreak: 0, gateOpen: ["none", "calendar"].includes(s.reproduction.environmentTrigger), lastSampleDay: 0 } }, matePreferences: socialDefaults.matePreferences, mateHistory: [], socialMemory: {}, mediumTermMemory: [], entityKnowledge: {}, motherId, fatherId: null, parentIds: motherId ? [motherId] : [], ancestorDepths: motherId ? { [motherId]: 1 } : {}, dependentUntil: motherId ? s.dependency : 0, offspringIds: [], offspringMemory: {}, memories: [], longMemory: [], explored: {}, mapMemory: {}, relationships: [], actionState: createActionState("orient", { label: "orienting" }), currentAction: "orienting", actionTarget: null, drive: "explore", timeline: [`born day ${Math.max(1, Math.floor(age))}`] })));
+  const created = migrateKinship(migrateBodyComposition(migrateExertionState({ id, speciesId, sex, x: pos.x, z: pos.z, fx: pos.x, fz: pos.z, orientation: rng() * Math.PI * 2, stationaryTicks: 0, age, lifeStage, sizeTrait, bodyCondition, bodyMass: s.adultMass * body * sizeTrait * bodyCondition, aggression, scentSkill, waterSkill, foodSkill, mateSkill, careAffinity, libido: socialDefaults.libido, health: 100, healthCap: 100, energy: (86 + rng() * 18) * initialEnergyScale, energyCapacityScale: initialEnergyScale, hydration: 96 + rng() * 4, hydrationCapacityMultiplier: HYDRATION_CAPACITY_MULTIPLIER, stomach: initialStomach, seedLoad: [], fatigue: 0, fear: 0, injuries: [], lifeHistory: { observedHours: age * 24, weightedBurdenHours: age * 12, fearHours: 0, fleeingHours: 0, injuryHours: 0, extremeExertionHours: 0, thermalStressHours: 0, deprivationHours: 0, injuriesSustained: 0, emergencyExertions: 0 }, bodyTemperature: initialBodyTemperature(speciesId), tempStress: 0, thermalStatus: "comfortable", thermalSources: {}, capabilities: {}, sensoryBuffer: [], receivedSignals: [], heardEvents: [], acousticObservations: [], mapReveals: [], threatAssessment: null, decisionTrace: null, goalPlan: { shortTerm: null, mediumTerm: null, longTerm: null }, predation: createPredationState(0), socialSignal: null, signalCooldownUntil: 0, groupAlert: null, alive: true, pregnant: null, pregnancyHormones: null, courtship: null, mating: null, birthEvent: null, acceptedUntil: 0, lactation: 0, postpartum: 0, cycleOffset, reproductiveState: { cycleOffsetDays: cycleOffset, annualWindowOffsetDays: Math.floor(cycleOffset), broodsByYear: {}, environment: { samples: [], qualifyingStreak: 0, nonqualifyingStreak: 0, gateOpen: ["none", "calendar"].includes(s.reproduction.environmentTrigger), lastSampleDay: 0 } }, matePreferences: socialDefaults.matePreferences, mateHistory: [], socialMemory: {}, mediumTermMemory: [], entityKnowledge: {}, motherId, fatherId: null, parentIds: motherId ? [motherId] : [], ancestorDepths: motherId ? { [motherId]: 1 } : {}, dependentUntil: motherId ? s.dependency : 0, offspringIds: [], offspringMemory: {}, memories: [], longMemory: [], explored: {}, mapMemory: {}, relationships: [], actionState: createActionState("orient", { label: "orienting" }), currentAction: "orienting", actionTarget: null, drive: "explore", timeline: [`born day ${Math.max(1, Math.floor(age))}`] })));
+  created.acousticIdentity = createIndividualAcousticTraits(created, acousticSeed);
+  return created;
 }
 
 let ecologicalAdvance = { previousMinute: 0, minute: 0, daysCrossed: 0, dayBoundary: false };
@@ -5074,7 +5500,7 @@ function tickWorldMinute() {
       tickLocomotionBefore.length = ordered.length;
       for (const animal of ordered) {
         const index = animal.decisionOrder, state = tickLocomotionBefore[index] || (tickLocomotionBefore[index] = {});
-        state.distance = animal.locomotion?.distanceTravelled || 0; state.turning = animal.locomotion?.turningEffort || 0; state.speed = animal.locomotion?.speed || 0; state.elevation = terrainHeight(animal.x, animal.z);
+        state.distance = animal.locomotion?.distanceTravelled || 0; state.turning = animal.locomotion?.turningEffort || 0; state.speed = animal.locomotion?.speed || 0; state.elevation = terrainHeight(animal.x, animal.z); state.x = animal.x; state.z = animal.z;
       }
       const directPlayerId = directEmbodiedControlActive() ? sim.embodiment?.inhabitedAnimalId : null;
       const locomotionAnimals = directPlayerId ? ordered.filter((animal) => animal.id !== directPlayerId) : ordered;
@@ -5092,7 +5518,11 @@ function tickWorldMinute() {
         const chargedMode = animal.movementRequest?.mode || animal.locomotion.completedMode || animal.locomotion.activeMode || "walk", currentSpeed = animal.locomotion.speed || 0, elevationGain = Math.max(0, terrainHeight(animal.x, animal.z) - before.elevation), stress = migrateStressResponse(animal);
         const demand = createActivityDemand({ activity: chargedMode, distance, averageSpeed: currentSpeed, peakSpeed: Math.max(currentSpeed, before.speed), acceleration: currentSpeed - before.speed, turningEffort: turning, elevationGain, terrainResistance: terrain.energy, bodyMass: animal.bodyMass, carriedLoad: animal.pregnant ? animal.bodyMass * .08 : 0, injuryPenalty: (animal.injuries || []).reduce((sum, injury) => sum + (injury.severity || 0) * .12, 0), thermalPenalty: (animal.tempStress || 0) / 100, dehydrationPenalty: Math.max(0, 45 - animal.hydration) / 45, stressIntensity: stress.intensity, activitySteps: 1 });
         const evaluation = evaluateActivityDemand(animal, demand, { requestedPace: chargedMode }); applyActivityDemand(animal, evaluation); ecologicalAccounting.record("movementEnergy", evaluation.energyCost);
-        animal.movementNoise = clamp(distance * terrain.noise * (chargedMode === "sprint" ? 1.7 : chargedMode === "stalk" ? .72 : 1), 0, 1.4);
+        const contactCell = cellAt(animal.x, animal.z), contact = substrateContact(animal, contactCell, { distance, gait: chargedMode, speed: currentSpeed }), carriedWater = clamp(animal.surfaceWetness || 0);
+        animal.lastSurfaceContact = contact;
+        animal.movementNoise = clamp(distance * terrain.noise * (.72 + contact.pressure * .38 + contact.disturbanceStrength * .22) * (chargedMode === "sprint" ? 1.7 : chargedMode === "stalk" ? .72 : 1), 0, 1.4);
+        animal.movementEvidence = movementEvidence(animal, { x: realtime?.fromX ?? before.x ?? animal.x, z: realtime?.fromZ ?? before.z ?? animal.z }, { x: realtime?.toX ?? animal.x, z: realtime?.toZ ?? animal.z }, cellAt, { gait: chargedMode, speed: currentSpeed, carriedWater });
+        animal.surfaceWetness = contact.substrate === "water" ? 1 : clamp(carriedWater - distance * .16 - .025);
         recordTrainingStimulus(animal, { endurance: distance * (evaluation.zone === "sustainable" ? 1 : 2.4), strength: turning * .05 + elevationGain * 2 + Math.max(0, terrain.energy - 1) * distance });
       }
       for (const animal of ordered) if (animal.alive && speciesCanHunt(animal)) {
@@ -5102,6 +5532,9 @@ function tickWorldMinute() {
       buildEntityIndex();
     }
   });
+  refreshWorldSoundEvents();
+  if (ecologicalHoursCrossed > 0) queueEnvironmentalHistoryDeposits(previousEcologicalHour + 1, currentEcologicalHour);
+  depositWorldTraces();
   profiler.record("tick.perception", tickPerceptionElapsed);
   if (!diagnosticBatch) beginAnimalPresentation(presentationStarts, performance.now());
   if (ecologicalAdvance.dayBoundary) updateSocialGroups();
@@ -5137,13 +5570,40 @@ function updateWeather(ecologicalHour = Math.floor((sim.ecologicalMinute || 0) /
   for (const w of sim.weatherSystems) { w.x += w.vx; w.z += w.vz; if (w.x > HALF + w.radius) w.x = -HALF - w.radius; if (w.z > HALF + w.radius) w.z = -HALF - w.radius; if (w.z < -HALF - w.radius) w.z = HALF + w.radius; }
   const centre = regionalWeatherAt({ x: 0, z: 0 });
   sim.weather = { type: centre.stormFactor > .72 && centre.wind > .88 ? "Hurricane-force storm" : centre.stormFactor > .42 ? "Severe cyclonic storm" : centre.rain > .62 ? "Regional rain" : centre.rain > .12 ? "Passing front" : centre.pressure > .35 ? "High pressure" : "Broken cloud", temp: centre.temp, rain: centre.rain, wind: centre.wind, stormFactor: centre.stormFactor };
-  if (!sim.weatherField || ecologicalHour % 12 === 0) refreshWeatherField();
+  for (const cell of sim.cells) advanceSurfaceMoisture(cell, regionalWeatherAt(cell), 1);
+  if (!sim.weatherField || weatherFieldRefreshDue(sim.weatherFieldMarker, sim.weatherSystems, sim.weatherField?.step || 16, ecologicalHour)) refreshWeatherField();
+  const traces = CompactTraceField.fromSnapshot(sim.traceField || {}); traces.advance({ rain: centre.rain, wind: centre.wind, elapsedHours: 1, weatherAt: record => regionalWeatherAt(record) }); sim.traceField = traces.snapshot();
+}
+
+function rebuildWeatherDataTexture() {
+  const previous = weatherTextureData, next = encodeWeatherFieldTexture(sim?.weatherField);
+  if (previous?.width === next?.width && previous?.height === next?.height) for (let index = 0; index < next.data.length; index += 4) next.data[index + 2] = Math.max(next.data[index + 2], Math.round(previous.data[index + 2] * .72));
+  weatherTextureData = next;
+  weatherDataTexture?.dispose();
+  weatherDataTexture = weatherTextureData ? new THREE.DataTexture(weatherTextureData.data, weatherTextureData.width, weatherTextureData.height, THREE.RGBAFormat) : null;
+  if (weatherDataTexture) { weatherDataTexture.needsUpdate = true; weatherDataTexture.magFilter = THREE.LinearFilter; weatherDataTexture.minFilter = THREE.LinearFilter; weatherDataTexture.name = "localized-weather-field"; }
+  if (weatherTerrainShader) { weatherTerrainShader.uniforms.weatherFieldMap.value = weatherDataTexture; weatherTerrainShader.uniforms.weatherFieldAvailable.value = weatherDataTexture ? 1 : 0; }
+  if (weatherOverlayMaterial) { weatherOverlayMaterial.uniforms.weatherFieldMap.value = weatherDataTexture; weatherOverlayMaterial.uniforms.weatherFieldAvailable.value = weatherDataTexture ? 1 : 0; }
+  weatherPresentationFieldMarker = null;
+}
+
+function ensureLocalizedWeatherField() {
+  if (!sim) return false;
+  if (!sim.weatherSystems?.length) sim.weatherSystems = createWeatherSystems();
+  if (!sim.weatherField?.values?.length) refreshWeatherField();
+  else if (!weatherDataTexture) rebuildWeatherDataTexture();
+  return Boolean(weatherDataTexture);
 }
 
 function refreshWeatherField() {
   const step = 16, width = Math.ceil(WORLD / step), values = [];
-  for (let gz = 0; gz < width; gz++) for (let gx = 0; gx < width; gx++) values.push(regionalWeatherAt({ x: -HALF + gx * step + step / 2, z: -HALF + gz * step + step / 2 }));
+  for (let gz = 0; gz < width; gz++) for (let gx = 0; gx < width; gx++) {
+    const point = { x: -HALF + gx * step + step / 2, z: -HALF + gz * step + step / 2 }, weather = regionalWeatherAt(point), cell = cellAt(point.x, point.z);
+    values.push({ ...weather, groundWetness: cell?.surfaceMoisture ?? cell?.moisture ?? 0 });
+  }
   sim.weatherField = { step, width, values };
+  sim.weatherFieldMarker = weatherFieldRefreshMarker(sim.weatherSystems, Number(sim.ecologicalMinute || 0) / MINUTES_PER_HOUR);
+  rebuildWeatherDataTexture();
 }
 
 function cachedWeatherAt(cell) {
@@ -5154,7 +5614,8 @@ function cachedWeatherAt(cell) {
 }
 
 function windDirectionVector(direction = worldSetup.windDirection) { return ({ west: [1, 0], southwest: [.707, -.707], south: [0, -1], southeast: [-.707, -.707], east: [-1, 0] }[direction] || [1, 0]); }
-function createWeatherSystems() { const [dx, dz] = windDirectionVector(), strength = worldSetup.windStrength ?? 1; return [{ kind: "low", x: -HALF * .72, z: -HALF * .28, radius: 72, moisture: .9, temp: -3, vx: dx * .22 * strength, vz: dz * .22 * strength }, { kind: "low", x: HALF * .15, z: HALF * .62, radius: 54, moisture: .7, temp: -1, vx: dx * .16 * strength, vz: dz * .16 * strength }, { kind: "high", x: HALF * .48, z: 0, radius: 86, moisture: -.7, temp: 4, vx: dx * .045 * strength, vz: dz * .045 * strength }]; }
+function localWindAt(position) { const cell = cellAt(position.x, position.z) || position, weather = regionalWeatherAt(position), [baseX, baseZ] = windDirectionVector(); return localWindVector(cell, { baseX, baseZ, speed: weather.wind }); }
+function createWeatherSystems() { const [dx, dz] = windDirectionVector(), strength = worldSetup.windStrength ?? 1; return [{ kind: "low", x: -HALF * .72, z: -HALF * .28, radius: 72, moisture: .9, temp: -3, vx: dx * .22 * strength, vz: dz * .22 * strength, activityPhase: .08, periodHours: 96 }, { kind: "low", x: HALF * .15, z: HALF * .62, radius: 54, moisture: .7, temp: -1, vx: dx * .16 * strength, vz: dz * .16 * strength, activityPhase: .56, periodHours: 79 }, { kind: "high", x: HALF * .48, z: 0, radius: 86, moisture: -.7, temp: 4, vx: dx * .045 * strength, vz: dz * .045 * strength, activityPhase: .31, periodHours: 118 }]; }
 
 const regionalWeatherObjectCache = new WeakMap();
 function regionalWeatherAt(p) {
@@ -5173,12 +5634,14 @@ function regionalWeatherAt(p) {
     }
     const uplift = Math.max(0, c.elevation - (upwind?.elevation ?? c.elevation)) / Math.max(1, sim.hexWorld.radius), lee = Math.max(0, c.elevation - (downwind?.elevation ?? c.elevation)) / Math.max(1, sim.hexWorld.radius);
     let low = 0, high = 0;
-    for (const system of sim.weatherSystems || []) {
+    const ecologicalHour = Number(sim?.ecologicalMinute || 0) / MINUTES_PER_HOUR;
+    for (const [systemIndex, system] of (sim.weatherSystems || []).entries()) {
       const influence = Math.exp(-((p.x - system.x) ** 2 + (p.z - system.z) ** 2) / Math.max(1, system.radius * system.radius));
-      if (system.kind === "low") low += influence * system.moisture; else high += influence * Math.abs(system.moisture);
+      const activity = weatherSystemActivity(system, systemIndex, ecologicalHour);
+      if (system.kind === "low") low += influence * system.moisture * activity; else high += influence * Math.abs(system.moisture) * activity;
     }
-    const temp = c.temperature + seasonal, stormFactor = clamp(low * c.humidity * clamp((temp - 20) / 13, 0, 1) * (worldSetup.stormIntensity ?? 1), 0, 1), rain = clamp((c.humidity * .38 + uplift * .28 * shadow + low * .27 + stormFactor * .42 - lee * .15 * shadow) * (worldSetup.rainfall ?? 1), 0, 1), wind = clamp(.10 + strength * (.16 + c.slope * .26 + (c.windChannel || 0) * .26 + low * .16 + stormFactor * .48), .04, 1);
-    value = { temp, rain, pressure: high * .32 - low * .28 - rain * .2, wind, stormFactor };
+    const temp = c.temperature + seasonal, stormFactor = clamp(low * c.humidity * clamp((temp - 18) / 13, 0, 1) * (worldSetup.stormIntensity ?? 1), 0, 1), rain = precipitationFromAtmosphere({ humidity: c.humidity, lowPressure: low, highPressure: high, uplift: uplift * shadow, lee: lee * shadow, storm: stormFactor, rainfallScale: worldSetup.rainfall ?? 1 }), wind = clamp(.10 + strength * (.16 + c.slope * .26 + (c.windChannel || 0) * .26 + low * .16 + stormFactor * .48), .04, 1), cloudCover = clamp(.08 + c.humidity * .52 + low * .34 + stormFactor * .22 - high * .32, .03, 1);
+    value = { temp, rain, cloudCover, humidity: c.humidity, pressure: high * .32 - low * .28 - rain * .2, wind, stormFactor };
   } else {
     const latitude = clamp((p.z + HALF) / WORLD, 0, 1), mod = seasonMods[sim.season] || seasonMods.Spring;
     value = { temp: mod.temp - latitude * 8, rain: 0, pressure: 0, wind: .2, stormFactor: 0 };
@@ -5490,7 +5953,7 @@ function landClass(c, temp = cachedWeatherAt(c).temp) {
 
 function prepareAnimalForSensing(a) {
   const s = species[a.speciesId];
-  const protectionBefore = { age: a.age, stomach: a.stomach, energy: a.energy, hydration: a.hydration, health: a.health, injuries: [...(a.injuries || [])] };
+  const protectionBefore = { age: a.age, stomach: a.stomach, energy: a.energy, hydration: a.hydration, health: a.health, injuries: [...(a.injuries || [])], actionKey: a.actionState?.key || "idle", movementRequestId: a.movementRequest?.id || null };
   migrateHydrationCapacity(a); migrateUtilisationState(a); migrateStressResponse(a); migrateRecoveryState(a); migratePredictiveCognition(a, { mode: sim.animalCognitionMode || "PREDICTIVE_SHADOW", profile: sim.animalCognitionProfile || "FIXED" });
   const elapsedHours = ecologicalHoursThisTick(), ecologicalDays = elapsedHours / 24;
   recordLifeExperience(a, elapsedHours);
@@ -5564,8 +6027,9 @@ function updateSensoryPosture(a) {
     a.feedingAttentionTicks = 0;
     a.feedingHeadRaised = false;
   }
-  let desiredYaw = playerLook?.yaw ?? 0, desiredPitch = playerLook?.pitch ?? 0;
-  if (!playerLook && ["search", "evaluate-prey", "orient", "track-scent"].includes(actionKey)) desiredYaw = Math.sin(sim.tick * .72 + (a.decisionOrder || 0) * .37) * .62;
+  const retainedOrienting = a.orientingState?.confidence > .08 && Number.isFinite(a.orientingState?.bearing) ? clamp(Math.atan2(Math.sin(a.orientingState.bearing - (a.orientation || 0)), Math.cos(a.orientingState.bearing - (a.orientation || 0))), -1.05, 1.05) : null;
+  let desiredYaw = playerLook?.yaw ?? retainedOrienting ?? 0, desiredPitch = playerLook?.pitch ?? 0;
+  if (!playerLook && retainedOrienting === null && ["search", "evaluate-prey", "orient", "track-scent"].includes(actionKey)) desiredYaw = Math.sin(sim.tick * .72 + (a.decisionOrder || 0) * .37) * .62;
   else if (!playerLook && actionKey === "listen") desiredYaw = Number.isFinite(a.headYaw) ? a.headYaw : 0;
   const headMoved = Math.abs(Math.atan2(Math.sin(desiredYaw - (a.headYaw || 0)), Math.cos(desiredYaw - (a.headYaw || 0)))) > .015 || Math.abs(desiredPitch - (a.headPitch || 0)) > .015 || (a.feedingHeadRaised && !a.headWasRaised);
   a.headYaw = desiredYaw; a.headPitch = desiredPitch;
@@ -5581,6 +6045,7 @@ function animalSensoryAttention(a) {
 function senseAnimalProfiled(a) {
   const perceptionStarted = profiler.enabled ? performance.now() : 0;
   profiler.measure("animal perception", () => sense(a));
+  updateOrienting(a, a.sensoryBuffer || [], sim.tick);
   const threatConfidence = a.threatAssessment?.overallConfidence || 0;
   let nearestThreat = null, nearestThreatDistance = Infinity;
   for (const contact of a.sensoryBuffer || []) if (/predator|threat/.test(`${contact.type} ${contact.kind || ""}`)) { const distance = Number.isFinite(contact.distance) ? contact.distance : dist(a, contact); if (distance < nearestThreatDistance) { nearestThreat = contact; nearestThreatDistance = distance; } }
@@ -5599,6 +6064,12 @@ function applyAnimalDecision(a, before) {
   const recovery = migrateRecoveryState(a);
   if (recovery.waking) profiler.measure("decision/action", () => setAction(a, sim.tick < (recovery.wakeUntil || 0) ? "wake" : "orient-after-waking", { label: `waking after detecting ${recovery.wakeReason || "a disturbance"}`, intendedOutcome: "orient and identify the stimulus before responding" }));
   else profiler.measure("decision/action", () => chooseAndAct(a));
+  const latency = recordDecisionAndMotorLatency(a, sim.tick, a.actionState?.key || "unknown");
+  const changedAction = before.actionKey !== (a.actionState?.key || "idle"), changedRequest = before.movementRequestId !== (a.movementRequest?.id || null);
+  if (latency && a.movementRequest && (changedAction || changedRequest) && !(a.movementRequest.motorDelayHours > 0)) {
+    a.movementRequest.motorDelayHours = latency.profile.motorSeconds / 3600;
+    a.movementRequest.motorDelayReason = `new ${a.actionState?.key || "movement"} motor command`;
+  }
   a.stationaryTicks = Math.hypot((a.fx ?? a.x) - before.fx, (a.fz ?? a.z) - before.fz) < 0.01 ? (a.stationaryTicks || 0) + 1 : 0;
   profiler.measure("causal trace capture", () => recordCausalLoop(a, before));
 }
@@ -5632,7 +6103,7 @@ function embodiedPersonalPresentationActive(a, now = performance.now()) { return
 function executeEmbodiedSocialCommand(a, kind) {
   const selection = sim.embodiment.actionSelection || {};
   if (kind === "expression") { const expression = selection.expression === "natural" ? null : selection.expression || "calm", duration = expression ? expressionPresentationTiming({ key: expression, role: "showcase" }).minimumVisibleMs : 0; a.showcaseExpression = expression; a.playerExpressionUntilMs = expression ? performance.now() + duration : 0; a.playerCalloutUntilMs = expression ? a.playerExpressionUntilMs : 0; addEvent(expression ? `${a.id} presents a ${expression} expression` : `${a.id} returns to its natural expression`); return true; }
-  if (kind === "vocalise") { const signalKind = selection.call || "contact", expires = performance.now() + calloutPresentationTiming({ kind: signalKind }).minimumVisibleMs; a.playerCalloutUntilMs = expires; a.socialSignal = { kind: signalKind, urgency: 65, sourceId: a.id, x: a.x, z: a.z, since: sim.tick, until: sim.tick + 12, playerInitiated: true, playerCalloutUntilMs: expires }; a.vocalUntil = sim.tick + 3; setAction(a, "communicate", { label: `making a ${signalKind.replaceAll("-", " ")} call`, intendedOutcome: "communicate with nearby organisms" }); return true; }
+  if (kind === "vocalise") { const signalKind = selection.call || "contact"; if (!supportedAcousticCall(a, signalKind)) { setBlockedAction(a, `this species has no supported ${signalKind.replaceAll("-", " ")} vocalisation`, { label: "unsupported call", intendedOutcome: "use a biologically supported outward signal" }); return true; } const expires = performance.now() + calloutPresentationTiming({ kind: signalKind }).minimumVisibleMs; a.playerCalloutUntilMs = expires; a.socialSignal = { kind: signalKind, urgency: 65, sourceId: a.id, x: a.x, z: a.z, since: sim.tick, until: sim.tick + 12, playerInitiated: true, playerCalloutUntilMs: expires }; a.vocalUntil = sim.tick + 3; setAction(a, "communicate", { label: `making a ${signalKind.replaceAll("-", " ")} call`, intendedOutcome: "communicate with nearby organisms" }); return true; }
   const compatible = target => target.speciesId === a.speciesId || (isHerbivore(a.speciesId) && isHerbivore(target.speciesId));
   const target = nearestEmbodiedTarget(a, compatible, 12);
   if (kind === "group") {
@@ -5728,7 +6199,7 @@ const EMBODIED_CALL_CHOICES = Object.freeze([
 ]);
 function embodiedWheelChoices(kind) {
   if (kind === "expression") return [{ key: "natural", glyph: "○", label: "Natural" }, ...FACIAL_EXPRESSION_LEGEND.map(({ key, glyph }) => ({ key, glyph, label: key[0].toUpperCase() + key.slice(1) }))];
-  const animal = inhabitedAnimal(); return EMBODIED_CALL_CHOICES.map(item => { const glyph = emittedSymbol(animal || {}, item.key).glyph; return { ...item, glyph: glyph === "•" ? item.glyph : glyph }; });
+  const animal = inhabitedAnimal(); return EMBODIED_CALL_CHOICES.filter(item => supportedAcousticCall(animal, item.key)).map(item => { const glyph = emittedSymbol(animal || {}, item.key).glyph; return { ...item, glyph: glyph === "•" ? item.glyph : glyph }; });
 }
 function radialSectorPath(index, count, inner = 78, outer = 218, centre = 240) {
   const step = Math.PI * 2 / count, start = -Math.PI / 2 - step / 2 + index * step, end = start + step;
@@ -5777,7 +6248,7 @@ function applyEmbodiedDecision(a, before) {
     profiler.measure("causal trace capture", () => recordCausalLoop(a, before)); return;
   }
   if (a.playerSatisfierObjective) {
-    const satisfied = a.playerSatisfierObjective === "water" ? a.hydration >= 92 : a.stomach >= 88;
+    const satisfied = a.playerSatisfierObjective === "water" ? a.hydration >= HYDRATION_ACQUISITION_TARGET : a.stomach >= 88;
     if (satisfied) a.playerSatisfierObjective = null;
     else executeNeedDependencyPlan(a, a.playerSatisfierObjective);
   }
@@ -5832,19 +6303,7 @@ function updateAnimalTemperature(a) {
 }
 
 function processSensoryContacts(a, contacts, attention) {
-  const sensoryBuffer = [], sight = [], heardEvents = [], receivedSignals = [], mapReveals = [];
-  for (const contact of contacts) {
-    if (contact.channel === "hearing" && !noticesSound(a.speciesId, contact.confidence, attention.focusTicks)) continue;
-    const ref = evidenceRef(contact, sim.tick);
-    sensoryBuffer.push(ref);
-    if (ref.channel === "sight") sight.push(ref);
-    const heard = ref.channel === "hearing" && !ref.signalKind;
-    const signal = Boolean(ref.signalKind || ref.channel === "visual-signal");
-    if (heard) heardEvents.push(ref);
-    if (signal) receivedSignals.push(ref);
-    if (contact.explicitMapReveal === true) mapReveals.push(ref);
-  }
-  return { sensoryBuffer, sight, heardEvents, receivedSignals, mapReveals };
+  return classifySensoryContacts({ animal: a, contacts, attention, tick: sim.tick, noticesSound, evidenceRef });
 }
 
 function sense(a) {
@@ -5861,18 +6320,24 @@ function sense(a) {
   a.explored ||= {};
   a.mapMemory ||= {};
   a.longMemory ||= [];
+  a.acousticObservations = [];
   const retainedMapReveals = (a.mapReveals || []).filter((r) => r.until > sim.tick);
   if (retainedMapReveals.length !== (a.mapReveals || []).length) a.mapRevealRevision = (a.mapRevealRevision || 0) + 1;
   a.mapReveals = retainedMapReveals;
   const contacts = [];
+  const observerCell = cellAt(a.x, a.z), desiredScentGuild = speciesCanHunt(a) ? "grazer" : "hunter", plume = currentAirborneScentField().observe(observerCell, a, { tick: sim.tick, guild: desiredScentGuild, neighbours: observerCell?.neighbours || [] });
+  a.airborneScentObservation = plume;
+  if (plume) { contacts.push(plume); a.lastAirborneScentTick = sim.tick; a.lastAirborneScentDirection = { upwindX: plume.upwindX, upwindZ: plume.upwindZ, confidence: plume.confidence }; }
   const scanEnvironment = routineEnvironmentScanDue(a, sim.tick, activePopulationForScheduling, a.id === selectedId);
   let visibleCells = currentVisionCells.get(a.id); if (!visibleCells) { visibleCells = new Set(); currentVisionCells.set(a.id, visibleCells); } else if (scanEnvironment) visibleCells.clear();
   let cellVisionCache = cellVisionCaches.get(a.id); if (!cellVisionCache) { cellVisionCache = new PerceptionResultCache(1024); cellVisionCaches.set(a.id, cellVisionCache); }
   const visibilityChunks = chunkKeysInRange(a, visionRange, HALF, DEFAULT_LANDSCAPE_CHUNK_SIZE);
   cellVisionCache.prepare(perceptionPoseSignature(a, { range: visionRange, terrainVersion: landscapeDirtyState.localVersion("terrain", visibilityChunks), vegetationVersion: landscapeDirtyState.localVersion("vegetation", visibilityChunks), season: sim.season, ecologicalHour: Math.floor((sim.ecologicalMinute || 0) / MINUTES_PER_HOUR) }));
   const hearingRange = hearingRangeFor(a);
-  const observationObserver = { id: a.id, speciesId: a.speciesId, x: a.x, z: a.z, orientation: a.orientation || 0, tick: sim.tick };
-  const ambientTemperature = regionalWeatherAt(a).temp;
+  const observerWeather = regionalWeatherAt(a), observerWeatherPresentation = localizedWeatherPresentation(observerWeather);
+  const receiverCell = cellAt(a.x, a.z);
+  const observationObserver = { id: a.id, speciesId: a.speciesId, x: a.x, z: a.z, orientation: a.orientation || 0, headYaw: a.headYaw || 0, tick: sim.tick, fatigue: a.fatigue || 0, thermalPerformance: a.thermalPerformance ?? 1, illumination: observerWeatherPresentation.solarIllumination, temporalAttention: attention.vision, environmentalMotionClutter: environmentalMotionClutter({ wind: observerWeather.wind, rain: observerWeather.rain, grass: receiverCell?.grassHeight || 0, shrubs: receiverCell?.shrubland ? 1 : 0, canopy: receiverCell?.woodland ? .8 : 0 }) };
+  const ambientTemperature = observerWeather.temp;
   for (const other of nearbyAnimals(a, Math.max(visionRange, hearingRange) + 1)) {
     if (!other.alive || other.id === a.id) continue;
     const d = dist(a, other);
@@ -5907,25 +6372,34 @@ function sense(a) {
       const confidence = clamp((movementNoise * 2.2 + sensoryBiology.vibration * .18) * (1 - d / (3 + sensoryBiology.vibration * 4)), .08, .82), error = (1 - confidence) * 3;
       contacts.push({ type: "groundMovement", targetId: confidence > .68 ? other.id : undefined, x: other.x + (rand() - .5) * error, z: other.z + (rand() - .5) * error, confidence, uncertainty: error, possibleSize: confidence > .45 ? species[other.speciesId].sizeClass : "unknown", age: 0, channel: "vibration" });
     }
-    const call = animalCall(other);
-    const audibleRange = hearingRange * (call ? 1 : clamp(0.18 + movementNoise * 1.15, 0, 1));
-    if (d <= audibleRange && (call || movementNoise > 0.045)) {
-      // Accuracy has a distance half-life: it halves every half-range.  A
-      // motionless listener concentrates on the source after two ticks.
-      const precision = hearingAccuracyFor(a, d, hearingRange);
-      const positionError = (1 - precision) * (2 + hearingRange * 0.16);
-      const heardX = clamp(Math.round(other.x + (rand() - 0.5) * positionError), -HALF, HALF - 1);
-      const heardZ = clamp(Math.round(other.z + (rand() - 0.5) * positionError), -HALF, HALF - 1);
-      const identifiesCaller = precision >= 0.58;
-      const understandsCall = identifiesCaller && other.speciesId === a.speciesId && call;
-      if (understandsCall) {
-        const messageX = clamp(Math.round(call.x + (rand() - 0.5) * (1 - precision) * 6), -HALF, HALF - 1), messageZ = clamp(Math.round(call.z + (rand() - 0.5) * (1 - precision) * 6), -HALF, HALF - 1);
-        const message = { type: call.noun, x: messageX, z: messageZ, confidence: precision * 0.82, age: 0, channel: "hearing", communicatedBy: other.id, signalKind: call.signalKind, urgency: call.urgency, ...(call.inferredTargetId ? { inferredTargetId: call.inferredTargetId, predatorId: call.predatorId } : {}) };
-        contacts.push(message);
-        if (a.offspringIds?.includes(other.id)) { a.offspringMemory ||= {}; a.offspringMemory[other.id] = { ...(a.offspringMemory[other.id] || {}), x: messageX, z: messageZ, tick: sim.tick, confidence: message.confidence, source: "call" }; }
-      } else contacts.push({ type: "unknownSound", ...(identifiesCaller ? { targetId: other.id, speciesId: other.speciesId, soundIdentity: other.speciesId } : { soundIdentity: "unknown" }), x: heardX, z: heardZ, confidence: precision * 0.65, age: 0, channel: "hearing" });
+    const call = animalCall(other), soundEvent = createAnimalSoundEvent(other, { tick: sim.tick, call, movementNoise });
+    if (soundEvent && d <= hearingRange * 1.6) {
+      const receiverCell = cellAt(a.x, a.z), [windX, windZ] = windDirectionVector();
+      const propagation = propagateSound(soundEvent, a, {
+        path: lineSamplePath(other, a, cellAt), sourceWeather: regionalWeatherAt(other), receiverWeather: regionalWeatherAt(a), receiverCell,
+        windVector: { x: windX, z: windZ }
+      });
+      const observation = observeSound(a, soundEvent, propagation, {
+        hearingScale: (sensoryBiology?.hearing || 1) * scale * recoverySenses.hearing * stressSenses.hearing,
+        attention: Math.max(.25, Number(attention.hearingAccuracy || 1)),
+        conditionPenaltyDb: a.lifeStage === "dependent" ? 4 : Math.max(0, (100 - (a.health || 100)) * .035)
+      });
+      a.acousticObservations.push(observation);
+      const contact = acousticObservationContact(a, soundEvent, observation, HALF);
+      if (contact) {
+        contacts.push(contact);
+        if (contact.signalKind && a.offspringIds?.includes(other.id)) { a.offspringMemory ||= {}; a.offspringMemory[other.id] = { ...(a.offspringMemory[other.id] || {}), x: contact.x, z: contact.z, tick: sim.tick, confidence: contact.confidence, source: "call" }; }
+      }
     }
   }
+  for (const soundEvent of sim.soundEvents || []) if (soundEvent.sourceKind === "environment" && Math.hypot(a.x - soundEvent.position.x, a.z - soundEvent.position.z) <= hearingRange * 1.6) {
+    const receiverCell = cellAt(a.x, a.z), [windX, windZ] = windDirectionVector();
+    const propagation = propagateSound(soundEvent, a, { path: lineSamplePath(soundEvent.position, a, cellAt), sourceWeather: regionalWeatherAt(soundEvent.position), receiverWeather: regionalWeatherAt(a), receiverCell, windVector: { x: windX, z: windZ } });
+    const observation = observeSound(a, soundEvent, propagation, { hearingScale: (sensoryBiology?.hearing || 1) * scale * recoverySenses.hearing * stressSenses.hearing, attention: Math.max(.25, Number(attention.hearingAccuracy || 1)), conditionPenaltyDb: a.lifeStage === "dependent" ? 4 : Math.max(0, (100 - (a.health || 100)) * .035) });
+    a.acousticObservations.push(observation);
+    const contact = acousticObservationContact(a, soundEvent, observation, HALF); if (contact) contacts.push(contact);
+  }
+  const familiarTraceSources = new Set([...Object.keys(a.entityKnowledge || {}), ...Object.keys(a.socialMemory || {})]);
   if (scanEnvironment) { populationSchedulingCounters.environmentScans += 1; visitNearbyCells(a, range, HALF, cellAt, (cell) => {
     const d = manhattan(a, cell);
     let sight = cellVisionCache.get(cell.id);
@@ -5950,7 +6424,14 @@ function sense(a) {
     // Scent has no line-of-sight requirement, but it must still obey the
     // animal's actual smell range. Previously it quietly inherited vision
     // range, giving some animals a false long-distance scent radar.
-    if (d <= smellRange && cell.scent && cell.scent[scentType] > 0.6 && rand() > d / (smellRange + 4)) contacts.push({ type: scentType === "hunter" ? "predator" : "preyTrail", x: cell.x, z: cell.z, confidence: clamp(cell.scent[scentType] / 5, 0.15, 1), age: 0, channel: "smell" });
+    if (d <= smellRange && cell.scent && cell.scent[scentType] > 0.6) {
+      const intermittent = deterministicIntermittency({ sourceId: `ground:${scentType}:${cell.id}`, observerId: a.id, cellId: cell.id, tick: sim.tick, concentration: cell.scent[scentType] / 5, turbulence: localWindAt(cell).speed });
+      if (intermittent.available && intermittent.availability > d / (smellRange + 4) * .22) contacts.push({ type: scentType === "hunter" ? "predator" : "preyTrail", x: cell.x, z: cell.z, confidence: clamp(intermittent.availability, 0.15, 1), age: 0, channel: "smell", intermittency: intermittent, groundContact: true });
+    }
+    for (const record of sim.traceField?.[cell.id] || []) {
+      const evidence = traceToSensoryEvidence(a, record, cell, { visible: visible && d <= visionRange, withinSmell: d <= smellRange, rain: regionalWeatherAt(cell).rain, familiarSourceIds: familiarTraceSources, isThreatSpecies: speciesId => speciesCanHunt(speciesId) && preyCompatible(speciesId, a), isPreySpecies: speciesId => speciesCanHunt(a) && preyCompatible(a, speciesId) });
+      if (evidence) contacts.push(evidence);
+    }
   }); } else populationSchedulingCounters.deferredEnvironmentScans += 1;
   const maximumCorpseSmellRange = s.smell * scale * attention.smell * 3 * (a.scentSkill || 1) * 2.7;
   for (const corpse of nearbyCorpses(a, Math.max(visionRange, maximumCorpseSmellRange))) {
@@ -5965,8 +6446,11 @@ function sense(a) {
   // one bounded pass so dense sensing does not allocate several full arrays.
   const communication = processSensoryContacts(a, contacts, attention);
   a.sensoryBuffer = communication.sensoryBuffer;
+  for (const observation of a.sensoryBuffer) recordPerceptionLatency(a, observation, sim.tick);
+  a.evidenceHypotheses = buildEvidenceHypotheses({ ...a, canHunt: speciesCanHunt(a) }, a.sensoryBuffer, sim.tick);
   a.heardEvents = communication.heardEvents.slice(-12);
   a.receivedSignals = communication.receivedSignals.slice(-12);
+  a.acousticObservations = a.acousticObservations.slice(-16);
   if (communication.mapReveals.length) a.mapRevealRevision = (a.mapRevealRevision || 0) + 1;
   a.mapReveals = [...(a.mapReveals || []), ...communication.mapReveals].slice(-24);
   const prioritised = attentionFilter(a, a.sensoryBuffer, communication.sight);
@@ -6100,7 +6584,7 @@ function updateThreatAssessment(a, contacts) {
     if (predatorEvidence) {
       contributors.push(item); confidenceComplement *= 1 - item.confidence;
       identityThreat = Math.max(identityThreat, rememberedThreat(a, item.targetId) * 35);
-      if (item.channel === "sight" || item.channel === "visual-signal") { sightCount += 1; sightScore += item.confidence * 52; }
+      if (item.channel === "sight" || item.channel === "visual-signal") { sightCount += 1; sightScore += item.confidence * 52 * (.75 + .25 * Number(item.motionConfidence ?? 1)); }
       if (item.channel === "hearing") { soundCount += 1; soundScore += item.confidence * 31; }
       if (item.channel === "smell") { smellCount += 1; smellScore += item.confidence * (item.targetId ? 68 : 20); }
     } else if (item.type === "unknownSound" && item.channel === "hearing" && item.confidence > .28) {
@@ -6113,8 +6597,66 @@ function updateThreatAssessment(a, contacts) {
   a.threatAssessment = { overallConfidence: score / 100, evidenceConfidence: 1 - confidenceComplement, contributors, explanation: parts.length ? parts.join(" + ") : "no predator evidence" };
   if (score > 0) a.fear = clamp(a.fear + Math.max(3, score * 0.5) + vulnerability(a) * 8, 0, 100);
 }
-function animalCall(a) { const stalking = speciesCanHunt(a) && ["stalk", "chase", "track-scent"].includes(a.actionState?.key); const signal = a.socialSignal; if (!stalking && (a.vocalUntil || 0) > sim.tick && signal && signal.until > sim.tick) return { noun: ["threat", "alarm"].includes(signal.kind) ? "predator" : signal.kind, x: signal.x, z: signal.z, signalKind: signal.kind, urgency: signal.urgency, ...(signal.inferredTargetId ? { inferredTargetId: signal.inferredTargetId, predatorId: signal.predatorId } : {}) }; return null; }
+function animalCall(a) { const stalking = speciesCanHunt(a) && ["stalk", "chase", "track-scent"].includes(a.actionState?.key); const signal = a.socialSignal; if (!stalking && (a.vocalUntil || 0) > sim.tick && signal && signal.until > sim.tick && supportedAcousticCall(a, signal.kind)) return { noun: ["threat", "alarm"].includes(signal.kind) ? "predator" : signal.kind, x: signal.x, z: signal.z, signalKind: signal.kind, urgency: signal.urgency, since: signal.since, enforceSchedule: true, behaviouralTrigger: signal.kind, ...(signal.inferredTargetId ? { inferredTargetId: signal.inferredTargetId, predatorId: signal.predatorId } : {}) }; return null; }
 function audibleActivity(a) { return Boolean(animalCall(a)) || (a.movementNoise || 0) > 0.045; }
+function refreshWorldSoundEvents(animals = sim.animals) {
+  const events = [], emissions = [];
+  for (const animal of animals) if (animal.alive) {
+    const call = animalCall(animal), event = createAnimalSoundEvent(animal, { tick: sim.tick, call, movementNoise: animal.movementNoise || 0, receiverCell: cellAt(animal.x, animal.z), gait: animal.movementRequest?.mode || animal.locomotion?.activeMode || "stationary" });
+    if (event) events.push(event);
+    if (animal.socialSignal?.until > sim.tick) emissions.push(signalEmissionRecord(animal, animal.socialSignal, sim.tick));
+  }
+  if (!sim.environmentSoundSources) {
+    const waterCandidates = sim.cells.filter(cell => cell.water && Number(cell.discharge ?? cell.streamFlow ?? cell.waterDepth ?? 0) > 0).sort((left, right) => Number(right.discharge ?? right.streamFlow ?? right.waterDepth ?? 0) - Number(left.discharge ?? left.streamFlow ?? left.waterDepth ?? 0));
+    sim.environmentSoundSources = waterCandidates.slice(0, 6).map(cell => ({ id: `water:${cell.id}`, kind: Number(cell.slope || 0) > .25 ? "waterfall" : "river", x: cell.x, z: cell.z, intensity: clamp(Math.log1p(Number(cell.discharge ?? cell.streamFlow ?? cell.waterDepth ?? 0)) / 4, .08, 1) }));
+  }
+  for (const source of sim.environmentSoundSources) { const event = createEnvironmentalSoundEvent({ id: source.id, kind: source.kind, position: source, intensity: source.intensity, tick: sim.tick }); if (event) events.push(event); }
+  for (const [index, system] of (sim.weatherSystems || []).entries()) {
+    const position = { x: clamp(system.x, -HALF + .001, HALF - .001), z: clamp(system.z, -HALF + .001, HALF - .001) }, weather = regionalWeatherAt(position);
+    const interval = Math.max(9, Math.round(32 - weather.stormFactor * 20));
+    if (weather.stormFactor > .72 && (sim.tick + index * 7) % interval === 0) { const event = createEnvironmentalSoundEvent({ id: `weather:${index}:thunder`, kind: "thunder", position, intensity: weather.stormFactor, tick: sim.tick, durationSeconds: 3.4 }); if (event) events.push(event); }
+  }
+  sim.soundEvents = events.slice(0, 64);
+  sim.signalEmissions = emissions.slice(0, 64);
+}
+function depositWorldTraces(animals = sim.animals) {
+  const field = CompactTraceField.fromSnapshot(sim.traceField || {});
+  for (const animal of animals) {
+    for (const record of animal.alive ? animal.movementEvidence || [] : []) {
+      field.deposit(record.cellId, record);
+      const recordCell = sim.cells[record.cellId] || cellAt(record.x, record.z);
+      if (record.kind === "disturbance" && recordCell) applyVegetationDisturbance(recordCell, { ...record, tick: sim.tick });
+      if (record.kind === "ground-scent") {
+        const cell = recordCell; if (!cell) continue;
+        cell.scent ||= { grazer: 0, hunter: 0 };
+        const guild = isCarnivore(animal) ? "hunter" : "grazer";
+        cell.scent[guild] = clamp((cell.scent[guild] || 0) + record.intensity * .8, 0, 5);
+        sim.activeScent[key(cell)] = 1;
+      }
+    }
+    for (const record of animal.pendingTraceEvidence || []) field.deposit(record.cellId, record);
+    animal.movementEvidence = [];
+    animal.pendingTraceEvidence = [];
+  }
+  for (const record of sim.pendingEnvironmentalHistory || []) field.deposit(record.cellId, record);
+  sim.pendingEnvironmentalHistory = [];
+  sim.traceField = field.snapshot();
+}
+
+function queueEnvironmentalHistoryDeposits(firstHour, finalHour) {
+  sim.pendingEnvironmentalHistory ||= [];
+  for (let hour = firstHour; hour <= finalHour; hour += 1) for (const animal of sim.animals) {
+    if (!animal.alive) continue;
+    const cell = cellAt(animal.x, animal.z); if (!cell) continue;
+    animal.pendingTraceEvidence ||= [];
+    animal.pendingTraceEvidence.push(...biologicalHistoryDeposits(animal, cell, hour));
+  }
+  for (const corpse of sim.corpses) {
+    const cell = cellAt(corpse.x, corpse.z), record = cell ? boneHistoryDeposit(corpse, cell, finalHour) : null, fragment = cell ? carcassFragmentHistoryDeposit(corpse, cell, finalHour) : null;
+    if (record) { sim.pendingEnvironmentalHistory.push(record); corpse.historyBoneDeposited = true; }
+    if (fragment) { sim.pendingEnvironmentalHistory.push(fragment); corpse.historyFragmentDeposited = true; }
+  }
+}
 
 function attentionFilter(a, contacts, sight = null) {
   if (!sight) { sight = []; for (const contact of contacts) if (contact.channel === "sight") sight.push(contact); }
@@ -6135,7 +6677,7 @@ function attentionFilter(a, contacts, sight = null) {
 }
 
 function updatePredatorIntentInference(a, attendedContacts) {
-  if (!isHerbivore(a)) { a.predatorIntentEstimates = []; a.predatorIntentEstimate = null; return; }
+  if (!isHerbivore(a)) { a.predatorIntentEstimates = []; a.predatorIntentEstimate = null; a.reciprocalAttention = null; return; }
   const previousById = new Map((a.predatorIntentEstimates || []).map((item) => [item.predatorId, item]));
   const visiblePrey = attendedContacts.filter((item) => item.channel === "sight" && item.type === "conspecific" && item.targetId);
   const estimates = [];
@@ -6155,6 +6697,7 @@ function updatePredatorIntentInference(a, attendedContacts) {
   for (const prior of previousById.values()) if (!estimates.some((item) => item.predatorId === prior.predatorId) && sim.tick - prior.tick <= 2) estimates.push({ ...prior, confidence: prior.confidence * .68 });
   a.predatorIntentEstimates = estimates.sort((left, right) => right.selfTargetLikelihood * right.confidence - left.selfTargetLikelihood * left.confidence);
   a.predatorIntentEstimate = a.predatorIntentEstimates[0] || null;
+  a.reciprocalAttention = { ...(a.reciprocalAttention || {}), predatorTargeting: preyTargetingEstimate(a.predatorIntentEstimate), updatedTick: sim.tick };
   a.predatorTrackingCost = clamp((a.predatorIntentEstimate?.detectionLikelihood || 0) * (a.predatorIntentEstimate?.confidence || 0) * .32, 0, .28);
   const strongest = a.predatorIntentEstimate;
   if (strongest?.selfTargetLikelihood > .72 && strongest.confidence > .48 && sim.tick >= (a.lastIntentMemoryTick || -99) + 8) {
@@ -6173,6 +6716,14 @@ function contactSalience(a, m, drives) {
   return score;
 }
 
+function goalPlanForDecision(a, chosen, context = planningContextForDecision(a, "goal")) {
+  return retainGoalPlanCommitment(a.goalPlan, createGoalPlan(a, chosen, sim.tick, context), chosen.drive);
+}
+function recordNeedPlanEvent(a, event) {
+  a.needPlanHistory ||= []; a.needPlanHistory.push({ tick: sim.tick, ecologicalMinute: sim.ecologicalMinute, ...event });
+  if (a.needPlanHistory.length > 24) a.needPlanHistory.splice(0, a.needPlanHistory.length - 24);
+}
+
 function chooseAndAct(a) {
   if (performBoundaryRecovery(a)) return;
   if (a.lifeStage === "dependent") {
@@ -6180,33 +6731,43 @@ function chooseAndAct(a) {
       const chosen = { drive: "dependent water survival", score: 2800, urgent: true, commitTicks: 12 };
       a.priorities = [{ drive: chosen.drive, score: chosen.score }];
       executeNeedDependencyPlan(a, "water");
-      a.goalPlan = createGoalPlan(a, chosen, sim.tick, planningContextForDecision(a, "goal")); captureChosenDecision(a, chosen); return;
+      a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return;
     }
     const chosen = { drive: "dependency", score: 100, commitTicks: 4 };
     a.priorities = [{ drive: chosen.drive, score: chosen.score }]; dependentAction(a);
-    a.goalPlan = createGoalPlan(a, chosen, sim.tick, planningContextForDecision(a, "goal")); captureChosenDecision(a, chosen); return;
+    a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return;
   }
   if (a.playerRequestedSatisfier) {
     const need = a.playerRequestedSatisfier; a.playerRequestedSatisfier = null;
     const chosen = { drive: `player requested ${need}`, score: 2700, urgent: true, commitTicks: 8 };
-    a.priorities = [{ drive: chosen.drive, score: chosen.score }]; executeNeedDependencyPlan(a, need); a.goalPlan = createGoalPlan(a, chosen, sim.tick, planningContextForDecision(a, "goal")); captureChosenDecision(a, chosen); return;
+    a.priorities = [{ drive: chosen.drive, score: chosen.score }]; executeNeedDependencyPlan(a, need); a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return;
   }
   updateAndShareMateKnowledge(a);
   const reproductionEvent = reproductionStage(a, sim.tick);
-  if (reproductionEvent === "birth") { const chosen = { drive: "giving birth", score: 1000, urgent: true, commitTicks: Math.max(1, a.birthEvent.completesAt - sim.tick) }; a.priorities = [{ drive: chosen.drive, score: chosen.score }]; setAction(a, "birth", { label: `in labour (${a.birthEvent.completesAt - sim.tick} steps remaining)`, intendedOutcome: "give birth safely" }); a.goalPlan = createGoalPlan(a, chosen, sim.tick, planningContextForDecision(a, "goal")); captureChosenDecision(a, chosen); return; }
+  if (reproductionEvent === "birth") { const chosen = { drive: "giving birth", score: 1000, urgent: true, commitTicks: Math.max(1, a.birthEvent.completesAt - sim.tick) }; a.priorities = [{ drive: chosen.drive, score: chosen.score }]; setAction(a, "birth", { label: `in labour (${a.birthEvent.completesAt - sim.tick} steps remaining)`, intendedOutcome: "give birth safely" }); a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return; }
   const emergencyWaterPlan = waterNeedPlan(a);
   const emergencyDehydration = dehydrationState(a);
-  const arrivalReserveRisk = emergencyWaterPlan.predictedAmountAtArrival <= emergencyWaterPlan.reserve + 20;
-  if (a.hydration < 85 || ["moderate", "severe", "critical"].includes(emergencyDehydration.key) || arrivalReserveRisk) {
+  const immediateDefence = herbivoreDefenceOpportunity(a);
+  if (immediateDefence && immediateThreatPrecedesWater({ action: immediateDefence.action, urgency: immediateDefence.urgency, attackImminence: immediateDefence.intent?.attackImminence })) {
+    if (a.needDependencyPlan?.need === "water" && !a.needDependencyPlan.suspended) {
+      a.needDependencyPlan = suspendNeedDependencyPlan(a.needDependencyPlan, { tick: sim.tick, reason: `immediate predator threat from ${immediateDefence.predator.id}` });
+      recordNeedPlanEvent(a, { kind: "suspension", from: "water", to: immediateDefence.action, reason: a.needDependencyPlan.suspensionReason });
+    }
+    releaseShorelineReservation(a);
+    const chosen = { drive: `${immediateDefence.action} immediate predator threat`, score: 3000 + immediateDefence.urgency, urgent: true, commitTicks: 5 };
+    a.priorities = [{ drive: chosen.drive, score: chosen.score }]; performHerbivoreDefence(a, immediateDefence); a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return;
+  }
+  const criticalWaterFailure = emergencyDehydration.key === "critical" || emergencyWaterPlan.forecastState === "predicted-failure";
+  if (criticalWaterFailure) {
     const partner = animalById(a.mating?.partnerId || a.courtship?.partnerId);
     if (partner?.mating?.partnerId === a.id) partner.mating = null;
     if (partner?.courtship?.partnerId === a.id) partner.courtship = null;
     a.mating = null;
     a.courtship = null;
-    const chosen = { drive: "emergency water acquisition", score: 2600, urgent: true, commitTicks: 16 };
+    const chosen = { drive: "water", score: Math.max(2250, emergencyWaterPlan.urgency * 24), urgency: emergencyWaterPlan.urgency, urgent: true, commitTicks: 16 };
     a.priorities = [{ drive: chosen.drive, score: chosen.score }];
     executeNeedDependencyPlan(a, "water");
-    a.goalPlan = createGoalPlan(a, chosen, sim.tick, planningContextForDecision(a, "goal"));
+    a.goalPlan = goalPlanForDecision(a, chosen);
     captureChosenDecision(a, chosen);
     return;
   }
@@ -6222,11 +6783,11 @@ function chooseAndAct(a) {
     const chosen = { drive: "emergency food acquisition", score: 2500, urgent: true, commitTicks: 16 };
     a.priorities = [{ drive: chosen.drive, score: chosen.score }];
     executeNeedDependencyPlan(a, "food");
-    a.goalPlan = createGoalPlan(a, chosen, sim.tick, planningContextForDecision(a, "goal")); captureChosenDecision(a, chosen); return;
+    a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return;
   }
-  if (reproductionEvent === "accepted" || reproductionEvent === "mating") { const mating = reproductionEvent === "mating", partner = animalById(a.mating.partnerId); const chosen = { drive: mating ? "mating" : "accepted courtship", score: 240, commitTicks: mating ? a.mating.completesAt - sim.tick : a.mating.startsAt - sim.tick }; a.priorities = [{ drive: chosen.drive, score: chosen.score }]; if (!partner?.alive) { a.mating = null; setAction(a, "search", { label: "mating partner unavailable", intendedOutcome: "find another mate" }); } else if (!physicalContact(a, partner)) { postponeMatingUntilContact(a, partner); moveToward(a, partner, mating ? "mating" : "accept-mate", `${a.mating?.contactEstablished ? "contact lost; re-approaching" : "approaching"} ${partner.id} for physical contact`, mating ? "restore contact to continue mating" : "make contact before mating", { interactionKind: "mating" }); } else { a.mating.contactEstablished = true; setAction(a, mating ? "mating" : "accept-mate", { label: mating ? `mating in physical contact with ${partner.id}` : `accepted ${partner.id}; in physical contact`, target: partner.id, intendedOutcome: mating ? "complete mating" : "begin mating" }); } a.goalPlan = createGoalPlan(a, chosen, sim.tick, planningContextForDecision(a, "goal")); captureChosenDecision(a, chosen); return; }
+  if (reproductionEvent === "accepted" || reproductionEvent === "mating") { const mating = reproductionEvent === "mating", partner = animalById(a.mating.partnerId); const chosen = { drive: mating ? "mating" : "accepted courtship", score: 240, commitTicks: mating ? a.mating.completesAt - sim.tick : a.mating.startsAt - sim.tick }; a.priorities = [{ drive: chosen.drive, score: chosen.score }]; if (!partner?.alive) { a.mating = null; setAction(a, "search", { label: "mating partner unavailable", intendedOutcome: "find another mate" }); } else if (!physicalContact(a, partner)) { postponeMatingUntilContact(a, partner); moveToward(a, partner, mating ? "mating" : "accept-mate", `${a.mating?.contactEstablished ? "contact lost; re-approaching" : "approaching"} ${partner.id} for physical contact`, mating ? "restore contact to continue mating" : "make contact before mating", { interactionKind: "mating" }); } else { a.mating.contactEstablished = true; setAction(a, mating ? "mating" : "accept-mate", { label: mating ? `mating in physical contact with ${partner.id}` : `accepted ${partner.id}; in physical contact`, target: partner.id, intendedOutcome: mating ? "complete mating" : "begin mating" }); } a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return; }
   if (reproductionEvent === "mating-complete") { const partner = animalById(a.mating?.partnerId); if (partner?.alive && !physicalContact(a, partner)) { postponeMatingUntilContact(a, partner); moveToward(a, partner, "mating", `contact lost; re-approaching ${partner.id}`, "restore contact to complete mating", { interactionKind: "mating" }); return; } if (a.sex === "F") completeMating(a); else setAction(a, "rest", { label: "remaining beside mate after mating", target: a.mating.partnerId, intendedOutcome: "recover after mating" }); const chosen = { drive: "mating complete", score: 180, commitTicks: 2 }; a.priorities = [{ drive: chosen.drive, score: chosen.score }]; captureChosenDecision(a, chosen); return; }
-  if (a.courtship) { const partner = animalById(a.courtship.partnerId); const chosen = { drive: "courtship", score: 150, commitTicks: Math.max(1, a.courtship.decisionAt - sim.tick) }; a.priorities = [{ drive: chosen.drive, score: chosen.score }]; if (partner?.alive) seekMate(a, partner); else { a.courtship = null; setAction(a, "search", { label: "courtship partner no longer available", intendedOutcome: "find another mate" }); } a.goalPlan = createGoalPlan(a, chosen, sim.tick, planningContextForDecision(a, "goal")); captureChosenDecision(a, chosen); return; }
+  if (a.courtship) { const partner = animalById(a.courtship.partnerId); const chosen = { drive: "courtship", score: 150, commitTicks: Math.max(1, a.courtship.decisionAt - sim.tick) }; a.priorities = [{ drive: chosen.drive, score: chosen.score }]; if (partner?.alive) seekMate(a, partner); else { a.courtship = null; setAction(a, "search", { label: "courtship partner unavailable", intendedOutcome: "find another mate" }); } a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return; }
   if (performSeededStartingPriority(a)) return;
   migrateGoalPlan(a, sim.tick);
   const generatedCandidates = actionCandidates(a);
@@ -6249,9 +6810,19 @@ function chooseAndAct(a) {
   // captureDecisionTrace performs the single bounded immutable projection.
   // Passing the authoritative evidence views avoids cloning every record twice.
   const evidence = [...(a.sensoryBuffer || []), ...(a.memories || [])];
+  if (chosen.urgent && /flee|predator|danger|safety|defend|fear/.test(chosen.drive) && a.needDependencyPlan?.need === "water") {
+    if (!a.needDependencyPlan.suspended) {
+      a.needDependencyPlan = suspendNeedDependencyPlan(a.needDependencyPlan, { tick: sim.tick, reason: `urgent safety commitment: ${chosen.drive}` });
+      recordNeedPlanEvent(a, { kind: "suspension", from: "water", to: chosen.drive, reason: a.needDependencyPlan.suspensionReason });
+    }
+    releaseShorelineReservation(a);
+  } else if (chosen.drive !== "water" && a.needDependencyPlan?.need === "water") {
+    if (a.needPlanAudit?.current?.need === "water") abandonNeedPlan(a, { outcome: "interrupted", reason: `priority changed to ${chosen.drive}`, tick: sim.tick, ecologicalMinute: sim.ecologicalMinute, amount: a.hydration });
+    releaseShorelineReservation(a); a.needDependencyPlan = null;
+  }
   chosen.run();
   const context = { ...planningContextForDecision(a, "goal"), rankedCandidates: candidates };
-  a.goalPlan = createGoalPlan(a, chosen, sim.tick, context);
+  a.goalPlan = goalPlanForDecision(a, chosen, context);
   if (a.actionState?.key === "blocked") a.goalPlan.shortTerm.untilTick = sim.tick;
   captureChosenDecision(a, chosen, evidence, { decisionPath: "ORDINARY_CANDIDATE_SELECTION", baseCandidates: baselineCandidates, adjustedCandidates: availableCandidates, counterfactualRanked, selectedRanked: candidates }, selectionContext);
 }
@@ -6350,7 +6921,8 @@ function personalSpaceOpportunity(a) {
     const target = animalById(contact.targetId); if (!target?.alive) continue;
     const distance = dist(a, target), memory = a.socialMemory?.[target.id] || {};
     const allies = sim.animals.filter((member) => member.alive && member.id !== a.id && member.groupId && member.groupId === a.groupId && dist(member, a) <= 5).length;
-    const assessment = assessPersonalSpace(a, target, { distance, contactSpan: bodyRadius(a) + bodyRadius(target), sameGroup: Boolean(a.groupId && a.groupId === target.groupId), related: kinshipBetween(a, target).related, affinity: memory.affinity, grievance: memory.grievance, compatibleMate: a.speciesId === target.speciesId && eligibleMate(a, target), allies, roll: rand() });
+    const predatorRelationship = speciesCanHunt(target) && preyCompatible(target, a), predatorIntent = predatorRelationship ? (a.predatorIntentEstimates || []).find(estimate => estimate.predatorId === target.id) || null : null;
+    const assessment = assessPersonalSpace(a, target, { distance, contactSpan: bodyRadius(a) + bodyRadius(target), sameGroup: Boolean(a.groupId && a.groupId === target.groupId), related: kinshipBetween(a, target).related, affinity: memory.affinity, grievance: memory.grievance, compatibleMate: a.speciesId === target.speciesId && eligibleMate(a, target), allies, predatorRelationship, predatorIntent, roll: rand() });
     if (assessment) candidates.push({ ...assessment, target });
   }
   return bestByComparator(candidates, (left, right) => (right.pressure || 0) - (left.pressure || 0) || String(left.target.id).localeCompare(String(right.target.id)));
@@ -6359,7 +6931,7 @@ function personalSpaceOpportunity(a) {
 function performPersonalSpaceInteraction(a, encounter) {
   const target = encounter.target; if (!target?.alive) return;
   a.personalSpaceCooldowns ||= {}; a.personalSpaceCooldowns[target.id] = sim.tick + (encounter.kind === "ignore" ? 18 : encounter.kind.includes("rally") || encounter.kind === "attack" ? 30 : 12);
-  const rememberBoth = (event) => { rememberSocialEvent(a, target.id, event, sim.tick, { x: target.x, z: target.z }); if (target.speciesId === a.speciesId) rememberSocialEvent(target, a.id, event === "space-tolerated" ? event : "personal-space-contact", sim.tick, { x: a.x, z: a.z }); };
+  const rememberBoth = (event) => { rememberSocialEvent(a, target.id, event, sim.tick, { x: target.x, z: target.z }); learnProximityRelationship(a, target.id, encounter.kind, sim.tick, encounter.pressure); if (target.speciesId === a.speciesId) rememberSocialEvent(target, a.id, event === "space-tolerated" ? event : "personal-space-contact", sim.tick, { x: a.x, z: a.z }); learnProximityRelationship(target, a.id, event === "space-tolerated" ? "space-tolerated" : "contact-observed", sim.tick, Math.min(1, encounter.pressure || 0)); };
   if (encounter.kind === "ignore") { rememberBoth("space-tolerated"); return setAction(a, "idle", { label: `tolerating ${target.id} inside personal space`, target: target.id, intendedOutcome: "avoid unnecessary social escalation" }); }
   if (encounter.kind === "orient") { rememberBoth("personal-space-notice"); return turnInPlace(a, Math.atan2(target.z - a.z, target.x - a.x), `looking toward ${target.id} after it entered personal space`, "orient", "assess the nearby animal"); }
   if (encounter.kind === "affiliate") {
@@ -6657,16 +7229,16 @@ function actionCandidates(a) {
   const restScore = (exhaustion * 2.15 + (physical.recovery > 76 ? 64 : 0) + (a.health < 50 ? 42 : 0) + (a.energy < 32 && canRecoverFuel ? (32 - a.energy) * .7 : 0)) * (a.hydration < 18 || a.stomach < 10 ? 0.3 : 1);
   candidates.push({ drive: `${recoveryRequirement.recommendedDepth} recovery`, urgent: movementExhausted, commitTicks: Math.max(ACTIVITY_COMMIT_TICKS.rest, recoveryRequirement.minimumDuration || 0), score: movementExhausted ? 1400 : restScore, run: () => rest(a, movementExhausted ? "remaining still until safe travel is possible" : `recovering from ${recoveryRequirement.primaryCause}`) });
   if (postKillSuppressed || (a.stomach > 68 && !appetite.willing)) candidates.push({ drive: "digest", commitTicks: ACTIVITY_COMMIT_TICKS.digestion, score: (postKillSuppressed ? 360 : 38) + Math.max(0, a.stomach - 68) * 2.2, run: () => rest(a, postKillSuppressed ? "digesting and recovering after a kill" : "resting to digest") });
-  const atWater = nearWater(a, 1), finishRehydrating = atWater && a.hydration < 96;
+  const atWater = nearWater(a, 1), waterAcquisition = hydrationAcquisitionState({ hydration: a.hydration, atWater, activeWaterPlan: a.needDependencyPlan?.need === "water", forecastState: waterPlan.forecastState }), finishRehydrating = waterAcquisition.finishRehydrating;
   const arrivalReserveRisk = waterPlan.predictedAmountAtArrival <= waterPlan.reserve + 10;
-  if (waterPlan.urgency > 12 || arrivalReserveRisk || finishRehydrating) {
+  if (waterAcquisition.shouldAcquire || arrivalReserveRisk || finishRehydrating) {
     const hydrationSeverity = dehydrationState(a).key;
     const physiologicalWaterScore = hydrationSeverity === "critical" ? 2300 : hydrationSeverity === "severe" ? 1750 : hydrationSeverity === "moderate" ? 1150 : hydrationSeverity === "mild" ? 620 : 0;
     const emergencyWaterScore = waterPlan.urgency >= 90 ? 1800 : waterPlan.urgency >= 78 ? 1150 : 0;
-    const refillScore = finishRehydrating ? 2450 + (96 - a.hydration) * 4 : 0;
+    const refillScore = finishRehydrating ? 2450 + (HYDRATION_ACQUISITION_TARGET - a.hydration) * 4 : 0;
     const arrivalRiskScore = arrivalReserveRisk ? 520 + Math.max(0, waterPlan.reserve + 10 - waterPlan.predictedAmountAtArrival) * 18 : 0;
     const forecastWaterScore = ({ comfortable: 0, "plan-soon": 360, "commit-now": 940, emergency: 1650, "predicted-failure": 2250 }[waterPlan.forecastState] || 0);
-    candidates.push({ drive: finishRehydrating ? "finish rehydrating" : arrivalReserveRisk || waterPlan.urgency > d.thirst + 8 ? "schedule water" : "water", evidenceType: "water", urgent: waterPlan.forecastState !== "comfortable" || hydrationSeverity !== "hydrated" || waterPlan.urgency >= 68 || arrivalReserveRisk || finishRehydrating, commitTicks: finishRehydrating ? 12 : hydrationSeverity === "critical" || hydrationSeverity === "severe" ? 16 : waterPlan.urgency >= 68 || arrivalReserveRisk ? 14 : 8, score: Math.max(forecastWaterScore, physiologicalWaterScore, emergencyWaterScore, refillScore, arrivalRiskScore, waterPlan.urgency * (waterPlan.urgency > 55 ? 2.65 : 1.65) + memorySupport(a, "water") * 8), run: () => executeNeedDependencyPlan(a, "water") });
+    candidates.push({ drive: "water", urgency: waterPlan.urgency, evidenceType: "water", urgent: waterPlan.forecastState !== "comfortable" || hydrationSeverity !== "hydrated" || waterPlan.urgency >= 68 || arrivalReserveRisk || finishRehydrating, commitTicks: finishRehydrating ? 12 : hydrationSeverity === "critical" || hydrationSeverity === "severe" ? 16 : waterPlan.urgency >= 68 || arrivalReserveRisk ? 14 : 8, score: Math.max(forecastWaterScore, physiologicalWaterScore, emergencyWaterScore, refillScore, arrivalRiskScore, waterPlan.urgency * (waterPlan.urgency > 55 ? 2.65 : 1.65) + memorySupport(a, "water") * 8), run: () => executeNeedDependencyPlan(a, "water") });
   }
   const defensiveResponse = herbivoreDefenceOpportunity(a);
   if (defensiveResponse) candidates.push({ drive: `${defensiveResponse.action} predator`, urgent: defensiveResponse.action === "attack" || defensiveResponse.action === "flee", commitTicks: defensiveResponse.action === "watch" ? 3 : 5, score: defensiveResponse.urgency + (defensiveResponse.action === "attack" ? 75 : defensiveResponse.action === "mob" ? 45 : 0), run: () => performHerbivoreDefence(a, defensiveResponse) });
@@ -6796,8 +7368,8 @@ function bestKnownWater(a) {
   return exact.sort((left, right) => (dist(a, left) / Math.max(.15, left.confidence ?? 1)) - (dist(a, right) / Math.max(.15, right.confidence ?? 1)))[0] || null;
 }
 
-function waterNeedPlan(a) {
-  const s = species[a.speciesId], pregnancy = pregnancyPhysiology(a.pregnant, s.gestation, s.reproduction.mode), source = bestKnownWater(a);
+function waterNeedPlan(a, sourceOverride = null) {
+  const s = species[a.speciesId], pregnancy = pregnancyPhysiology(a.pregnant, s.gestation, s.reproduction.mode), source = sourceOverride || bestKnownWater(a);
   const demand = hourlyHydrationDemand(a, s, regionalWeatherAt(a), { pregnancyHydrationMultiplier: pregnancyHydrationMultiplier(a, s.gestation) });
   const speed = Math.max(.05, (a.capabilities?.speed || s.speed || 1) * .72);
   const stageMargin = a.lifeStage === "old" ? 5 : a.lifeStage === "dependent" ? 4 : a.lifeStage === "juvenile" ? 2 : 0;
@@ -6834,7 +7406,13 @@ function assessObservedPreyInterception(a, sight, target = null) {
 }
 
 function executeNeedDependencyPlan(a, need) {
-  const waterTarget = bestKnownWater(a);
+  const priorPlan = migrateNeedDependencyPlan(a.needDependencyPlan, { tick: sim.tick });
+  const waterCandidate = bestKnownWater(a);
+  const incumbentWaterTarget = priorPlan?.need === "water" && priorPlan.target ? { ...priorPlan.target, targetKey: priorPlan.targetKey, minimumUntilTick: priorPlan.minimumUntilTick } : null;
+  const incumbentExactCell = incumbentWaterTarget?.id != null ? cellAt(incumbentWaterTarget.x, incumbentWaterTarget.z) : null;
+  const incumbentInvalid = Boolean(incumbentExactCell && (!incumbentExactCell.drinkable || incumbentExactCell.waterDepth <= 0));
+  const targetDecision = need === "water" ? shouldRetainWaterTarget({ incumbent: incumbentWaterTarget, candidate: waterCandidate, incumbentDistance: incumbentWaterTarget ? dist(a, incumbentWaterTarget) : Infinity, candidateDistance: waterCandidate ? dist(a, waterCandidate) : Infinity, tick: sim.tick, invalid: incumbentInvalid, routeUnavailable: priorPlan?.routeUnavailable === true, stalled: priorPlan?.stalled === true, etaIncreaseRatio: priorPlan?.etaIncreaseRatio || 0 }) : null;
+  const waterTarget = need === "water" && targetDecision?.retain ? incumbentWaterTarget : waterCandidate;
   const waterEvidence = Boolean(waterTarget || (a.longMemory || []).some((memory) => memory.type === "water" && memory.confidence > .18));
   const localFood = eatsPlants(a) && grazeableCellFor(a, cellAt(a.x, a.z));
   const carcass = speciesCanScavenge(a) ? knownCarcass(a) : null;
@@ -6850,7 +7428,7 @@ function executeNeedDependencyPlan(a, need) {
   const foodEvidence = Boolean(localFood || (eatsPlants(a) && nearestMemory(a, "food")) || carcass || carcassMemory || preyEvidence);
   const foodTarget = localFood ? cellAt(a.x, a.z) : carcass || (eatsPlants(a) && nearestMemory(a, "food")) || carcassMemory || preyEvidence, target = need === "water" ? waterTarget : foodTarget;
   const targetDistance = target ? dist(a, target) : Infinity;
-  const waterPlanning = a.needPlanning?.water || waterNeedPlan(a);
+  const waterPlanning = need === "water" ? waterNeedPlan(a, waterTarget) : a.needPlanning?.water || waterNeedPlan(a);
   const expectedTravelHours = need === "water" ? waterPlanning.travelHours : Number.isFinite(targetDistance) ? targetDistance / Math.max(.05, a.capabilities?.speed || species[a.speciesId].speed || 1) * ecologicalHoursThisTick() : 4;
   const baseDepartureEndurance = a.pregnant ? 34 : a.lifeStage === "old" ? 32 : (a.injuries || []).length ? 30 : 24;
   const minimumDepartureEndurance = Number.isFinite(targetDistance) ? clamp(baseDepartureEndurance + Math.min(32, Math.max(0, expectedTravelHours) * 1.6), baseDepartureEndurance, 68) : baseDepartureEndurance;
@@ -6859,20 +7437,26 @@ function executeNeedDependencyPlan(a, need) {
   const travelStrategy = need === "water" ? plannedWaterTravel({ endurance: 100 - a.fatigue, minimumDepartureEndurance, sprintEnergy: a.sprintEnergy, sprintCapacity: sprintProfile.sprintCapacity, emergencyReserve: a.emergencyReserve, adrenalineStress: a.metabolism?.stressLoad || 0, canSprint: Boolean(a.capabilities?.canSprint && fuelJourney?.viable), canUseAdrenaline: a.lifeStage !== "dependent" && (a.capabilities?.speed || 0) > 0 && (fuelJourney?.available || 0) > 0, hasTarget: Boolean(target), hydration: a.hydration, forecastState: waterPlanning.forecastState }) : null;
   a.controlledAdrenalineAuthorised = Boolean(travelStrategy?.adrenalinePreferred);
   const basePlan = needDependencyPlan({ need, speciesId: a.speciesId, hydration: a.hydration, fatigue: a.fatigue, energy: a.energy, stomach: a.stomach, atResource: need === "water" ? nearWater(a, 1) : localFood, hasResourceEvidence: need === "water" ? waterEvidence : foodEvidence, hasCarcass: Boolean(carcass), hasCarcassEvidence: Boolean(carcass || carcassMemory), minimumDepartureEndurance, forecastState: need === "food" && (a.stomach < 8 || a.energy < 20) ? "predicted-failure" : waterPlanning.forecastState, travelStrategy });
-  const planContext = planningContextForDecision(a, "commitment"), plan = { ...basePlan, planId: `${a.id}:${sim.tick}:${basePlan.needId || basePlan.need}`, protocolId: a.commitmentState?.protocolKey || null, startedAt: sim.ecologicalMinute, forecast: need === "water" ? { ...waterPlanning, metabolicJourney: fuelJourney } : { etaHours: expectedTravelHours, metabolicJourney: fuelJourney }, protectedReserves: { hydration: waterPlanning.reserve, endurance: minimumDepartureEndurance, adrenaline: true, metabolicArrival: fuelJourney?.arrivalReserve ?? null }, evidenceSnapshot: { source: target?.source || target?.channel || "none", confidence: target?.confidence ?? Number(Boolean(target)), ageTicks: target ? Math.max(0, sim.tick - Number(target.tick ?? target.lastSeen ?? sim.tick)) : null }, contextSnapshot: contextSnapshot(a, planContext), interruptionConditions: ["target disproved", "ETA exceeds the safe need window", "metabolic fuel cannot support arrival", "threat conditions change", "a nearer resource is discovered", "progress remains near zero", "group movement makes the route unsafe"] };
-  const previousPlan = a.needDependencyPlan;
-  if (!previousPlan || previousPlan.need !== plan.need || previousPlan.method !== plan.method || previousPlan.phase !== plan.phase) {
-    a.needPlanHistory ||= [];
-    a.needPlanHistory.push({ tick: sim.tick, ecologicalMinute: sim.ecologicalMinute, from: previousPlan ? `${previousPlan.need} · ${previousPlan.phase}` : "none", to: `${plan.need} · ${plan.phase}`, method: plan.method, reason: plan.reason });
-    if (a.needPlanHistory.length > 12) a.needPlanHistory.splice(0, a.needPlanHistory.length - 12);
+  const planContext = planningContextForDecision(a, "commitment"), unstabilizedPlan = { ...basePlan, protocolId: a.commitmentState?.protocolKey || null, startedAt: sim.ecologicalMinute, forecast: need === "water" ? { ...waterPlanning, metabolicJourney: fuelJourney } : { etaHours: expectedTravelHours, metabolicJourney: fuelJourney }, protectedReserves: { hydration: waterPlanning.reserve, endurance: minimumDepartureEndurance, adrenaline: true, metabolicArrival: fuelJourney?.arrivalReserve ?? null }, evidenceSnapshot: { source: target?.source || target?.channel || "none", confidence: target?.confidence ?? Number(Boolean(target)), ageTicks: target ? Math.max(0, sim.tick - Number(target.tick ?? target.lastSeen ?? sim.tick)) : null }, contextSnapshot: contextSnapshot(a, planContext), interruptionConditions: ["target disproved", "ETA exceeds the safe need window", "metabolic fuel cannot support arrival", "threat conditions change", "a nearer resource is discovered", "progress remains near zero", "group movement makes the route unsafe"] };
+  const previousPlan = priorPlan;
+  const plan = stabilizeNeedDependencyPlan(previousPlan, unstabilizedPlan, { tick: sim.tick, targetKey: need === "water" ? waterTargetKey(waterTarget) : waterTargetKey(target), target, targetDecision, commitmentTicks: need === "water" ? 16 : 8 });
+  if (!previousPlan || previousPlan.need !== plan.need || previousPlan.method !== plan.method || previousPlan.phase !== plan.phase || previousPlan.targetKey !== plan.targetKey) {
+    const kind = !previousPlan ? "plan-start" : previousPlan.targetKey !== plan.targetKey ? "target-change" : previousPlan.phase !== plan.phase ? "phase-change" : "method-change";
+    recordNeedPlanEvent(a, { kind, from: previousPlan ? `${previousPlan.need} · ${previousPlan.phase} · ${previousPlan.targetKey || "unresolved"}` : "none", to: `${plan.need} · ${plan.phase} · ${plan.targetKey || "unresolved"}`, method: plan.method, reason: kind === "target-change" ? plan.targetDecision : plan.reason });
   }
+  if (previousPlan?.suspended && !plan.suspended) recordNeedPlanEvent(a, { kind: "resumption", from: previousPlan.suspensionReason || "suspended water", to: plan.targetKey || "water target", reason: plan.resumeReason });
   const riskReward = evaluateRiskReward(a, { drive: need, method: plan.method, need }, planContext);
   a.needDependencyPlan = { ...plan, tick: sim.tick, riskReward };
   const foodEta = Number.isFinite(targetDistance) ? targetDistance / Math.max(.05, a.capabilities?.speed || species[a.speciesId].speed || 1) * ecologicalHoursThisTick() + .35 : Infinity;
   const audit = migrateNeedPlanAudit(a), current = audit.current;
   const elapsedHours = current ? Math.max(0, sim.ecologicalMinute - current.startedAt) / 60 : 0;
   const progressPerHour = current && elapsedHours > 0 ? Math.max(0, current.distanceClosed || 0) / elapsedHours : Infinity;
-  const reconsideration = planReconsideration({ etaIncreaseRatio: current?.predictedEtaHours > 0 && Number.isFinite(waterPlanning.etaHours) ? Math.max(0, waterPlanning.etaHours / current.predictedEtaHours - 1) : 0, emergencyBoundaryCrossed: waterPlanning.forecastState === "predicted-failure", progressPerHour, stalledHours: elapsedHours });
+  const etaIncreaseRatio = current?.predictedEtaHours > 0 && Number.isFinite(waterPlanning.etaHours) ? Math.max(0, waterPlanning.etaHours / current.predictedEtaHours - 1) : 0;
+  const reconsideration = planReconsideration({ etaIncreaseRatio, emergencyBoundaryCrossed: waterPlanning.forecastState === "predicted-failure", progressPerHour, stalledHours: elapsedHours });
+  const routeUnavailable = a.routeState?.replanReason === "no-route" || a.actionState?.key === "blocked" && /route|destination|travers/.test(a.actionState?.reason || a.actionState?.label || "");
+  const stalled = reconsideration.reason === "progress remained near zero for too long";
+  a.needDependencyPlan = { ...a.needDependencyPlan, etaIncreaseRatio, stalled, routeUnavailable };
+  if (need === "water" && (routeUnavailable || stalled)) releaseShorelineReservation(a);
   if (current && reconsideration.reconsider && reconsideration.reason === "progress remained near zero for too long") {
     abandonNeedPlan(a, { outcome: "failed", reason: reconsideration.reason, tick: sim.tick, ecologicalMinute: sim.ecologicalMinute, amount: need === "water" ? a.hydration : a.stomach });
   }
@@ -6911,7 +7495,7 @@ function pregnancyHuntAssessment(a, drives, water, familyUrgency = 0) {
 }
 
 function thermoregulate(a, mode) {
-  if (mode === "cool" && drinkableSource(a) && a.hydration < 96) return drink(a);
+  if (mode === "cool" && drinkableSource(a) && a.hydration < HYDRATION_ACQUISITION_TARGET) return drink(a);
   const currentCell = cellAt(a.x, a.z), currentWeather = regionalWeatherAt(a).temp;
   const thermalScore = (cell) => regionalWeatherAt(cell).temp * .035 + terrainThermalEffect(cell, (cell.neighbours || []).some((neighbour) => (neighbour.waterDepth || 0) > 0));
   const moves = validMoves(a).sort((left, right) => mode === "cool" ? thermalScore(left) - thermalScore(right) : thermalScore(right) - thermalScore(left));
@@ -7294,7 +7878,13 @@ function runPredation(a) {
   const target = animalById(a.predation.targetId);
   if (!target || !target.alive) { a.predation = clearPredation(a.predation, sim.tick, "target unavailable"); return; }
   const sight = preyContactFor(a, target.id);
-  if (sight) { const group = groupObservation(a.sensoryBuffer || [], target.id), awareness = inferPreyAwareness(a, sight, group.size); a.predation = observePrey(a.predation, sight, sim.tick, awareness.level, group); }
+  let preyExposure = null;
+  if (sight) {
+    const group = groupObservation(a.sensoryBuffer || [], target.id), awareness = inferPreyAwareness(a, sight, group.size);
+    preyExposure = estimatePredatorExposure(a, sight, { observedGroupSize: group.size, hunterMovement: Math.hypot(a.locomotion?.velocityX || 0, a.locomotion?.velocityZ || 0), hunterNoise: a.movementNoise || 0, observableCover: sight.coverFraction || 0, referenceDistance: Math.max(12, huntRange(a, target, "stalk") * 2) });
+    a.reciprocalAttention = { ...(a.reciprocalAttention || {}), preyExposure: { ...preyExposure, targetId: target.id, tick: sim.tick }, updatedTick: sim.tick };
+    a.predation = observePrey(a.predation, sight, sim.tick, awareness.level, group);
+  }
   else a.predation = losePrey(a.predation);
   const interception = assessObservedPreyInterception(a, sight, target), { assessment: lastResort, observedTargetShape, targetDistance, chaseRange, sprintRange, pursuitPace, continuation, recoveryRange, stalkRange } = interception;
   if (a.energy < 10) {
@@ -7321,9 +7911,17 @@ function runPredation(a) {
       if (response === "abandon") { a.predation = clearPredation(a.predation, sim.tick, "distant approach detected"); return beginFocusedVigilance(a, "abandoning a distant detected approach and listening for another opportunity", 2); }
       if (response === "assess") return beginFocusedVigilance(a, `briefly assessing ${target.id} after being noticed`, 1);
       a.predation = transitionPredation(a.predation, "chase", sim.tick);
-    } else if (!shouldInitiateChase({ distance: targetDistance, chaseRange, aggression: a.aggression, stalkTicks: sim.tick - a.predation.phaseStartedTick, preyAwareness: a.predation.preyAwareness })) {
-      a.predation = transitionPredation(a.predation, "stalk", sim.tick);
-      return moveToward(a, sight, "stalk", `stealth stalking ${target.id}; prey ${a.predation.preyAwareness}`, "approach perceived prey without being noticed");
+    } else if (!shouldInitiateChase({ distance: targetDistance, chaseRange, aggression: a.aggression, stalkTicks: preyExposure?.level === "low" ? sim.tick - a.predation.phaseStartedTick : 0, preyAwareness: a.predation.preyAwareness })) {
+      const stalking = chooseStalkingAction(a, preyExposure, { tick: sim.tick, distance: targetDistance, chaseRange, targetId: target.id });
+      a.predation = transitionPredation(a.predation, "stalk", sim.tick, { reason: stalking.reason });
+      a.reciprocalAttention = { ...(a.reciprocalAttention || {}), stalking: { ...stalking, targetId: target.id, tick: sim.tick }, updatedTick: sim.tick };
+      if (stalking.phase === "freeze") return beginFocusedVigilance(a, `freezing because ${target.id} may be attending to the approach`, 1);
+      if (stalking.phase === "reroute") {
+        const flank = stalkingReroutePoint(a, sight, stalking.rerouteSide);
+        const destination = { ...flank, x: clamp(flank.x, -HALF + 1, HALF - 1), z: clamp(flank.z, -HALF + 1, HALF - 1) };
+        return moveToward(a, destination, "stalk", `rerouting around ${target.id}'s estimated attention`, "reduce observed exposure using a flanking approach", { destinationSource: flank.source });
+      }
+      return moveToward(a, sight, "stalk", `stealth stalking ${target.id}; estimated exposure ${preyExposure?.level || "unknown"}`, "approach perceived prey without being noticed");
     }
   }
   a.predation = transitionPredation(a.predation, pursuitPace.selected === "sprint" ? "burst-chase" : "sustainable-pursuit", sim.tick, { reason: pursuitPace.downgraded ? pursuitPace.reason : "prey remains within pursuit evidence" });
@@ -7409,6 +8007,24 @@ function sightContactFor(a, targetId) { return (a.sensoryBuffer || []).find((m) 
 function preyContactFor(a, targetId) { return (a.sensoryBuffer || []).find((m) => m.targetId === targetId && ["sight", "proximity"].includes(m.channel) && m.confidence > 0.12); }
 
 function followPreyTrailOrWander(a) {
+  if (a.airborneScentObservation?.confidence > .08) {
+    const plume = a.airborneScentObservation, destination = { x: clamp(a.x + plume.upwindX * 2.5, -HALF + 1, HALF - 1), z: clamp(a.z + plume.upwindZ * 2.5, -HALF + 1, HALF - 1), source: "observer-owned-airborne-scent" };
+    a.scentCasting = { mode: "upwind", lastDetectionTick: sim.tick, direction: { x: plume.upwindX, z: plume.upwindZ }, confidence: plume.confidence };
+    return moveToward(a, destination, "track-scent", "following an intermittent airborne scent filament upwind", "seek stronger scent evidence without knowing the source position", { destinationSource: destination.source });
+  }
+  if (sim.tick - Number(a.lastAirborneScentTick ?? -99) <= 8) {
+    const cast = castingDestination(a, localWindAt(a), { tick: sim.tick, lastDetectionTick: a.lastAirborneScentTick, distance: 2.5 });
+    const destination = { ...cast, x: clamp(cast.x, -HALF + 1, HALF - 1), z: clamp(cast.z, -HALF + 1, HALF - 1) }; a.scentCasting = { mode: cast.mode, side: cast.side, lastDetectionTick: a.lastAirborneScentTick };
+    return moveToward(a, destination, "track-scent", `casting ${cast.side < 0 ? "left" : "right"} across the local wind after losing scent`, "reacquire an intermittent plume", { destinationSource: "observer-wind-and-scent-history-only" });
+  }
+  const hypothesis = (a.evidenceHypotheses || []).find(item => item.kind === "prey" && item.confidence > .12);
+  if (hypothesis) {
+    const observedTraceSupport = new Map();
+    for (const evidence of a.sensoryBuffer || []) if (evidence.traceKind && Number.isFinite(evidence.x) && Number.isFinite(evidence.z)) { const observedCell = cellAt(evidence.x, evidence.z); if (observedCell) observedTraceSupport.set(observedCell.id, Math.max(observedTraceSupport.get(observedCell.id) || 0, evidence.confidence || 0)); }
+    const candidateCells = neighbors(a).map(cell => ({ id: cell.id, x: cell.x, z: cell.z, known: true, traversable: terrainMobilityAssessment(a, cell).allowed, evidenceSupport: observedTraceSupport.get(cell.id) || 0, uncertainty: 1 - hypothesis.confidence, risk: 0 }));
+    const route = selectTrackingRoute(a, hypothesis, candidateCells);
+    if (route.destination) { a.trackingRouteEvidence = { ...route, hypothesisId: hypothesis.id, tick: sim.tick }; return moveToward(a, route.destination, "track-scent", `tracking a ${hypothesis.identity || "possible prey"} hypothesis from ${hypothesis.evidenceCount} uncertain clues`, "seek confirming evidence along a locally known route", { destinationSource: route.informationBoundary }); }
+  }
   const trail = choosePreyEvidence(a.memories || []);
   if (trail) {
     const currentCell = cellAt(a.x, a.z), evidenceCell = cellAt(trail.x, trail.z);
@@ -7723,8 +8339,8 @@ function moveByLongMemory(a, type, label) {
 function graze(a) { if (!canEat(a)) return rest(a, "resting while full"); if (a.feedingHeadRaised) { setAction(a, "listen", { label: "pausing feeding with head raised", intendedOutcome: "check surroundings before resuming feeding" }); return; } const c = cellAt(a.x, a.z), food = c.plantType || "grass", shrub = food === "shrub", tree = food === "tree", preference = plantPreference(a, food), digestion = digestiveEfficiency(a, food), feedingAbility = senescenceModifiers(a).feeding; if (!grazeableCellFor(a, c)) return wander(a, "search", "seeking suitable vegetation"); const bite = Math.min(c.biomass, forageBite(tree ? "shrub" : food, a.bodyMass) * ecologicalMinutesThisTick() * preference * feedingAbility), hydrationBefore = a.hydration; c.biomass -= bite; ecologicalAccounting.record("plantConsumed", bite); c.shrubBiomass = shrub ? c.biomass : 0; c.grazingPressure = clamp((c.grazingPressure || 0) + bite * 2.5, 0, 1.5); if (!tree) c.grassHeight = clamp((c.grassHeight || 0) - bite * 1.6, 0, 1); if (shrub && c.biomass < 0.06) { c.woodland = false; c.shrubland = false; c.plantType = "grass"; c.woodyStage = "none"; } if (tree && c.biomass < 0.08) { c.biomass = 0; c.leafDepletedUntil = sim.ecologicalMinute + MINUTES_PER_DAY * 20; c.plantStage = "browsed-leafless"; } requestVegetationPresentationUpdate(c, (shrub && c.biomass < 0.06) || tree); a.hydration = clamp(a.hydration + forageHydrationGain(bite, c, a), 0, 100); ecologicalAccounting.record("forageWaterGained", Math.max(0, a.hydration - hydrationBefore)); const calories = bite * (tree || shrub ? 5200 : 4200) * digestion; recordNutrientIntake(a, { calories, carbohydrate: .12, fat: .04, protein: tree || shrub ? .18 : .12, fermentable: tree || shrub ? .66 : .72 }); ecologicalAccounting.record("feedingEnergyGained", calories); a.lastMealTick = sim.tick; a.lastDigestionEfficiency = digestion * feedingAbility; if ((c.plantStage === "reproductive" || c.seedStore > 0.45) && rand() < seedChanceForBite(bite, tree || shrub ? .11 : .16)) a.seedLoad.push({ plantType: c.plantType, age: 0, viability: 0.65 + rand() * 0.3 }); setAction(a, tree || shrub ? "browse" : "graze", { label: tree ? "browsing reachable tree foliage" : shrub ? "browsing shrub slowly" : c.grassHeight > 0.65 ? "grazing long grass steadily" : "grazing short grass steadily", intendedOutcome: "consume preferred vegetation over time" }); }
 function drink(a) {
   const source = drinkableSource(a);
-  if (a.hydration >= 92) { a.drinkingSource = null; return wander(a, "wander", "leaving water, thirst satisfied"); }
-  if (!source) { a.drinkingSource = null; return wander(a, "search", "searching for a lake, stream, or puddle"); }
+  if (a.hydration >= HYDRATION_ACQUISITION_TARGET) { releaseShorelineReservation(a); return wander(a, "wander", "leaving water, thirst satisfied"); }
+  if (!source) { releaseShorelineReservation(a); return wander(a, "search", "searching for a lake, stream, or puddle"); }
   const contact = source.contact, state = drinkingContactState(a, contact);
   if (!state.touching) {
     a.drinkingSource = null;
@@ -7733,18 +8349,20 @@ function drink(a) {
   if (!state.facing || !state.stationary) {
     clearFrameMotion(a);
     a.orientation = gradualHeading(a.orientation || 0, state.desiredOrientation);
-    a.drinkingSource = { id: source.cell.id, x: contact.edgeX, z: contact.edgeZ };
+    a.drinkingSource = { id: source.cell.id, x: contact.edgeX, z: contact.edgeZ, reservationKey: source.reservationKey };
     return setAction(a, "orient", { label: "stopping and turning directly toward the water", target: source.cell.id, intendedOutcome: "face the water before drinking" });
   }
   if (a.feedingHeadRaised) { setAction(a, "listen", { label: "pausing drinking with head raised", intendedOutcome: "check surroundings before resuming drinking" }); return; }
   const hydrationBefore = a.hydration;
   a.hydration = clamp(a.hydration + drinkingHydrationGain(ecologicalHoursThisTick()), 0, 100);
-  recordNeedAcquisition(a, { need: "water", before: hydrationBefore, after: a.hydration, tick: sim.tick, ecologicalMinute: sim.ecologicalMinute, target: source.cell.id, satisfactionTarget: 92 });
+  recordNeedAcquisition(a, { need: "water", before: hydrationBefore, after: a.hydration, tick: sim.tick, ecologicalMinute: sim.ecologicalMinute, target: source.cell.id, satisfactionTarget: HYDRATION_ACQUISITION_TARGET });
   ecologicalAccounting.record("waterDrunk", Math.max(0, a.hydration - hydrationBefore));
   a.lastDrinkTick = sim.tick;
   reinforceExactResource(a, "water", source.cell);
   recordResourceContact(a, "water", sim.tick);
-  a.drinkingSource = { id: source.cell.id, x: contact.edgeX, z: contact.edgeZ };
+  a.drinkingSource = { id: source.cell.id, x: contact.edgeX, z: contact.edgeZ, reservationKey: source.reservationKey };
+  shorelineReservations.touch(a.id, sim.tick);
+  if (a.hydration >= HYDRATION_ACQUISITION_TARGET) { releaseShorelineReservation(a); a.needDependencyPlan = null; }
   setAction(a, "drink", { label: `drinking in contact with the ${waterSourceLabel(source.cell)}`, target: source.cell.id, intendedOutcome: "restore hydration while touching and facing the source" });
 }
 function rest(a, label = "resting", actionKey = "rest") {
@@ -8924,7 +9542,7 @@ function updateEntityPosture(rendered, a, state, now, visual = a, groundRestProg
   const previousLook = rendered.userData.carcassFeedingLook || { headYaw: 0, bodyYaw: 0, updatedAt: now };
   const feedingLook = smoothFeedingLook(previousLook, feedingTarget, Math.min(80, Math.max(0, now - previousLook.updatedAt)));
   rendered.userData.carcassFeedingLook = { ...feedingLook, updatedAt: now };
-  if (parts.head) { parts.head.rotation.y += feedingFocus ? feedingLook.headYaw : (a.headYaw || 0) + feedingLook.headYaw; if (!feedingFocus) parts.head.rotation.x += a.headPitch || 0; }
+  if (parts.head) { parts.head.rotation.y += feedingFocus ? feedingLook.headYaw : visualHeadYawRadians(a) + feedingLook.headYaw; if (!feedingFocus) parts.head.rotation.x += a.headPitch || 0; }
   if (feedingFocus) rendered.rotation.y += feedingLook.bodyYaw;
   if (state.action.posture === "flee") { parts.body.rotation.x -= .16; if (parts.head) { parts.head.rotation.x -= .08; parts.head.position.z += .07; } if (parts.tail) parts.tail.rotation.x -= .15 + stride * .08; }
   else if (state.action.posture === "chase") { parts.body.rotation.x -= .12; if (parts.head) parts.head.position.z += .06; }
@@ -9113,6 +9731,7 @@ function syncAnimalVisuals(now, motionNow = animalMotionTimeMs) {
     const currentVisual = applyNursingVisualPosition(a, applyMatingVisualPosition(a, visualState(a, now, frameScratch.visual), now), now), visual = { x: currentVisual.x, z: currentVisual.z, orientation: currentVisual.orientation }; state.movement.facingDirection = visual.orientation; rendered.userData.presentationVisual = visual;
     const channels = rendered.userData.presentationChannels || new Set();
     updateAnimalTransientParts(rendered, a, state, now);
+    updateVisibleEyeDynamics(rendered, a);
     const groundRestProgress = groundedPostureProgress(rendered, a, state.action.posture, now);
     const scale = animalVisualScale(a), standingClearance = animalGroundOffset(scale, "idle"), restingClearance = animalGroundOffset(scale, "rest");
     const movementMedium = terrainMobilityAssessment(a, cellAt(visual.x, visual.z)).medium, flightLift = movementMedium === "flight" && !state.movement.stationary ? scale * 1.35 : 0;
@@ -9167,11 +9786,18 @@ function applyMove(a, p, actionKey, label, options = {}) {
   const contactTarget = targetId ? sim.animals.find((other) => other.id === targetId) || sim.corpses.find((corpse) => corpse.id === targetId) : null;
   const spacingKind = options.interactionKind || (actionKey === "chase" ? "attack" : ["mate-search", "courtship", "accept-mate", "mating"].includes(actionKey) ? "mating" : actionKey === "nurse" ? "nursing" : actionKey === "drink" ? "drinking" : ["scavenge", "feed-carcass"].includes(actionKey) ? "feeding" : actionKey === "spar" ? "sparring" : ["social-attack", "intervene"].includes(actionKey) ? "fighting" : "ordinary");
   const radius = options.interactionRadius ?? (contactTarget ? interactionRadius(a, contactTarget, spacingKind) : .1);
-  const requestId = `${actionKey}:${targetId || `${Number(p.x).toFixed(2)},${Number(p.z).toFixed(2)}`}`;
+  const stableWaterRequestId = a.needDependencyPlan?.need === "water" && ["travel", "search"].includes(actionKey) && a.needDependencyPlan.targetKey
+    ? `water:${a.needDependencyPlan.planId || a.needDependencyPlan.targetKey}:${a.needDependencyPlan.phase || "travel"}`
+    : null;
+  const requestId = stableWaterRequestId || `${actionKey}:${targetId || `${Number(p.x).toFixed(2)},${Number(p.z).toFixed(2)}`}`;
   const desiredPace = options.sprint ? "sprint" : actionKey === "stalk" ? "stalk" : "walk", paceSelection = selectAffordablePace(a, desiredPace), requestedSprint = paceSelection.selected === "sprint" && a.lifeStage !== "dependent";
   if (paceSelection.selected === "stationary") { setBlockedAction(a, paceSelection.reason, { label: `unable to move while ${label}`, target: options.target, intendedOutcome: options.intendedOutcome }); return false; }
   const movementMode = paceSelection.selected;
-  a.movementRequest = createMovementRequest(requestId, p, { destinationSource: options.destinationSource, allowOutsideNavmesh: Boolean(options.allowOutsideNavmesh), perceivedTarget: options.perceivedTarget ? { targetId: options.perceivedTarget.targetId, x: options.perceivedTarget.x, z: options.perceivedTarget.z, vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0, confidence: options.perceivedTarget.confidence ?? 1, velocityConfidence: options.perceivedTarget.velocityConfidence || 0, evidenceId: options.perceivedTarget.evidenceId || options.perceivedTarget.id || null, observedTick: options.perceivedTarget.observedTick ?? sim.tick } : null, observationId: options.perceivedTarget?.evidenceId || options.perceivedTarget?.id || null, observationTick: options.perceivedTarget?.observedTick ?? sim.tick, predictedVelocity: options.perceivedTarget ? { vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0 } : null, velocityConfidence: options.perceivedTarget?.velocityConfidence || 0, interactionRadius: radius, urgency: requestedSprint ? 1 : .5, mode: movementMode, contactTargetId: targetId, contactIntent: options.contactIntent || null });
+  const nextMovementRequest = createMovementRequest(requestId, p, { destinationSource: options.destinationSource, allowOutsideNavmesh: Boolean(options.allowOutsideNavmesh), perceivedTarget: options.perceivedTarget ? { targetId: options.perceivedTarget.targetId, x: options.perceivedTarget.x, z: options.perceivedTarget.z, vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0, confidence: options.perceivedTarget.confidence ?? 1, velocityConfidence: options.perceivedTarget.velocityConfidence || 0, evidenceId: options.perceivedTarget.evidenceId || options.perceivedTarget.id || null, observedTick: options.perceivedTarget.observedTick ?? sim.tick } : null, observationId: options.perceivedTarget?.evidenceId || options.perceivedTarget?.id || null, observationTick: options.perceivedTarget?.observedTick ?? sim.tick, predictedVelocity: options.perceivedTarget ? { vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0 } : null, velocityConfidence: options.perceivedTarget?.velocityConfidence || 0, interactionRadius: radius, urgency: requestedSprint ? 1 : .5, mode: movementMode, contactTargetId: targetId, contactIntent: options.contactIntent || null });
+  if (equivalentMovementRequest(a.movementRequest, nextMovementRequest)) {
+    a.movementRequest.observationId = nextMovementRequest.observationId; a.movementRequest.observationTick = nextMovementRequest.observationTick;
+    a.movementRequest.perceivedTarget = nextMovementRequest.perceivedTarget; a.movementRequest.predictedVelocity = nextMovementRequest.predictedVelocity; a.movementRequest.velocityConfidence = nextMovementRequest.velocityConfidence;
+  } else a.movementRequest = nextMovementRequest;
   if (paceSelection.downgraded) label = `${label}; continuing at ${paceSelection.selected.replaceAll("-", " ")} as burst capacity recovers`;
   setAction(a, actionKey, { label, target: options.target, destination: { x: p.x, z: p.z }, intendedOutcome: options.intendedOutcome, moving: true });
   return true;
@@ -9240,6 +9866,7 @@ function applyMove(a, p, actionKey, label, options = {}) {
 
 function die(a, cause, ownerId = null) {
   if (!a.alive) return;
+  releaseShorelineReservation(a);
   const formerGroup = a.groupId, groupMembers = formerGroup ? sim.animals.filter((member) => member.alive && member.groupId === formerGroup) : [];
   a.alive = false; stableLivingList.markDirty(); sim.occupied?.delete(key(a)); a.deathTick = sim.tick; sim.deaths += 1;
   sim.lineageRecords ||= {}; storeLineage(sim.lineageRecords, a);
@@ -9788,6 +10415,7 @@ function rebuildWaterPresentation({ lakeBasinIds = [], riverRouteIds = [] } = {}
 
 function buildTerrain() { return profiler.measure("display.terrain", () => profiler.measure("terrain rebuild", buildTerrainWork)); }
 function buildTerrainWork() {
+  if (weatherFieldOverlayMesh) { groups.weather.remove(weatherFieldOverlayMesh); weatherFieldOverlayMesh = null; }
   clear(groups.terrain); clear(groups.water);
   lakeRenderMeshes.clear(); riverRenderMeshes.clear();
   worldEdgeLine = null;
@@ -9819,6 +10447,13 @@ function buildTerrainWork() {
   groundMesh = ground;
   terrainPickable = ground;
   terrainSurfaceTable = { positions, offsets, verticesPerCell };
+  weatherOverlayMaterial ||= createWeatherOverlayMaterial();
+  weatherOverlayMaterial.uniforms.weatherFieldMap.value = weatherDataTexture;
+  weatherOverlayMaterial.uniforms.weatherFieldAvailable.value = weatherDataTexture ? 1 : 0;
+  weatherOverlayMaterial.uniforms.weatherWorldHalf.value = Math.max(1, HALF);
+  weatherFieldOverlayMesh = new THREE.Mesh(groundGeo, weatherOverlayMaterial); weatherFieldOverlayMesh.name = "scientific-weather-field"; weatherFieldOverlayMesh.visible = graphicsSettings.weatherScientificOverlay; weatherFieldOverlayMesh.renderOrder = 5; groups.weather.add(weatherFieldOverlayMesh);
+  if (!weatherWindArrows) { const material = new THREE.MeshBasicMaterial({ color: 0xd7f2f0, transparent: true, opacity: .86, depthWrite: false, side: THREE.DoubleSide }); weatherWindArrows = new THREE.InstancedMesh(geos.memoryArrow, material, 36); weatherWindArrows.count = 0; weatherWindArrows.instanceMatrix.setUsage(THREE.DynamicDrawUsage); weatherWindArrows.renderOrder = 6; groups.weather.add(weatherWindArrows); }
+  weatherPresentationFieldMarker = null;
   for (const lake of world.waterBodies || []) replaceLandscapeWaterMesh(lakeRenderMeshes, lake.id, lakeMeshFor(world, lake));
   for (const route of world.riverRoutes || []) replaceLandscapeWaterMesh(riverRenderMeshes, route.id, riverRouteMeshFor(world, route));
   // A visible recovery apron extends beyond the playable terrain. It is not
@@ -9920,6 +10555,24 @@ function updateAnimalTransientParts(group, a, state, now = performance.now()) {
   parts.injuryAlert.visible = movieFeatured && showEntitySymbols && showcaseChannel("action") && hasVisualEvent("injury-alert", a, now) && dominant === "injury"; parts.injuryAlert.position.set(layout.injury.x, layout.injury.y, 0); parts.injuryAlert.scale.setScalar(layout.injury.size);
   parts.signal.visible = Boolean(heldCallout && signalRule.visible && dominant === "signal" && !(signalKind === "courtship" && courting)); if (parts.signal.visible) { setEntityOwnedSpriteMaterial(parts.signal, publicSignalMaterialFromDescriptor(signalDescriptor, liveVocalActive)); parts.signal.position.set(layout.signal.x + .1 * graphicsSettings.entityIconScale, layout.signal.y, 0); parts.signal.scale.set(layout.signal.size * 1.23, layout.signal.size, 1); }
 }
+function updateVisibleEyeDynamics(group, a) {
+  const dynamicEyes = (group.userData.parts?.eyes || []).filter(eye => eye.userData.dynamicCartoonEye);
+  if (!dynamicEyes.length) return;
+  const target = (a.attentionTracks || []).find(track => Number.isFinite(track.x) && Number.isFinite(track.z))
+    || (a.orientingState?.targetId ? animalById(a.orientingState.targetId) : null)
+    || (a.predation?.targetId ? animalById(a.predation.targetId) : null);
+  const weather = localizedWeatherPresentation(regionalWeatherAt(a));
+  const response = { illumination: weather.solarIllumination, arousal: Math.max(a.fear || 0, a.stressResponse?.intensity ? a.stressResponse.intensity * 100 : 0) / 100 };
+  const irisScale = visibleIrisScale(response), pupilScale = visiblePupilScale(response);
+  for (const eye of dynamicEyes) {
+    const uniforms = eye.material.uniforms;
+    const gaze = visibleEyeGazeOffset(a, target, { side: eye.userData.eyeSide, convergence: a.orientingState?.convergence || 0 });
+    uniforms.gazeOffset.value.x += (gaze.x - uniforms.gazeOffset.value.x) * .22;
+    uniforms.gazeOffset.value.y += (gaze.y - uniforms.gazeOffset.value.y) * .22;
+    uniforms.irisScale.value += (irisScale - uniforms.irisScale.value) * .1;
+    uniforms.pupilScale.value += (pupilScale - uniforms.pupilScale.value) * .12;
+  }
+}
 function applyPresentationTier(group, tier, channels) {
   const parts = group.userData.parts;
   if (!parts) return;
@@ -9950,7 +10603,7 @@ function realSpeciesBodyGeometry(kind) {
 function realSpeciesHeadGeometry(kind) {
   return silhouetteHeadGeometries[kind] || geos.herbivore;
 }
-function addRealSpeciesFeatures(design, head, body, material, scale) {
+function addRealSpeciesFeatures(design, head, body, material, scale, animal = null) {
   const parts = [], groups = [], roots = new Map(); let root = null;
   const addHead = (geometry, position, featureScale, rotation = [0, 0, 0], partMaterial = material) => {
     const mesh = new THREE.Mesh(geometry, partMaterial); mesh.position.set(...position.map(value => value * scale)); mesh.scale.set(...featureScale.map(value => value * scale)); mesh.rotation.set(...rotation); root.add(mesh); parts.push(mesh); return mesh;
@@ -9960,10 +10613,23 @@ function addRealSpeciesFeatures(design, head, body, material, scale) {
   };
   for (const feature of design.featureGroups || design.features || []) {
     const kind = feature.kind, parent = feature.attach === "head" ? head : body;
+    if (kind === "broad-antlers" && animal && (animal.sex !== "M" || ["dependent", "juvenile"].includes(animal.lifeStage))) continue;
     root = new THREE.Group(); root.userData.featureKind = kind; parent.add(root); groups.push(root); roots.set(kind, root);
     if (["long-ears", "large-ears", "pointed-ears", "tufted-ears", "round-ears", "small-ears"].includes(kind)) {
       const length = kind === "long-ears" ? .34 : kind === "large-ears" ? .25 : kind === "small-ears" ? .12 : .18;
-      for (const side of [-1, 1]) addHead(kind.includes("round") || kind === "small-ears" ? geos.eye : geos.horn, [side * .19, .23, -.02], [kind.includes("round") ? 1.5 : 1, length / .26, kind.includes("round") ? 1.2 : .8], [0, 0, side * (kind === "large-ears" ? .5 : .22)]);
+      for (const side of [-1, 1]) {
+        const rounded = kind.includes("round") || kind === "small-ears";
+        if (rounded) addHead(geos.eye, [side * .19, .23, -.02], [1.5, length / .26, 1.2], [0, 0, side * .18]);
+        else {
+          const deerFace = animal?.speciesId === "valley-grazer-updated", wolfFace = animal?.speciesId === "ridge-hunter-updated";
+          const earGeometry = wolfFace ? geos.wolfEar : geos.animalEar;
+          const earPosition = deerFace ? [side * .18, .19, -.025] : wolfFace ? [side * .145, .205, -.045] : [side * .2, .23, .015];
+          const earScale = deerFace ? [.52, .58, .72] : wolfFace ? [.55, .7, .72] : [kind === "large-ears" ? 1.18 : .9, length / .26, 1];
+          const earRotation = deerFace ? [-.06, side * -.14, side * .72] : wolfFace ? [-.04, side * -.1, side * .1] : [0, side * -.12, side * (kind === "large-ears" ? .58 : .3)];
+          const ear = addHead(earGeometry, earPosition, earScale, earRotation);
+          const inner = new THREE.Mesh(earGeometry, mats.animalInnerEar); inner.position.z = .025; inner.scale.set(.66, .69, .16); inner.userData.isInnerEar = true; ear.add(inner); parts.push(inner);
+        }
+      }
       continue;
     }
     if (["paired-horns", "pronged-horns", "swept-horns", "wide-horns", "broad-antlers"].includes(kind)) {
@@ -10030,8 +10696,9 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
     body.scale.set(...design.bodyScale.map(value => value * scale));
     body.position.y = (design.bodyElevation ?? (["curved-tube", "flattened-taper"].includes(design.bodyShape) ? .22 : design.bodyScale[1] * .72)) * scale;
   } else {
-    body.scale.set(a.speciesId === "hunter" ? scale * 0.66 : speciesCanHunt(a) ? scale * .68 : scale * (shape.sizeClass === "large" ? .9 : .76), a.speciesId === "hunter" ? scale * 0.34 : scale * (shape.sizeClass === "large" ? .55 : speciesCanHunt(a) ? .36 : .45), a.speciesId === "hunter" ? scale * 1.05 : scale * bodyLength);
-    body.position.y = a.speciesId === "hunter" ? 0.28 * scale : shape.sizeClass === "large" ? .46 * scale : 0.38 * scale;
+    const founderBaseline = FOUNDER_VISUAL_BASELINE[a.speciesId];
+    body.scale.set(...(founderBaseline?.bodyScale || [speciesCanHunt(a) ? .68 : shape.sizeClass === "large" ? .9 : .76, shape.sizeClass === "large" ? .55 : speciesCanHunt(a) ? .36 : .45, bodyLength]).map(value => value * scale));
+    body.position.y = (founderBaseline?.bodyY ?? (shape.sizeClass === "large" ? .46 : .38)) * scale;
   }
   body.userData.id = a.id;
   group.add(body);
@@ -10042,7 +10709,7 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
     const headMaturity = a.lifeStage === "dependent" ? 0 : a.lifeStage === "juvenile" ? .48 : a.lifeStage === "subadult" ? .78 : 1;
     head = new THREE.Group(); head.position.set(0, (0.35 + .08 * headMaturity) * scale, (0.34 + .12 * headMaturity) * scale); group.add(head);
     headMesh = new THREE.Mesh(geos.herbivore, bodyMat);
-    headMesh.scale.set(0.39 * scale, 0.36 * scale, 0.41 * scale);
+    headMesh.scale.set(...FOUNDER_VISUAL_BASELINE.grazer.headScale.map(value => value * scale));
     head.add(headMesh);
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(geos.eye, mats.eye);
@@ -10059,12 +10726,12 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
     head = new THREE.Group(); head.position.set(0, (0.27 + .03 * headMaturity) * scale, (0.47 + .15 * headMaturity) * scale); group.add(head);
     const muzzle = new THREE.Mesh(geos.carnivore, bodyMat); headMesh = muzzle;
     muzzle.rotation.x = Math.PI / 2;
-    muzzle.scale.set(0.58 * scale, 0.72 * scale, 0.58 * scale);
+    muzzle.scale.set(...FOUNDER_VISUAL_BASELINE.hunter.headScale.map(value => value * scale));
     head.add(muzzle);
     tail = new THREE.Mesh(geos.horn, bodyMat);
     tail.rotation.x = -Math.PI / 2;
-    tail.scale.set(1.15 * scale, 1.35 * scale, 1.15 * scale);
-    tail.position.set(0, 0.2 * scale, -0.82 * scale);
+    tail.scale.set(...FOUNDER_VISUAL_BASELINE.hunter.tailScale.map(value => value * scale));
+    tail.position.set(...FOUNDER_VISUAL_BASELINE.hunter.tailPosition.map(value => value * scale));
     group.add(tail);
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(geos.eye, mats.eye);
@@ -10082,12 +10749,21 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
     headMesh = new THREE.Mesh(realSpeciesHeadGeometry(design.headShape), headSurfaceMat);
     if (design.headShape === "downturned") headMesh.rotation.x = .2;
     headMesh.scale.set(...design.headScale.map(value => value * scale)); head.add(headMesh);
-    const featureBuild = addRealSpeciesFeatures(design, head, body, bodyMat, scale); featureParts = featureBuild.parts; featureGroups = featureBuild.groups;
+    const featureBuild = addRealSpeciesFeatures(design, head, body, bodyMat, scale, a); featureParts = featureBuild.parts; featureGroups = featureBuild.groups;
     markingParts = addRealSpeciesMarkings(design, head, body, featureBuild.roots, scale, headMesh); feature = featureGroups[0] || featureParts[0] || null;
     for (const side of [-1, 1]) {
-      const eye = new THREE.Mesh(geos.eye, mats.eye), eyeScale = clamp(scale * (small ? .7 : .82), .36, .82);
+      const deerFace = a.speciesId === "valley-grazer-updated", wolfFace = a.speciesId === "ridge-hunter-updated";
+      const sharedEyeMaterial = deerFace ? mats.deerCartoonEye : wolfFace ? mats.wolfCartoonEye : mats.genericCartoonEye;
+      const eyeMaterial = markResource(sharedEyeMaterial.clone(), RESOURCE_OWNERSHIP.entity);
+      const eye = new THREE.Mesh(geos.eye, eyeMaterial), eyeScale = clamp(scale * (small ? .7 : .82), .36, .82);
       const eyePosition = attachedAnimalEyePosition({ side, headScale: headMesh.scale, headKind: "rounded" });
-      eye.position.set(eyePosition.x, eyePosition.y, eyePosition.z); eye.scale.setScalar(eyeScale); head.add(eye); eyes.push(eye);
+      const eyeSensor = sensorDefinitions(a).find(sensor => sensor.id === (side < 0 ? "left-eye" : "right-eye"));
+      const requestedEyeYaw = -visualSensorYawRadians(eyeSensor) * (deerFace ? .35 : wolfFace ? .65 : 1);
+      const readableEyeYaw = constrainedVisualEyeYaw(side, requestedEyeYaw);
+      eye.position.set(eyePosition.x, eyePosition.y, eyePosition.z); eye.rotation.y = readableEyeYaw; eye.scale.setScalar(eyeScale * (deerFace ? 1 : wolfFace ? .9 : 1));
+      eye.userData.dynamicCartoonEye = true;
+      eye.userData.eyeSide = side;
+      head.add(eye); eyes.push(eye);
     }
   }
 
@@ -10228,7 +10904,7 @@ function drawReproductiveHighlights() {
 }
 function awarenessRange(a) { return Math.max(3, Math.round((species[a.speciesId].vision + species[a.speciesId].smell + species[a.speciesId].hearing) / 3 * (a.capabilities?.perceptionScale || 1))); }
 function applyDefaultEntityOverlayView() {
-  for (const [control, enabled] of [[ui.overlayVision, true], [ui.overlayPersonalSpace, false], [ui.overlayHealthBars, true], [ui.overlayEnduranceBar, true], [ui.overlayCompositionBar, true], [ui.overlaySmell, false], [ui.overlaySound, false], [ui.overlayCalls, false], [ui.overlayMemory, false], [ui.overlayEntityFocus, false], [ui.overlayAnalysisStage, false], [ui.overlayOrganismOnly, false], [ui.overlayBiomass, false], [ui.overlayWater, false], [ui.overlayPheromone, false]]) if (control) control.checked = enabled;
+  for (const [control, enabled] of [[ui.overlayVision, true], [ui.overlayPersonalSpace, false], [ui.overlayHealthBars, true], [ui.overlayEnduranceBar, true], [ui.overlayCompositionBar, true], [ui.overlaySmell, false], [ui.overlaySound, false], [ui.overlayCalls, false], [ui.overlayMemory, false], [ui.overlayEnvironmentalHistory, false], [ui.overlayEntityFocus, false], [ui.overlayAnalysisStage, false], [ui.overlayOrganismOnly, false], [ui.overlayBiomass, false], [ui.overlayWater, false], [ui.overlayPheromone, false]]) if (control) control.checked = enabled;
 }
 function selectObject(e) { if (sim?.embodiment?.experience === "embodied" && !presentationPolicy(embodimentCapabilities()).selectOthers) return; const rect = renderer.domElement.getBoundingClientRect(); pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1; pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1; raycaster.setFromCamera(pointer, camera); const hits = raycaster.intersectObjects(entityOwnershipPickTargets(), false), hit = hits.find((candidate) => candidate.object.userData.ownerEntityId) || hits[0], hadEntity = Boolean(selectedAnimal() || selectedCorpse() || selectedGroupId); if (hit) { const clickedId = hit.object.userData.ownerEntityId || hit.object.userData.id; if (String(clickedId).startsWith("organization:")) { selectedGroupId = clickedId; selectedId = null; selectedTerrain = null; } else if (String(clickedId).startsWith("group:")) { selectedGroupId = clickedId.slice(6); selectedId = null; selectedTerrain = null; } else if (selectedId === clickedId && !entityLocked) selectedId = null; else { selectedId = clickedId; selectedGroupId = null; selectedTerrain = null; applyDefaultEntityOverlayView(); } } else if (!entityLocked) { selectedId = null; selectedGroupId = null; selectedTerrain = null; if (!hadEntity) { const groundHit = terrainPickable ? raycaster.intersectObject(terrainPickable, false)[0] : null; if (groundHit) { const x = Math.round(groundHit.point.x), z = Math.round(groundHit.point.z); selectedTerrain = inside(x, z) ? { x, z } : null; } } } renderAll(); updateUI(); }
 function followSelected() {
@@ -10355,15 +11031,15 @@ function advanceEmbodiedGameplay(deltaMs, now) {
     animal.playerActionObjective = null; animal.playerSatisfierObjective = null; animal.playerRequestedSatisfier = null;
     const profile = LOCOMOTION_PROFILES[animal.speciesId], horizon = 4.5, enteringDirectControl = animal.movementRequest?.id !== "embodied-camera-relative";
     animal.movementRequest = createMovementRequest("embodied-camera-relative", { x: clamp(animal.x + movement.x * horizon, -HALF + 1, HALF - 1), z: clamp(animal.z + movement.z * horizon, -HALF + 1, HALF - 1) }, { destinationSource: "player-camera-relative", interactionRadius: .08, urgency: frame.sprint ? 1 : .55, mode: frame.sprint && animal.capabilities?.canSprint !== false && animal.lifeStage !== "dependent" ? "sprint" : "walk" });
-    animal.locomotion ||= createLocomotionState(animal, profile); if (enteringDirectControl) { Object.assign(animal.locomotion, { x: animal.x, z: animal.z, heading: animal.orientation || 0, vx: 0, vz: 0 }); gameplayCameraState.lastManualAt = now / 1000; } const beforeDistance = animal.locomotion.distanceTravelled || 0, beforeTurning = animal.locomotion.turningEffort || 0;
+    animal.locomotion ||= createLocomotionState(animal, profile); if (enteringDirectControl) { Object.assign(animal.locomotion, { x: animal.x, z: animal.z, heading: animal.orientation || 0, vx: 0, vz: 0 }); gameplayCameraState.lastManualAt = now / 1000; } const beforeDistance = animal.locomotion.distanceTravelled || 0, beforeTurning = animal.locomotion.turningEffort || 0, beforeX = animal.x, beforeZ = animal.z;
     runLocomotionMinute([animal], navigationMesh, { elapsed: realtimeLocomotionHours(dt, 1.75), substeps: 2, alignmentSlowAngle: Math.PI * 1.15, profileFor: () => ({ ...profile, turnRate: Math.max(8, profile.turnRate) }), terrainSpeedAt: (x, z, actor) => terrainTravelEffects(cellAt(x, z), actor).speed, neighboursFor: actor => nearbyAnimals(actor, 2.5), contactTargetFor: id => animalById(id) || sim.corpses.find(corpse => corpse.id === id) });
-    animal.playerMotionPending ||= { distance: 0, turning: 0 }; animal.playerMotionPending.distance += Math.max(0, animal.locomotion.distanceTravelled - beforeDistance); animal.playerMotionPending.turning += Math.max(0, animal.locomotion.turningEffort - beforeTurning); animal.visualMove = null;
+    animal.playerMotionPending ||= { distance: 0, turning: 0, fromX: beforeX, fromZ: beforeZ }; animal.playerMotionPending.distance += Math.max(0, animal.locomotion.distanceTravelled - beforeDistance); animal.playerMotionPending.turning += Math.max(0, animal.locomotion.turningEffort - beforeTurning); animal.playerMotionPending.toX = animal.x; animal.playerMotionPending.toZ = animal.z; animal.visualMove = null;
     if (animal.actionState?.key !== "travel") setAction(animal, "travel", { label: frame.sprint ? "sprinting under direct control" : "moving under direct control", intendedOutcome: "move in the camera-relative direction", moving: true });
   } else if (animal.movementRequest?.id === "embodied-camera-relative") { animal.movementRequest = null; animal.routeState = null; if (animal.locomotion) animal.locomotion.vx = animal.locomotion.vz = 0; }
   else if (running && animal.movementRequest) {
-    const profile = LOCOMOTION_PROFILES[animal.speciesId]; animal.locomotion ||= createLocomotionState(animal, profile); const beforeDistance = animal.locomotion.distanceTravelled || 0, beforeTurning = animal.locomotion.turningEffort || 0;
+    const profile = LOCOMOTION_PROFILES[animal.speciesId]; animal.locomotion ||= createLocomotionState(animal, profile); const beforeDistance = animal.locomotion.distanceTravelled || 0, beforeTurning = animal.locomotion.turningEffort || 0, beforeX = animal.x, beforeZ = animal.z;
     runLocomotionMinute([animal], navigationMesh, { elapsed: realtimeLocomotionHours(dt, 1.45), substeps: 2, profileFor: () => profile, terrainSpeedAt: (x, z, actor) => terrainTravelEffects(cellAt(x, z), actor).speed, neighboursFor: actor => nearbyAnimals(actor, 2.5), contactTargetFor: id => animalById(id) || sim.corpses.find(corpse => corpse.id === id) });
-    animal.playerMotionPending ||= { distance: 0, turning: 0 }; animal.playerMotionPending.distance += Math.max(0, animal.locomotion.distanceTravelled - beforeDistance); animal.playerMotionPending.turning += Math.max(0, animal.locomotion.turningEffort - beforeTurning); animal.visualMove = null;
+    animal.playerMotionPending ||= { distance: 0, turning: 0, fromX: beforeX, fromZ: beforeZ }; animal.playerMotionPending.distance += Math.max(0, animal.locomotion.distanceTravelled - beforeDistance); animal.playerMotionPending.turning += Math.max(0, animal.locomotion.turningEffort - beforeTurning); animal.playerMotionPending.toX = animal.x; animal.playerMotionPending.toZ = animal.z; animal.visualMove = null;
   }
   const speed = Math.hypot(animal.locomotion?.vx || 0, animal.locomotion?.vz || 0), preferredYaw = speed > .01 ? Math.atan2(animal.locomotion.vx, animal.locomotion.vz) : Math.atan2(Math.sin(Math.PI / 2 - (animal.orientation || 0)), Math.cos(Math.PI / 2 - (animal.orientation || 0)));
   updateGameplayCamera(gameplayCameraState, { dt, now: now / 1000, context, subject: visual, subjectHeight: scale, groundY, preferredYaw, speed, lookX: capabilities.control === "direct" ? frame.lookX : 0, lookY: capabilities.control === "direct" ? frame.lookY : 0, zoom: context === "navigation" || context === "action" ? frame.zoom : 0, minDistance: 5.5, maxDistance: 12.5, resolveDistance: (focus, cameraYaw, cameraPitch, requested) => resolveEmbodiedCameraDistance(focus, cameraYaw, cameraPitch, requested) });
@@ -10935,7 +11611,7 @@ function resetCamera() {
   controls.enablePan = true;
   controls.enableZoom = true;
   controls.enableDamping = true;
-  controls.minDistance = 6;
+  controls.minDistance = OBSERVER_MIN_DISTANCE;
   controls.maxDistance = 520;
   camera.fov = 46;
   camera.updateProjectionMatrix();
@@ -10962,14 +11638,14 @@ function predictiveTraceProjection(cycle) {
   };
 }
 function snapshotAnimalForPersistence(animal) {
-  const { visualMove, rss, predictiveCycle, decisionTrace, ...canonical } = animal;
+  const { visualMove, rss, predictiveCycle, decisionTrace, acousticObservations, ...canonical } = animal;
   // predictiveCognition.current is the canonical cycle. predictiveCycle and the
   // trace projection are runtime/readability aliases reconstructed after load.
   let canonicalTrace = decisionTrace;
   if (decisionTrace) { canonicalTrace = { ...decisionTrace }; delete canonicalTrace.predictive; }
   return { ...canonical, decisionTrace: canonicalTrace };
 }
-function snapshotWorld() { const snapshot = { ...sim, animals: sim.animals.map(snapshotAnimalForPersistence), predictivePersistenceSchema: 1, worldSchema: WORLD_SCHEMA, savedAt: new Date().toISOString(), saveSlotName: activeSaveSlotName || null }; delete snapshot.occupied; delete snapshot.entityIndex; delete snapshot.hexWorld; delete snapshot.cells; return snapshot; }
+function snapshotWorld() { const snapshot = { ...sim, animals: sim.animals.map(snapshotAnimalForPersistence), predictivePersistenceSchema: 1, acousticSchema: 2, needPlanSchema: NEED_DEPENDENCY_PLAN_SCHEMA, worldSchema: WORLD_SCHEMA, savedAt: new Date().toISOString(), saveSlotName: activeSaveSlotName || null }; delete snapshot.occupied; delete snapshot.entityIndex; delete snapshot.hexWorld; delete snapshot.cells; delete snapshot.soundEvents; delete snapshot.signalEmissions; delete snapshot.environmentSoundSources; return snapshot; }
 function openProgressDb() { return openCachedIndexedDB(AUTOSAVE_DB, { version: 1, indexedDBFactory: window.indexedDB, upgrade: db => { if (!db.objectStoreNames.contains(AUTOSAVE_STORE)) db.createObjectStore(AUTOSAVE_STORE); } }); }
 async function writeSnapshot(slot, snapshot = snapshotWorld()) { const db = await openProgressDb(); return new Promise((resolve, reject) => { const tx = db.transaction(AUTOSAVE_STORE, "readwrite"); tx.objectStore(AUTOSAVE_STORE).put(snapshot, slot); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Snapshot write aborted")); }); }
 async function deleteSnapshot(slot) { const db = await openProgressDb(); return new Promise((resolve, reject) => { const tx = db.transaction(AUTOSAVE_STORE, "readwrite"); tx.objectStore(AUTOSAVE_STORE).delete(slot); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Snapshot deletion aborted")); }); }
@@ -10984,10 +11660,12 @@ function backgroundJsonStringify(value) {
 }
 function activateSnapshot(snapshot, label, preparedHexWorld = null, preparedNavigationMesh = null) {
   if (!snapshot?.animals || !Number.isFinite(snapshot.seed)) throw new Error("not a valid world save");
-  if (snapshot.worldSchema !== WORLD_SCHEMA) throw new Error(`This save uses world schema ${snapshot.worldSchema ?? "unknown"}. The 365-day biological timing model requires schema ${WORLD_SCHEMA}; create a new world.`);
-  sim = migrateEcologicalClock(migrateMinuteClock({ ...createWorld(snapshot.seed, snapshot.worldSetup || worldSetup, null, preparedHexWorld, preparedNavigationMesh), ...snapshot })); activeSaveSlotName = String(snapshot.saveSlotName || "").trim() || null; ecologicalAccounting.reset(); ecologicalStockSnapshot = null; sim.worldSchema = WORLD_SCHEMA; sim.worldSetup = { ...worldSetup }; sim.embodiment = normalizeEmbodiment(snapshot.embodiment); sim.activeScent ||= {}; sim.weatherSystems ||= []; sim.lineageRecords ||= {};
+  if (!compatibleWorldSchema(snapshot.worldSchema)) throw new Error(`This save uses unsupported world schema ${snapshot.worldSchema ?? "unknown"}; create a new world.`);
+  sim = migrateEcologicalClock(migrateMinuteClock({ ...createWorld(snapshot.seed, snapshot.worldSetup || worldSetup, null, preparedHexWorld, preparedNavigationMesh), ...snapshot })); activeSaveSlotName = String(snapshot.saveSlotName || "").trim() || null; ecologicalAccounting.reset(); ecologicalStockSnapshot = null; sim.worldSchema = WORLD_SCHEMA; sim.acousticSchema = 2; sim.needPlanSchema = NEED_DEPENDENCY_PLAN_SCHEMA; sim.worldSetup = { ...worldSetup }; sim.embodiment = normalizeEmbodiment(snapshot.embodiment); sim.activeScent ||= {}; sim.airborneScentField ||= {}; sim.weatherSystems ||= []; sim.lineageRecords ||= {}; sim.traceField ||= {}; sim.soundEvents = []; sim.signalEmissions = [];
+  for (const cell of sim.cells || []) migrateSurfaceState(cell);
   for (const animal of sim.animals) {
-    migrateActionState(animal); migrateGoalPlan(animal, sim.tick); migrateCommitment(animal, sim.tick); migrateNeedPlanAudit(animal); migrateTemperatureState(animal); migrateReproductionEvents(animal, sim.tick); migrateReproductiveState(animal); migratePregnancyState(animal, species[animal.speciesId]); migrateSocialState(animal, species[animal.speciesId]); migrateGroupDisposition(animal, sim.tick); migrateEntityMemory(animal); migrateStrategicMemory(animal); migrateBodyComposition(animal); initializeFuelProjection(animal); migrateExertionState(animal); migrateLifeHistory(animal); migrateSenescence(animal, species[animal.speciesId].lifeHistory.development); migratePredationState(animal, sim.tick); migrateKinship(animal); migratePersonalSpace(animal); migratePredictiveCognition(animal, { mode: snapshot.animalCognitionMode || "PREDICTIVE_SHADOW", profile: snapshot.animalCognitionProfile || "FIXED" }); animal.predictiveCycle = animal.predictiveCognition?.current || null; if (animal.decisionTrace && animal.predictiveCycle) animal.decisionTrace.predictive = predictiveTraceProjection(animal.predictiveCycle); storeLineage(sim.lineageRecords, animal); clearFrameMotion(animal);
+    migrateActionState(animal); migrateGoalPlan(animal, sim.tick); migrateCommitment(animal, sim.tick); migrateNeedPlanAudit(animal); animal.needDependencyPlan = migrateNeedDependencyPlan(animal.needDependencyPlan, { tick: sim.tick, fallbackTargetKey: waterTargetKey(animal.actionState?.destination) }); migrateTemperatureState(animal); migrateReproductionEvents(animal, sim.tick); migrateReproductiveState(animal); migratePregnancyState(animal, species[animal.speciesId]); migrateSocialState(animal, species[animal.speciesId]); migrateGroupDisposition(animal, sim.tick); migrateEntityMemory(animal); migrateStrategicMemory(animal); migrateBodyComposition(animal); initializeFuelProjection(animal); migrateExertionState(animal); migrateLifeHistory(animal); migrateSenescence(animal, species[animal.speciesId].lifeHistory.development); migratePredationState(animal, sim.tick); migrateKinship(animal); migratePersonalSpace(animal); migratePredictiveCognition(animal, { mode: snapshot.animalCognitionMode || "PREDICTIVE_SHADOW", profile: snapshot.animalCognitionProfile || "FIXED" }); animal.predictiveCycle = animal.predictiveCognition?.current || null; if (animal.decisionTrace && animal.predictiveCycle) animal.decisionTrace.predictive = predictiveTraceProjection(animal.predictiveCycle); storeLineage(sim.lineageRecords, animal); clearFrameMotion(animal);
+    if (animal.needDependencyPlan?.need === "water" && !animal.needDependencyPlan.contactReservationKey) animal.needDependencyPlan.contactReservationKey = animal.drinkingSource?.reservationKey || null;
     const profile = LOCOMOTION_PROFILES[animal.speciesId];
     animal.locomotion ||= createLocomotionState(animal, profile);
     animal.locomotion.collisionRadius = collisionRadiusFor(animal, profile.bodyRadius);
@@ -11002,11 +11680,13 @@ function activateSnapshot(snapshot, label, preparedHexWorld = null, preparedNavi
     animal.exploredRevision = Number(animal.exploredRevision || Object.keys(animal.explored || {}).length);
     animal.heardEvents ||= (animal.communicationReveals || []).map((item) => ({ ...item, legacy: true }));
     animal.receivedSignals ||= [];
+    migrateIndividualAcousticTraits(animal, sim.seed);
     animal.threatAssessment ||= animal.threatEvidence ? { overallConfidence: clamp((animal.threatEvidence.score || 0) / 100, 0, 1), contributors: [], explanation: animal.threatEvidence.explanation || "legacy threat assessment" } : null;
     animal.memories = (animal.memories || []).map((item) => item.channel === "memory" ? item : { ...item, channel: "memory", provenance: "memory", originalChannel: item.originalChannel || item.channel || "unknown" });
     animal.memoryRevision = Number(animal.memoryRevision || animal.memories.length + (animal.longMemory || []).length);
     delete animal.communicationReveals; delete animal.threatEvidence;
   }
+  shorelineReservations.rebuild(sim.animals, sim.tick);
   sim.nextDecisionOrder = assignDecisionOrder(sim.animals, snapshot.nextDecisionOrder || 0);
   enforceWorldBoundary(); sim.occupied = new Map(sim.animals.filter((a) => a.alive).map((a) => [key(a), a.id])); buildEntityIndex();
   refreshGroupNames(sim.animals.filter((animal) => animal.alive));
@@ -11015,7 +11695,7 @@ function activateSnapshot(snapshot, label, preparedHexWorld = null, preparedNavi
 }
 async function activateSnapshotAsync(snapshot, label) {
   if (!snapshot?.animals || !Number.isFinite(snapshot.seed)) throw new Error("not a valid world save");
-  if (snapshot.worldSchema !== WORLD_SCHEMA) throw new Error(`This save uses world schema ${snapshot.worldSchema ?? "unknown"}. The 365-day biological timing model requires schema ${WORLD_SCHEMA}; create a new world.`);
+  if (!compatibleWorldSchema(snapshot.worldSchema)) throw new Error(`This save uses unsupported world schema ${snapshot.worldSchema ?? "unknown"}; create a new world.`);
   worldGenerationController?.abort();
   const controller = new AbortController(), previous = worldGenerationFallback || { sim, setup: { ...worldSetup }, running, slot: activeSaveSlotName };
   worldGenerationFallback = previous;
@@ -11045,7 +11725,7 @@ async function restoreAutosavedProgress(manual = false) { const slot = requested
 function savedSlotMetadata() { return readLocalList(SAVE_SLOTS_KEY).map((slot) => typeof slot === "string" ? { name: slot, seed: "unknown", day: "?", savedAt: "", worldSchema: null } : slot); }
 async function saveNamedSlot({ name: requestedName = "", alsoResume = false, silent = false } = {}) { const slots = savedSlotMetadata(), name = (requestedName || window.prompt("Name this save", `World day ${sim.day}`) || "").trim(); if (!name) return false; try { const snapshot = { ...snapshotWorld(), saveSlotName: name }; await Promise.all([writeSnapshot(`slot:${name}`, snapshot), ...(alsoResume ? [writeSnapshot("resume", snapshot)] : [])]); activeSaveSlotName = name; const entry = { name, seed: sim.seed, day: sim.day, savedAt: new Date().toLocaleString(), worldSchema: WORLD_SCHEMA }; writeLocalList(SAVE_SLOTS_KEY, [entry, ...slots.filter((x) => x.name !== name)].slice(0, 12)); if (!silent) { addEvent(`Saved slot: ${name} (seed ${sim.seed})`); updateUI(); } return true; } catch { if (!silent) { addEvent("Save slot failed: browser storage is full or unavailable"); updateUI(); } return false; } }
 async function loadNamedSlot() { const slots = savedSlotMetadata(); if (!slots.length) { addEvent("No named save slots yet"); updateUI(); return false; } const name = window.prompt(`Choose a save name\n${slots.map((x) => `${x.name} — seed ${x.seed}, day ${x.day}`).join("\n")}`)?.trim(); return name ? loadSlotByName(name) : false; }
-async function loadSlotByName(name) { try { const snapshot = await readSnapshot(`slot:${name}`); if (!snapshot) { addEvent(`No save slot named “${name}”`); updateUI(); return false; } if (snapshot.worldSchema !== WORLD_SCHEMA) { addEvent(`This save uses world schema ${snapshot.worldSchema ?? "unknown"}. The 365-day biological timing model requires schema ${WORLD_SCHEMA}; create a new world.`); updateUI(); return false; } await activateSnapshotAsync({ ...snapshot, saveSlotName: name }, `Loaded slot: ${name} (seed ${snapshot.seed})`); return true; } catch { addEvent("Load slot failed"); updateUI(); return false; } }
+async function loadSlotByName(name) { try { const snapshot = await readSnapshot(`slot:${name}`); if (!snapshot) { addEvent(`No save slot named “${name}”`); updateUI(); return false; } if (!compatibleWorldSchema(snapshot.worldSchema)) { addEvent(`This save uses unsupported world schema ${snapshot.worldSchema ?? "unknown"}; create a new world.`); updateUI(); return false; } await activateSnapshotAsync({ ...snapshot, saveSlotName: name }, `Loaded slot: ${name} (seed ${snapshot.seed})`); return true; } catch { addEvent("Load slot failed"); updateUI(); return false; } }
 function saveLaunchStatus(message, state = "loading") {
   if (!ui.gameMenuSaveControls) return;
   let output = ui.gameMenuSaveControls.querySelector("[data-save-launch-status]");
@@ -11100,6 +11780,8 @@ function applyEmbodimentPresentation() {
   let groupOutput = runtime.querySelector("#embodied-group-status");
   if (!groupOutput) { groupOutput = document.createElement("output"); groupOutput.id = "embodied-group-status"; groupOutput.className = "hint embodied-group-status"; const heading = [...runtime.querySelectorAll("#direct-action-runtime > strong")].find(element => element.textContent === "Group interaction"); heading?.after(groupOutput); }
   const inhabited = embodied ? inhabitedAnimal() : null, attention = inhabited ? animalSensoryAttention(inhabited) : null;
+  const embodiedCallSelect = runtime.querySelector('[data-player-selection="call"]');
+  if (embodiedCallSelect && inhabited) for (const option of embodiedCallSelect.options) { const modalities = supportedSignalModalities(inhabited, option.value); option.disabled = !modalities.includes("acoustic"); option.title = option.disabled ? "This species has no supported acoustic form for this signal." : `Supported through ${modalities.join(", ")}`; }
   if (focusOutput) focusOutput.textContent = attention ? `Sight ×${attention.vision.toFixed(2)} · hearing range ×${attention.hearingRange.toFixed(2)} · hearing accuracy ×${attention.hearingAccuracy.toFixed(1)} · ${attention.focusTicks >= 3 ? "fully focused" : `hold body and head still: ${attention.focusTicks}/3`}` : "Sight ×1 · hearing range ×1 · hearing accuracy ×1 · hold still: 0/3";
   if (groupOutput) groupOutput.textContent = inhabited ? embodiedGroupStatus(inhabited) : "No controlled organism.";
   const navigationHelp = runtime.querySelector("#embodied-navigation-help"); if (navigationHelp) navigationHelp.hidden = capabilities?.control !== "direct";
@@ -11119,12 +11801,15 @@ function applyEmbodimentPresentation() {
   if (embodied) { if (ui.overlayKnowledgeFog) ui.overlayKnowledgeFog.checked = capabilities.mapKnowledge !== "full"; if (!policy.overlays) for (const control of [ui.overlayVision, ui.overlayPersonalSpace, ui.overlayPredatorIntent, ui.overlaySmell, ui.overlaySound, ui.overlayCalls, ui.overlayMemory, ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone]) if (control) control.checked = false; if (!policy.entityIndicators) for (const control of [ui.overlayEntitySymbols, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar, ui.overlayAnalysisStage]) if (control) control.checked = false; }
 }
 function disposeWorldPresentation() {
+  if (weatherFieldOverlayMesh) { groups.weather.remove(weatherFieldOverlayMesh); weatherFieldOverlayMesh = null; } weatherPresentationFieldMarker = null;
   clearEntityPresentation(); clearCorpsePresentation(); disposeFogBuffer(); resetLandscapeChunks();
   clear(groups.animals); clear(groups.intent); clear(groups.overlays); clear(groups.terrain); clear(groups.plants); clear(groups.water);
+  weatherDataTexture?.dispose(); weatherDataTexture = null; weatherTextureData = null; renderedAcousticEvents.clear();
   groundMesh = null; groundColours = null; terrainPickable = null; terrainSurfaceTable = null; worldEdgeLine = null;
   lakeRenderMeshes.clear(); riverRenderMeshes.clear(); navigationMesh = null;
 }
 async function disposeWorldPresentationAsync() {
+  if (weatherFieldOverlayMesh) { groups.weather.remove(weatherFieldOverlayMesh); weatherFieldOverlayMesh = null; } weatherPresentationFieldMarker = null;
   traceWorldGeneration("disposing-entities"); clearEntityPresentation(); await cooperativeYield();
   traceWorldGeneration("disposing-corpses"); clearCorpsePresentation(); await cooperativeYield();
   traceWorldGeneration("disposing-fog"); disposeFogBuffer(); await cooperativeYield();
@@ -11132,11 +11817,14 @@ async function disposeWorldPresentationAsync() {
   const presentationGroups = [["intent", groups.intent], ["overlays", groups.overlays], ["terrain", groups.terrain], ["plants", groups.plants], ["water", groups.water]];
   for (const [name, group] of presentationGroups) { traceWorldGeneration(`disposing-${name}`); clear(group); await cooperativeYield(); }
   groundMesh = null; groundColours = null; terrainPickable = null; terrainSurfaceTable = null; worldEdgeLine = null;
+  weatherDataTexture?.dispose(); weatherDataTexture = null; weatherTextureData = null; renderedAcousticEvents.clear();
   lakeRenderMeshes.clear(); riverRenderMeshes.clear(); navigationMesh = null;
 }
 function commitGeneratedWorld(world, { label, saveSlotName = null, shouldRun = true } = {}) {
   activeSaveSlotName = saveSlotName;
   sim = migrateEcologicalClock(migrateMinuteClock(world));
+  for (const cell of sim.cells || []) migrateSurfaceState(cell);
+  sim.needPlanSchema = NEED_DEPENDENCY_PLAN_SCHEMA; shorelineReservations.rebuild(sim.animals, sim.tick);
   ecologicalAccounting.reset(); ecologicalStockSnapshot = null; invalidateResourceCellIndexes();
   if (worldGenerationInProgress) traceWorldGeneration("terrain-presentation");
   buildTerrain(); fogCacheKey = ""; landscapeDirty = true; selectedId = null; selectedTerrain = null; entityLocked = false;
@@ -11520,8 +12208,16 @@ function enforceWorldBoundary() {
   }
 }
 function nearestFree(a) { return validMoves(a)[0] || { x: a.x, z: a.z }; }
-function drinkableSource(a) {
+function releaseShorelineReservation(a) {
+  shorelineReservations.release(a.id);
+  if (a.needDependencyPlan?.need === "water") a.needDependencyPlan.contactReservationKey = null;
+  a.drinkingSource = null;
+}
+function drinkableSource(a, { reserve = true } = {}) {
   let best = null;
+  shorelineReservations.cleanup(sim.tick, id => Boolean(animalById(id)?.alive));
+  const retainedReservation = a.drinkingSource?.reservationKey || shorelineReservations.reservationFor(a.id)?.key || null;
+  const plannedWaterCell = a.needDependencyPlan?.need === "water" && a.needDependencyPlan.target ? cellAt(a.needDependencyPlan.target.x, a.needDependencyPlan.target.z) : null;
   const visited = new Set();
   for (const cell of neighbors(a)) {
     if (!cell || visited.has(cell.id) || !inside(cell.x, cell.z) || !cell.drinkable || cell.waterDepth <= 0) continue;
@@ -11535,8 +12231,16 @@ function drinkableSource(a) {
       if (distance < Math.max(.45, bodyRadius(other) + bodyRadius(a))) occupied += 1;
       if (a.speciesId === "grazer" && other.speciesId === "hunter" && distance < species[a.speciesId].sight) predatorPressure += 1;
     }
-    const candidate = { cell, contact, occupied, accessCost: Math.hypot(a.x - contact.x, a.z - contact.z) + occupied * 2.4 + predatorPressure * 3.5 };
-    if (!best || candidate.accessCost < best.accessCost || candidate.accessCost === best.accessCost && candidate.occupied < best.occupied) best = candidate;
+    const reservationKey = shorelineContactKey(cell.id, contact), owner = shorelineReservations.owner(reservationKey, sim.tick);
+    if (owner && owner !== a.id) continue;
+    const candidate = { cell, contact, occupied, reservationKey, accessCost: Math.hypot(a.x - contact.x, a.z - contact.z) + occupied * 2.4 + predatorPressure * 3.5 };
+    if (reservationKey === retainedReservation || plannedWaterCell?.id === cell.id && !retainedReservation) best = { ...candidate, retained: true };
+    else if (!best?.retained && (!best || candidate.accessCost < best.accessCost || candidate.accessCost === best.accessCost && (candidate.occupied < best.occupied || candidate.occupied === best.occupied && candidate.reservationKey.localeCompare(best.reservationKey) < 0))) best = candidate;
+  }
+  if (best && reserve) {
+    if (!shorelineReservations.reserve(a.id, best.reservationKey, sim.tick)) return drinkableSource(a, { reserve });
+    best.reservation = shorelineReservations.reservationFor(a.id);
+    if (a.needDependencyPlan?.need === "water") a.needDependencyPlan.contactReservationKey = best.reservationKey;
   }
   return best;
 }
@@ -11545,7 +12249,7 @@ function waterApproachCell(a, waterCell) {
   const candidates = indexedShorelineByWaterId.get(waterCell.id) || waterCell.neighbours || [];
   return nearestFrom(a, candidates, cell => cell && inside(cell.x, cell.z) && !cell.water && !cell.rocky && !cell.sandy);
 }
-function nearWater(a, r) { const source = drinkableSource(a); return Boolean(source && drinkingContactState(a, source.contact, { distanceTolerance: Math.max(.13, Number(r || 0) * .13) }).touching); }
+function nearWater(a, r) { const source = drinkableSource(a, { reserve: false }); return Boolean(source && drinkingContactState(a, source.contact, { distanceTolerance: Math.max(.13, Number(r || 0) * .13) }).touching); }
 function randomLandCell(rng, occupied) { for (let i = 0; i < 1000; i++) { const p = { x: Math.floor(rng() * WORLD) - HALF, z: Math.floor(rng() * WORLD) - HALF }; if (!occupied.has(key(p))) { occupied.add(key(p)); return p; } } return { x: 0, z: 0 }; }
 function cellAt(x, z) { return sim?.hexWorld?.lookup(clamp(x, -HALF + .001, HALF - .001), clamp(z, -HALF + .001, HALF - .001)) || null; }
 function neighbors(p) { const cell = cellAt(p.x, p.z); return cell ? [...cell.neighbours, cell] : []; }
@@ -11587,18 +12291,18 @@ function safeCoverFor(a) {
 function visionCoverOpacity(x, z) {
   const cell = cellAt(x, z);
   if (!cell) return 0;
-  if (cell.plantType === "tree") return partialTreeCover(cell) ? 0.26 : 0.9;
-  if (cell.plantType === "shrub" || cell.shrubland) return 0.12;
-  return clamp((cell.canopyCover || 0) * 0.18, 0, 0.18);
+  if (cell.plantType === "tree") return { opacity: partialTreeCover(cell) ? .26 : .9, layers: partialTreeCover(cell) ? ["trunk", "branches"] : ["trunk", "branches", "canopy"] };
+  if (cell.plantType === "shrub" || cell.shrubland) return { opacity: .12 + clamp(cell.vegetationDisturbance || 0, 0, 1) * -.035, layers: ["shrub-layer"] };
+  const grass = clamp(cell.grassHeight || 0, 0, 1), canopy = clamp(cell.canopyCover || 0, 0, 1);
+  return { opacity: clamp(canopy * .18 + grass * .08, 0, .24), layers: [...(grass > .12 ? ["ground-vegetation"] : []), ...(canopy > .12 ? ["canopy"] : [])] };
+}
+let perceptionEnvironmentInterface = null, authoritativeVisionInterface = null;
+function perceptionEnvironment() {
+  return perceptionEnvironmentInterface ||= createEnvironmentInterface({ cellAt, surfaceHeight: terrainRenderHeight, weatherAt: regionalWeatherAt, coverOpacity: visionCoverOpacity });
 }
 function visionResult(viewer, target, range, targetHeight = 0.38) {
-  return evaluateVision(viewer, target, {
-    range,
-    surfaceHeight: terrainRenderHeight,
-    targetHeight,
-    salience: target.id ? animalVisibilityQuality(viewer, target, range) : 1,
-    coverOpacity: visionCoverOpacity,
-  });
+  authoritativeVisionInterface ||= createVisionInterface({ environment: perceptionEnvironment(), rangeFor: visionRangeFor, salienceFor: animalVisibilityQuality });
+  return authoritativeVisionInterface.observe(viewer, target, { range, targetHeight });
 }
 function manhattan(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.z - b.z); }
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
@@ -11642,17 +12346,14 @@ function resize() { const { clientWidth, clientHeight } = ui.viewport; camera.as
 
 function updateScentFields(elapsed = 1) {
   sim.activeScent ||= {};
-  const windLoss = Math.pow(0.5, elapsed / 18) * Math.pow(1 - sim.weather.wind * 0.08, elapsed);
-  for (const k of Object.keys(sim.activeScent)) { const [x, z] = k.split(",").map(Number), c = cellAt(x, z); if (!c?.scent) { delete sim.activeScent[k]; continue; } c.scent.grazer *= windLoss; c.scent.hunter *= windLoss; if (Math.max(c.scent.grazer, c.scent.hunter) < 0.04) { c.scent = null; delete sim.activeScent[k]; } }
-  for (const a of sim.animals) {
-    if (!a.alive) continue;
-    const c = cellAt(a.x, a.z);
-    if (!c.scent) c.scent = { grazer: 0, hunter: 0 };
-    const scentGuild = isCarnivore(a) ? "hunter" : "grazer";
-    c.scent[scentGuild] = clamp((c.scent[scentGuild] || 0) + 0.7 * elapsed, 0, 5);
-    sim.activeScent[key(c)] = 1;
-  }
+  updateScentField({ activeScent: sim.activeScent, animals: sim.animals, elapsed, wind: sim.weather.wind, cellAt, cellKey: key, scentGuild: animal => isCarnivore(animal) ? "hunter" : "grazer" });
+  const field = currentAirborneScentField(), sources = sim.animals.filter(animal => animal.alive).map(animal => { const cell = cellAt(animal.x, animal.z); return { cellId: cell?.id, sourceId: animal.id, speciesId: animal.speciesId, guild: isCarnivore(animal) ? "hunter" : "grazer", strength: clamp(.28 + (animal.bodyMass || 20) / 500 + (animal.movementNoise || 0) * .18, .18, 1.4) }; }).filter(source => source.cellId != null);
+  field.advance({ cellFor: id => sim.cells[id], neighboursFor: cell => cell.neighbours || [], windAt: localWindAt, sources, elapsedHours: elapsed });
+  sim.airborneScentField = field.snapshot();
 }
+
+let airborneScentRuntime = null, airborneScentSimulation = null;
+function currentAirborneScentField() { if (airborneScentSimulation !== sim || !airborneScentRuntime) { airborneScentSimulation = sim; airborneScentRuntime = AirborneScentField.fromSnapshot(sim?.airborneScentField || {}); } return airborneScentRuntime; }
 
 function computeCapabilities(a, s) {
   const ageFactor = a.lifeStage === "dependent" ? 0.42 : a.lifeStage === "juvenile" ? 0.65 : a.lifeStage === "subadult" ? 0.84 : 1;
@@ -11697,6 +12398,7 @@ function updateInjuries(a, elapsedHours = 1) {
   for (const injury of a.injuries) {
     const healing = (fuelled ? 0.003 : 0.001) * ageingRecovery * elapsedHours;
     injury.severity -= healing;
+    injury.bleeding = Math.max(0, Number(injury.bleeding || 0) - (.008 + healing * 5) * elapsedHours);
     if (healing > 0) spendMetabolicEnergy(a, healing * 18, "healing");
     const damage = Math.max(0, injury.severity - 0.75) * 0.01 * elapsedHours;
     a.health -= damage;
@@ -11753,7 +12455,9 @@ function strikeAnimal(attacker, target, damage, type = "bite") {
   target.injuryFlashUntil = sim.tick + 22;
   target.lastHit = { attackerId: attacker.id, damage: Math.round(damage), type, tick: sim.tick };
   target.injuries ||= [];
-  target.injuries.push({ type, severity: clamp(0.35 + damage / 75, 0.35, 0.9), age: 0, sourceId: attacker.id });
+  const severity = clamp(0.35 + damage / 75, 0.35, 0.9), bleeding = clamp((severity - .3) * (type === "bite" ? .82 : .48), .04, .62);
+  target.injuries.push({ type, severity, bleeding, age: 0, sourceId: attacker.id });
+  queueBloodTrace(target, bleeding, type);
   rememberEntityEpisode(target, { kind: "attacked-by", targetId: attacker.id, speciesId: attacker.speciesId, x: attacker.x, z: attacker.z, damage, confidence: 1, intensity: clamp(damage / 55, .35, 1), outcome: "injured" }, sim.tick);
   rememberEntityEpisode(attacker, { kind: "attacked", targetId: target.id, speciesId: target.speciesId, x: target.x, z: target.z, damage, confidence: 1, intensity: clamp(damage / 70, .25, 1), outcome: target.health <= 0 ? "fatal" : "contact" }, sim.tick);
   registerGroupAttackEvidence(attacker, target, damage);
@@ -11767,7 +12471,10 @@ function maybeInjure(a, chance, sourceId = null, type = "limb") {
   if (rand() > chance) return;
   if (!a.injuries) a.injuries = [];
   const damage = 5 + rand() * 10;
-  a.injuries.push({ type, severity: 0.35 + rand() * 0.5, age: 0, sourceId });
+  const severity = 0.35 + rand() * 0.5;
+  const bleeding = clamp((severity - .32) * .42, .02, .34);
+  a.injuries.push({ type, severity, bleeding, age: 0, sourceId });
+  queueBloodTrace(a, bleeding, type);
   recordInjurySustained(a);
   a.health -= damage;
   updateTrauma(a);
@@ -11775,6 +12482,12 @@ function maybeInjure(a, chance, sourceId = null, type = "limb") {
   a.lastHit = { attackerId: sourceId, damage: Math.round(damage), type, tick: sim.tick };
   if (sourceId) { const source = animalById(sourceId); rememberEntityEpisode(a, { kind: "injured-by", targetId: sourceId, speciesId: source?.speciesId, x: source?.x, z: source?.z, damage, confidence: .9, intensity: clamp(damage / 35, .3, .85), outcome: "injured" }, sim.tick); }
   addEvent(`${a.id} was injured${sourceId ? ` by ${sourceId}` : ""}: −${Math.round(damage)} health`);
+}
+
+function queueBloodTrace(animal, intensity, cause) {
+  const impactCell = cellAt(animal.x, animal.z); if (!impactCell || intensity <= 0) return;
+  animal.pendingTraceEvidence ||= [];
+  animal.pendingTraceEvidence.push({ kind: impactCell.water ? "blood-in-water" : "blood", cellId: impactCell.id, sourceId: animal.id, speciesId: animal.speciesId, x: animal.x, z: animal.z, intensity: clamp(intensity), ageHours: 0, decayPerHour: impactCell.water ? .7 : .09, substrate: animal.lastSurfaceContact?.substrate || impactCell.substrate || "soil", injuryEvidence: true, cause });
 }
 
 function plantStageFor(cell) {
@@ -11835,6 +12548,25 @@ function updateSocialMemoryFromSenses(a) {
       const updated = rememberSocialEvent(a, other.id, "foraging", sim.tick, { hours: 6, x: contact.x, z: contact.z, observedCues: contact.bodyCues });
       if (relationshipKind(updated) === "friendship") strengthenRelationship(a.id, other.id, "friendship", updated.affinity);
     }
+  }
+  for (const contact of (a.sensoryBuffer || []).filter(item => item.channel === "smell" && item.socialMeaning)) {
+    const confidence = clamp(contact.confidence || 0, 0, 1), observation = { x: contact.x, z: contact.z, tick: sim.tick, channel: "smell", traceKind: contact.traceKind, confidence };
+    if (contact.identifiedIndividual) {
+      const other = animalById(contact.identifiedIndividual);
+      if (!other || other.speciesId !== a.speciesId) continue;
+      const record = rememberSocialEvent(a, other.id, "scent-observed", sim.tick, { x: contact.x, z: contact.z, observedCues: contact.socialMeaning });
+      record.lastScent = observation; record.scentConfidence = Math.max(record.scentConfidence || 0, confidence);
+      record.observedCues = { ...(record.observedCues || {}), ...contact.socialMeaning };
+      continue;
+    }
+    const key = `${contact.identifiedSpecies || "unknown"}:${Math.round(contact.x)}:${Math.round(contact.z)}:${contact.traceKind}`;
+    a.socialScentMemory ||= {};
+    a.socialScentMemory[key] = { key, speciesId: contact.identifiedSpecies || null, possibleIndividual: contact.possibleIndividual || null, identityResolved: false, socialMeaning: { ...contact.socialMeaning }, lastObserved: observation, expiresTick: sim.tick + Math.max(4, Math.round(18 * confidence)) };
+  }
+  if (a.socialScentMemory) {
+    for (const [key, memory] of Object.entries(a.socialScentMemory)) if (memory.expiresTick < sim.tick) delete a.socialScentMemory[key];
+    const retained = Object.values(a.socialScentMemory).sort((left, right) => right.lastObserved.tick - left.lastObserved.tick || left.key.localeCompare(right.key)).slice(0, 24);
+    a.socialScentMemory = Object.fromEntries(retained.map(memory => [memory.key, memory]));
   }
 }
 
@@ -12074,8 +12806,9 @@ function seekWater(a) {
   // Once a real source is locally reachable, switch from approximate memory
   // navigation to its exact shoreline contact point.
   if (drinkableSource(a)) return drink(a);
+  const plannedTarget = a.needDependencyPlan?.need === "water" && !a.needDependencyPlan.suspended ? a.needDependencyPlan.target : null;
   const emergencyThreshold = a.pregnant || a.lifeStage === "dependent" || a.lifeStage === "old" ? 46 : 36;
-  if (a.hydration <= emergencyThreshold) {
+  if (!plannedTarget && a.hydration <= emergencyThreshold) {
     const emergencyWater = nearestFrom(a, drinkableCellIndex());
     if (emergencyWater) {
       const approach = waterApproachCell(a, emergencyWater);
@@ -12084,7 +12817,7 @@ function seekWater(a) {
       return moveToward(a, contact, "travel", "closing the final emergency distance to sensed surface water", "make shoreline contact and confirm the source", { allowOutsideNavmesh: true, sprint: urgentTravel });
     }
   }
-  const known = resourceMemories(a, "water")[0];
+  const known = plannedTarget || resourceMemories(a, "water")[0];
   if (known) {
     const searchRadius = resourceSearchRadius(known);
     if (known.exact) {
@@ -12249,22 +12982,23 @@ function overlayHeadingQuaternion(heading) {
     .setFromAxisAngle(temporaryOverlayPool.upAxis, -heading)
     .multiply(temporaryOverlayPool.flatQuaternion);
 }
-function drawVisionSector(a, range) {
+function drawVisionSector(a, range, sensor = null, poolKey = "vision") {
   const sector = buildGroundVisionSector(a, range, terrainRenderHeight, {
     angularSegments: TEST_MODE ? 14 : 28,
     radialSegments: Math.max(2, Math.ceil(range / 1.5)),
+    ...(sensor ? { fov: sensor.fieldDegrees * Math.PI / 180, heading: (a.orientation || 0) + (a.headYaw || 0) + sensor.yawDegrees * Math.PI / 180 } : {}),
     isVisible: (x, z) => visionResult(a, { x, z }, range, 0.08).visible,
   });
   if (!sector.positions.length) return;
   const required = sector.positions.length;
-  let projection = temporaryOverlayPool.vision;
+  let projection = temporaryOverlayPool[poolKey];
   if (!projection) {
     const capacity = Math.max(256, 2 ** Math.ceil(Math.log2(required)));
     const geometry = new THREE.BufferGeometry();
     const attribute = new THREE.BufferAttribute(new Float32Array(capacity), 3);
     attribute.setUsage(THREE.DynamicDrawUsage); geometry.setAttribute("position", attribute); geometry.setDrawRange(0, 0);
-    const mesh = new THREE.Mesh(geometry, senseMats.vision); mesh.renderOrder = 30; mesh.frustumCulled = false; mesh.visible = false;
-    projection = temporaryOverlayPool.vision = { geometry, attribute, mesh, capacity };
+    const mesh = new THREE.Mesh(geometry, senseMats[poolKey] || senseMats.vision); mesh.renderOrder = 30; mesh.frustumCulled = false; mesh.visible = false;
+    projection = temporaryOverlayPool[poolKey] = { geometry, attribute, mesh, capacity };
     temporaryOverlayPoolRoot.add(mesh);
   } else if (required > projection.capacity) {
     projection.capacity = 2 ** Math.ceil(Math.log2(required));
@@ -12289,6 +13023,13 @@ function drawSelectedOverlays() {
   }
   const a = selectedAnimal() || moviePrimaryAnimal(), enabled = (channel, control) => movieChannelEnabled(channel, Boolean(control?.checked));
   if (!a) return;
+  if (ui.overlayEnvironmentalHistory?.checked) {
+    const historyRecords = nearbyAuthoritativeTraceRecords(a, 36).filter(record => HISTORY_TRACE_KINDS.includes(record.kind));
+    for (const record of historyRecords) {
+      const durable = record.kind === "bone" || record.kind === "shed-antler", size = durable ? .62 : record.kind === "dung" ? .4 : .27;
+      addTemporaryOverlayInstance(geos.marker, durable ? mats.skeleton : mats.memory, 28, { x: record.x, y: terrainRenderHeight(record.x, record.z) + (durable ? .22 : .12), z: record.z }, { x: size, y: durable ? .22 : .1, z: size });
+    }
+  }
   if (enabled("personal", ui.overlayPersonalSpace)) {
     const nearby = [a], nearbyIds = new Set([a.id]);
     for (const contact of a.sensoryBuffer || []) {
@@ -12321,7 +13062,13 @@ function drawSelectedOverlays() {
   }
   const range = visionRangeFor(a);
   if (enabled("vision", ui.overlayVision)) {
-    drawVisionSector(a, range);
+    const eyeSensors = sensorDefinitions(a).filter(sensor => sensor.type === "eye");
+    if (eyeSensors.length === 2) { drawVisionSector(a, range, eyeSensors[0], "visionLeft"); drawVisionSector(a, range, eyeSensors[1], "visionRight"); }
+    else drawVisionSector(a, range);
+    for (const sensor of sensorDefinitions(a).filter(item => item.type === "eye" || item.type === "infrared" || item.type === "thermal")) {
+      const anchor = sensorWorldAnchor(a, sensor, { surfaceHeight: terrainRenderHeight });
+      addTemporaryOverlayInstance(geos.marker, sensor.type === "eye" ? senseMats.sightContact : senseMats.infrared, 34, anchor, { x: .13, y: .13, z: .13 });
+    }
     const contacts = boundedOverlayTop(a.sensoryBuffer, 20, (contact) => contact.channel === "sight", (contact) => contact.confidence);
     for (const contact of contacts) addTemporaryOverlayInstance(geos.marker, senseMats.sightContact, 31, { x: contact.x, y: terrainRenderHeight(contact.x, contact.z) + .38, z: contact.z }, { x: 1.9, y: .55, z: 1.9 });
     for (const contact of boundedOverlayMatches(a.sensoryBuffer, 12, (item) => item.channel === "infrared")) {
@@ -12347,7 +13094,13 @@ function drawSelectedOverlays() {
   const showSound = enabled("sound", ui.overlaySound), showCalls = enabled("calls", ui.overlayCalls);
   if (showSound || showCalls) {
     const hearingRange = hearingRangeFor(a);
-    if (showSound) ringAt(a, hearingRange, senseMats.hearing);
+    if (showSound) {
+      ringAt(a, hearingRange, senseMats.hearing);
+      for (const sensor of sensorDefinitions(a).filter(item => item.type === "ear" || item.type === "vibration")) {
+        const anchor = sensorWorldAnchor(a, sensor, { surfaceHeight: terrainRenderHeight });
+        addTemporaryOverlayInstance(geos.marker, sensor.type === "ear" ? senseMats.hearingContact : senseMats.vibration, 34, anchor, { x: .13, y: .13, z: .13 });
+      }
+    }
     const heard = boundedOverlayTop(a.sensoryBuffer, 16, (m) => m.channel === "hearing" && ((showCalls && (m.signalKind || m.communicatedBy)) || (showSound && !m.signalKind && !m.communicatedBy)), (m) => m.confidence);
     for (const sound of heard) {
       const understood = Boolean(sound.communicatedBy || sound.type === "water" || sound.type === "food" || sound.type === "predator" || sound.type === "preyTrail");
@@ -12745,6 +13498,49 @@ function predictiveLaboratoryPopulationSummary(animals = []) {
   return { metrics, modeCounts, frameworkCounts, authorityCounts };
 }
 
+function nearbyAuthoritativeTraceRecords(animal, limit = 48) {
+  if (!animal || !sim?.traceField) return [];
+  const radius = Math.max(4, Math.min(18, awarenessRange(animal) || 8)), records = [];
+  for (const cellRecords of Object.values(sim.traceField)) for (const record of cellRecords || []) {
+    if (!Number.isFinite(Number(record.x)) || !Number.isFinite(Number(record.z))) continue;
+    if (Math.hypot(Number(record.x) - animal.x, Number(record.z) - animal.z) <= radius) records.push(record);
+  }
+  return records.sort((left, right) => Number(right.intensity || 0) - Number(left.intensity || 0) || Number(left.ageHours || 0) - Number(right.ageHours || 0)).slice(0, limit);
+}
+
+function renderPerceptionLaboratory(selected) {
+  const root = ui.perceptionDiagnostics;
+  if (!root) return;
+  if (!selected?.alive) {
+    root.innerHTML = `<p class="hint">Select a living organism to compare its sensor anatomy, temporal vision and perceived evidence with authoritative simulation truth.</p>`;
+    return;
+  }
+  const safe = value => escapeHtml(String(value ?? "—"));
+  const sensors = sensorAnatomyDiagnostic(selected, sensorDefinitions(selected));
+  const motion = temporalMotionDiagnostic(selected.sensoryBuffer || []);
+  const traceInspection = truthPerceptionTraceInspection(nearbyAuthoritativeTraceRecords(selected), selected.sensoryBuffer || []);
+  const causal = causalWhyDiagnostic(selected), hypotheses = (selected.evidenceHypotheses || []).slice(0, 8), history = environmentalHistorySummary(sim.traceField), gaze = gazeControlDiagnostic(selected), latency = perceptionLatencyDiagnostic(selected), research = perceptionResearchReadiness();
+  const sensorRows = sensors.map(sensor => `<tr><td>${safe(sensor.id)}</td><td>${safe(sensor.type)}</td><td>${safe(sensor.anatomicalParent)}</td><td>${sensor.localPosition.map(value => Number(value).toFixed(2)).join(", ")}</td><td>${Number(sensor.orientationDegrees).toFixed(1)}°</td><td>${sensor.fieldDegrees == null ? "—" : `${Number(sensor.fieldDegrees).toFixed(0)}°`}</td><td>${safe(sensor.mobility)}</td><td>${safe(sensor.evidenceGrade)}${sensor.visibleGeometryRequired ? "" : " · invisible anchor"}</td></tr>`).join("");
+  const motionRows = motion.map(item => `<tr><td>${safe(item.subject)}</td><td>${Number(item.effectiveHz || 0).toFixed(1)} Hz</td><td>${Number(item.sampleIntervalSeconds || 0).toFixed(3)} s</td><td>${Math.round(item.motionConfidence * 100)}%</td><td>${Math.round(item.velocityConfidence * 100)}%</td><td>${item.velocityUncertainty == null ? "not estimated" : safe(item.velocityUncertainty)}</td><td>${safe(item.evidenceGrade)}</td></tr>`).join("");
+  const traceRows = traceInspection.map(item => `<tr><td>${safe(item.truth.kind)}</td><td>${safe(item.truth.sourceId || "unknown")}</td><td>${Math.round(item.truth.intensity * 100)}% · ${Number(item.truth.ageHours).toFixed(1)} h · ${safe(item.truth.substrate)}</td><td>${item.perceived.detected ? `${safe(item.perceived.channel)} · ${Math.round(item.perceived.confidence * 100)}% · ${safe(item.perceived.freshness || "freshness uncertain")}` : `<strong>Missed</strong> · ${safe(item.perceived.reason)}`}</td></tr>`).join("");
+  const whyNotRows = causal.whyNot.map(item => `<li><strong>${safe(item.alternative)}</strong> (${Math.round(item.score)}): ${safe(item.reason)}</li>`).join("");
+  const hypothesisRows = hypotheses.map(item => `<li><strong>${safe(item.kind || item.type || "hypothesis")}</strong> · ${Math.round(Number(item.confidence || 0) * 100)}% confidence${item.sourceId ? ` · possible source ${safe(item.sourceId)}` : ""}${item.ecologicalUse ? ` · ${safe(item.ecologicalUse.replaceAll("-", " "))}` : ""}${item.siteKinds?.length ? ` (${item.siteKinds.map(kind => safe(kind.replaceAll("-", " "))).join(", ")})` : ""}</li>`).join("");
+  const historyKinds = Object.entries(history.kinds).filter(([, count]) => count).map(([kind, count]) => `<li><strong>${safe(kind)}</strong>: ${count}</li>`).join("");
+  const historyHotspots = history.hotspots.map(item => { const cell = sim.cells[Number(item.cellId)]; return `<tr><td>${safe(item.cellId)}</td><td>${cell ? `${Number(cell.x).toFixed(1)}, ${Number(cell.z).toFixed(1)}` : "unknown"}</td><td>${safe(item.kinds.join(", "))}</td><td>${item.count}</td><td>${Number(item.oldestHours).toFixed(1)} h</td></tr>`; }).join("");
+  const latencyRows = latency.map(item => `<tr><td>${safe(item.evidenceId)}</td><td>${safe(item.channel || "unknown")}</td><td>${item.stages.map(stage => `${safe(stage.stage)} +${Number(stage.offsetSeconds || 0).toFixed(3)} s (${Number(stage.latencySeconds || 0).toFixed(3)} s stage)`).join(" → ")}</td><td>${Number(item.totalSeconds || 0).toFixed(3)} s</td><td>${item.complete ? "physical response recorded; new locomotion onset delayed once" : "still accumulating"}</td></tr>`).join("");
+  root.innerHTML = `<p class="hint">Diagnostic display only. Invisible anchors and simulation truth shown here are never granted to the animal.</p>
+    <h3>Sensor anatomy</h3><div class="table-scroll"><table><thead><tr><th>Sensor</th><th>Type</th><th>Parent</th><th>Local anchor</th><th>Orientation</th><th>Field</th><th>Mobility</th><th>Evidence</th></tr></thead><tbody>${sensorRows || `<tr><td colspan="8">No sensor definitions are available.</td></tr>`}</tbody></table></div>
+    <h3>Temporal motion</h3><div class="table-scroll"><table><thead><tr><th>Observed subject</th><th>Effective resolution</th><th>Sample interval</th><th>Motion confidence</th><th>Velocity confidence</th><th>Velocity uncertainty</th><th>Evidence</th></tr></thead><tbody>${motionRows || `<tr><td colspan="7">No current sight contact contains temporal-motion evidence.</td></tr>`}</tbody></table></div>
+    <h3>Dynamic gaze and orienting</h3><p><strong>Target:</strong> ${safe(gaze.targetId || "none")} · ${safe(gaze.channel || "no channel")} · ${Math.round(gaze.confidence * 100)}% confidence. Left eye ${gaze.leftEyeYawDegrees.toFixed(1)}°, right eye ${gaze.rightEyeYawDegrees.toFixed(1)}°, convergence ${gaze.convergenceDegrees.toFixed(1)}°, head ${gaze.headYawDegrees.toFixed(1)}°, stabilization ${Math.round(gaze.stabilization * 100)}%.</p>
+    <h3>Sensory-to-motor latency</h3><div class="table-scroll"><table><thead><tr><th>Evidence</th><th>Channel</th><th>Recorded chain</th><th>Modelled total</th><th>Status</th></tr></thead><tbody>${latencyRows || `<tr><td colspan="5">No sensory-to-motor chain has been recorded yet.</td></tr>`}</tbody></table></div>
+    <h3>Truth versus this animal's perception</h3><div class="table-scroll"><table><thead><tr><th>Laboratory truth</th><th>True source</th><th>Physical trace</th><th>Animal perception</th></tr></thead><tbody>${traceRows || `<tr><td colspan="4">No authoritative physical traces lie within the bounded inspection area.</td></tr>`}</tbody></table></div>
+    <h3>Current evidence hypotheses</h3><ul>${hypothesisRows || `<li>No prey or threat hypothesis is currently supported by trace evidence.</li>`}</ul>
+    <h3>Long-term environmental history</h3><p class="hint">Authoritative retained evidence across the world. This history is not automatically known by the selected animal.</p><div class="predictive-metric-grid"><div><span>Last day</span><strong>${history.periods["last-day"]}</strong></div><div><span>Last week</span><strong>${history.periods["last-week"]}</strong></div><div><span>Last season</span><strong>${history.periods["last-season"]}</strong></div><div><span>Last year</span><strong>${history.periods["last-year"]}</strong></div><div><span>Older</span><strong>${history.periods.older}</strong></div></div><ul>${historyKinds || `<li>No retained biological or structural history yet.</li>`}</ul><div class="table-scroll"><table><thead><tr><th>Hotspot cell</th><th>Position</th><th>Evidence</th><th>Records</th><th>Oldest</th></tr></thead><tbody>${historyHotspots || `<tr><td colspan="5">Environmental history will accumulate as ecological time passes.</td></tr>`}</tbody></table></div>
+    <h3>Scientific provenance readiness</h3><p><strong>${research.exactAndSourced} of ${research.profileCount}</strong> temporal profiles currently have exact-species evidence and source identifiers. ${safe(research.warning || "The profile catalogue passes the exact-species readiness gate.")}</p><p class="hint">Human comparison: ${Number(research.humanReference.temporalResolution.value).toFixed(1)} Hz reference, explicitly non-simulated and method-dependent.</p>
+    <h3>Why this action?</h3><p><strong>${safe(causal.chosen.drive)}</strong> scored ${Math.round(causal.chosen.score)} and produced <strong>${safe(causal.chosen.action)}</strong>. Explanation basis: ${safe(causal.explanationStatus)}.</p><ol>${causal.chain.map(step => `<li>${safe(step)}</li>`).join("")}</ol>
+    <h3>Why not?</h3><ul>${whyNotRows || `<li>No ranked alternative candidates were retained in the current diagnostic record.</li>`}</ul><p><strong>Why not flee?</strong> ${safe(causal.whyNotFlee)}</p>${causal.constraints.length ? `<p><strong>Recorded constraints:</strong> ${causal.constraints.map(item => safe(typeof item === "object" ? JSON.stringify(item) : item)).join("; ")}</p>` : ""}`;
+}
+
 function renderPredictiveLaboratory(selected) {
   const workspace = document.querySelector("#predictive-systems-workspace"); if (!workspace || !sim) return;
   if (!laboratorySurfaceVisible(workspace)) return;
@@ -12812,7 +13608,7 @@ function updateUI(force = true, now = performance.now()) {
 }
 function configureSelectedPanel(selected, corpse, terrain) {
   const node = (id) => document.getElementById(id), show = (id, visible) => { const element = node(id); if (element) element.hidden = !visible; }, title = (id, value) => { const element = node(id); if (element) element.textContent = value; };
-  for (const id of ["selected-identity-section", "selected-behaviour-section", "selected-body-section", "selected-social-section", "selected-knowledge-section", "selected-predictive-section", "selected-environment-section"]) show(id, true);
+  for (const id of ["selected-identity-section", "selected-behaviour-section", "selected-body-section", "selected-social-section", "selected-knowledge-section", "selected-perception-diagnostics-section", "selected-predictive-section", "selected-environment-section"]) show(id, true);
   if (selected) {
     const matureEntity = mature(selected), female = selected.sex === "F", carnivore = selected.speciesId === "hunter";
     node("selected-behaviour-section").querySelector("summary").textContent = "Current behaviour";
@@ -12828,13 +13624,13 @@ function configureSelectedPanel(selected, corpse, terrain) {
     title("selected-social-heading", "Life history and relationships"); title("selected-reproduction-label", "Pregnancy at death"); title("selected-relation-label", "Surviving relationships and carcass claim");
     show("selected-reproduction-row", corpse.sex === "F" && Boolean(corpse.pregnancyAtDeath));
     node("selected-knowledge-section").querySelector("summary").textContent = "Retained life record";
-    show("selected-predictive-section", false); show("selected-environment-section", false);
+    show("selected-perception-diagnostics-section", false); show("selected-predictive-section", false); show("selected-environment-section", false);
   } else if (terrain) {
     node("selected-behaviour-section").querySelector("summary").textContent = "Terrain state"; node("selected-body-section").querySelector("summary").textContent = "Soil, water and biomass";
-    title("selected-social-heading", "Landscape relationships"); title("selected-relation-label", "Basin and drainage relationship"); show("selected-reproduction-row", false); show("selected-predictive-section", false);
+    title("selected-social-heading", "Landscape relationships"); title("selected-relation-label", "Basin and drainage relationship"); show("selected-reproduction-row", false); show("selected-perception-diagnostics-section", false); show("selected-predictive-section", false);
   } else {
     node("selected-behaviour-section").querySelector("summary").textContent = "Current behaviour"; node("selected-body-section").querySelector("summary").textContent = "Body, condition and needs";
-    title("selected-social-heading", "World relationships"); title("selected-relation-label", "Relationships"); show("selected-reproduction-row", false); show("selected-predictive-section", false);
+    title("selected-social-heading", "World relationships"); title("selected-relation-label", "Relationships"); show("selected-reproduction-row", false); show("selected-perception-diagnostics-section", false); show("selected-predictive-section", false);
   }
 }
 function updateUIWork(force = false, now = performance.now()) {
@@ -12844,6 +13640,14 @@ function updateUIWork(force = false, now = performance.now()) {
   const selected = selectedAnimal();
   const corpse = selectedCorpse();
   const terrain = selectedTerrain ? cellAt(selectedTerrain.x, selectedTerrain.z) : null;
+  if (ui.sensoryPerspective) {
+    const mode = ui.sensoryPerspective.value;
+    if (acousticPerspective.mode !== mode || acousticPerspective.entityId !== (mode === SENSORY_PERSPECTIVE_MODES.ENTITY_EXPERIENCE ? selected?.id || null : null) || acousticPerspective.speciesId !== (mode === SENSORY_PERSPECTIVE_MODES.SPECIES_LENS ? selected?.speciesId || null : null)) acousticPerspective = createSensoryPerspective({ mode, speciesId: mode === SENSORY_PERSPECTIVE_MODES.SPECIES_LENS ? selected?.speciesId || null : null, entityId: mode === SENSORY_PERSPECTIVE_MODES.ENTITY_EXPERIENCE ? selected?.id || null : null });
+    if (ui.sensoryPerspectiveStatus) {
+      const profile = selected ? acousticProfile(selected) : null, sensorCount = selected ? sensorDefinitionsFor(selected, biologicalPhenotype(selected)).length : 0;
+      ui.sensoryPerspectiveStatus.textContent = mode === SENSORY_PERSPECTIVE_MODES.ENTITY_EXPERIENCE && !selected ? "Select a living organism for Entity Experience." : `${sensoryTranslationLabel(acousticPerspective)}${profile && mode !== SENSORY_PERSPECTIVE_MODES.HUMAN_OBSERVER ? ` · ${profile.displayName} biology · ${sensorCount} modelled sensors` : ""}. Animal hearing remains authoritative while audio is muted.`;
+    }
+  }
   const worldSurfaceVisible = laboratorySurfaceVisible(document.querySelector("#laboratory-panel-world"));
   const entitySurfaceVisible = laboratorySurfaceVisible(document.querySelector("#laboratory-panel-entity"));
   const mapSurfaceVisible = laboratorySurfaceVisible(document.querySelector("#laboratory-panel-map"));
@@ -12871,7 +13675,7 @@ function updateUIWork(force = false, now = performance.now()) {
   }
   if (recordsSurfaceVisible || menuSaveSlotsVisible) {
     const slots = savedSlotMetadata();
-    const slotMarkup = slots.length ? slots.map((slot) => { const compatible = slot.worldSchema === WORLD_SCHEMA; return `<div class="save-slot"><button type="button" ${compatible ? `data-save-slot="${escapeHtml(slot.name)}"` : "disabled"}>${escapeHtml(slot.name)} <span>${compatible ? `seed ${escapeHtml(String(slot.seed))} · day ${escapeHtml(String(slot.day))}` : "incompatible · new 365-day world required"}</span></button><button type="button" data-delete-save="${escapeHtml(slot.name)}" aria-label="Delete ${escapeHtml(slot.name)}">Delete</button></div>`; }).join("") : `<span class="hint">No named saves yet. Use Save simulation state to preserve this world.</span>`;
+    const slotMarkup = slots.length ? slots.map((slot) => { const compatible = compatibleWorldSchema(slot.worldSchema); return `<div class="save-slot"><button type="button" ${compatible ? `data-save-slot="${escapeHtml(slot.name)}"` : "disabled"}>${escapeHtml(slot.name)} <span>${compatible ? `seed ${escapeHtml(String(slot.seed))} · day ${escapeHtml(String(slot.day))}` : "incompatible · unsupported world schema"}</span></button><button type="button" data-delete-save="${escapeHtml(slot.name)}" aria-label="Delete ${escapeHtml(slot.name)}">Delete</button></div>`; }).join("") : `<span class="hint">No named saves yet. Use Save simulation state to preserve this world.</span>`;
     if (recordsSurfaceVisible) updateLaboratoryMarkup(ui.saveSlotList, slotMarkup);
     if (menuSaveSlotsVisible && menuSaveSlotList._laboratoryMarkup !== slotMarkup) { menuSaveSlotList.innerHTML = slotMarkup; menuSaveSlotList._laboratoryMarkup = slotMarkup; }
   }
@@ -13017,7 +13821,7 @@ function updateUIWork(force = false, now = performance.now()) {
     const listening = (selected.stationaryTicks || 0) >= 2 ? "focused listening ×5" : "moving/ordinary listening";
     const intent = selected.predatorIntentEstimate;
     const intentDiagnostic = intent ? `predator ${intent.predatorId}: presence ${Math.round(intent.presenceConfidence * 100)}%, detection ${Math.round(intent.detectionLikelihood * 100)}%, self-target ${Math.round(intent.selfTargetLikelihood * 100)}%, attack imminence ${Math.round(intent.attackImminence * 100)}%, inference confidence ${Math.round(intent.confidence * 100)}% (${intent.level}); ` : "";
-    ui.selectedAwareness.textContent = `${selected.sensoryBuffer.length} contacts; vision ${visionRangeFor(selected)} cells; sound ${hearingRangeFor(selected)} cells (${listening}); ${intentDiagnostic}${selected.predation?.preyAwareness ? `predation ${selected.predation.phase}; prey awareness ${selected.predation.preyAwareness}; group ${selected.predation.lastKnown?.groupSize || 1}; ` : ""}${Object.keys(selected.explored || {}).length} map cells explored; ${(selected.mapReveals || []).length} explicit map reveals`;
+    ui.selectedAwareness.textContent = `${selected.sensoryBuffer.length} contacts; vision ${visionRangeFor(selected)} cells; acoustic broad phase ${hearingRangeFor(selected)} cells (${listening}); ${explainLatestAcousticObservation(selected)} ${intentDiagnostic}${selected.predation?.preyAwareness ? `predation ${selected.predation.phase}; prey awareness ${selected.predation.preyAwareness}; group ${selected.predation.lastKnown?.groupSize || 1}; ` : ""}${Object.keys(selected.explored || {}).length} map cells explored; ${(selected.mapReveals || []).length} explicit map reveals`;
     ui.priorityList.innerHTML = goalRankingHtml(selected.goalPlan, "goal-ranking");
     const rss = selected.rss;
     ui.rssTrace.innerHTML = decisionTraceVisible(accessModeFor(selected)) ? formatTrace(rss?.current).map((x) => `<li>${escapeHtml(x)}</li>`).join("") : "<li>Decision trace is available only in Laboratory diagnostic mode.</li>";
@@ -13033,8 +13837,10 @@ function updateUIWork(force = false, now = performance.now()) {
   }
   if (worldGenerationInProgress) traceWorldGeneration("ui-need-planning");
   renderLiveNeedPlanning(selected);
+  renderPerceptionLaboratory(selected);
   if (worldGenerationInProgress) traceWorldGeneration("ui-predictive-laboratory");
   renderPredictiveLaboratory(selected);
+  renderAcousticLaboratory(selected);
   if (worldGenerationInProgress) traceWorldGeneration("ui-visual-language");
   renderVisualLanguageLaboratory();
   if (worldGenerationInProgress) traceWorldGeneration("ui-ecology-laboratory");
@@ -13419,7 +14225,7 @@ function observerOverlayControls() {
   const seen = contacts.filter(item => item.channel === "sight").length, smelled = contacts.filter(item => item.channel === "smell").length, heard = contacts.filter(item => item.channel === "hearing").length, memories = (animal?.memories?.length || 0) + (animal?.longMemory?.length || 0);
   const authority = `<div class="observer-overlay-authority" aria-label="Epistemic authority"><span title="Animal-owned evidence">👁 <strong>${seen + smelled + heard}</strong></span><i>≠</i><span title="Authoritative Laboratory truth">◉ <strong>${scentCells + claims}</strong></span></div>`;
   const counters = `<div class="observer-evidence-counters"><span title="Sight contacts">👁 <strong>${seen}</strong></span><span title="Smell contacts">👃 <strong>${smelled}</strong></span><span title="Sound contacts">👂 <strong>${heard}</strong></span><span title="Calls and messages">📣 <strong>${calls}</strong></span><span title="Memories">🧠 <strong>${memories}</strong></span><span title="Predator-intent estimates">⚠ <strong>${intents}</strong></span></div>`;
-  return `${authority}<div class="observer-overlay-groups"><fieldset class="observer-overlay-group"><legend>👁 Senses</legend><div class="observer-overlays">${option("vision", ui.overlayVision, "Vision")}${option("smell", ui.overlaySmell, "Smell")}${option("sound", ui.overlaySound, "Sound")}${option("memory", ui.overlayMemory, "Memory")}${option("intent", ui.overlayPredatorIntent, "Intent")}${option("fog", ui.overlayKnowledgeFog, "Knowledge fog")}</div></fieldset><fieldset class="observer-overlay-group"><legend>➜ Movement</legend><div class="observer-overlays">${option("personal", ui.overlayPersonalSpace, "Personal space")}${option("ring", ui.overlaySelectionRing, "Selection ring")}${option("navigation", ui.overlayNavigationCues, "Direction")}${option("trails", ui.overlayMotionTrails, "Recent path")}${option("focus", ui.overlayEntityFocus, "Known world")}</div></fieldset><fieldset class="observer-overlay-group"><legend>📣 Communication</legend><div class="observer-overlays">${option("calls", ui.overlayCalls, "Calls and receivers")}</div></fieldset><fieldset class="observer-overlay-group"><legend>◉ Environment</legend><div class="observer-overlays">${option("biomass", ui.overlayBiomass, "Vegetation")}${option("water", ui.overlayWater, "Water")}${option("scent", ui.overlayPheromone, "Scent field")}${option("territories", ui.overlayTerritories, "Territory")}</div></fieldset><fieldset class="observer-overlay-group"><legend>▣ Presentation</legend><div class="observer-overlays">${presentationOption}</div></fieldset></div>${counters}${observerLaboratoryLink("map", "Open perception records in Laboratory")}`;
+  return `${authority}<div class="observer-overlay-groups"><fieldset class="observer-overlay-group"><legend>👁 Senses</legend><div class="observer-overlays">${option("vision", ui.overlayVision, "Vision")}${option("smell", ui.overlaySmell, "Smell")}${option("sound", ui.overlaySound, "Sound")}${option("memory", ui.overlayMemory, "Memory")}${option("intent", ui.overlayPredatorIntent, "Intent")}${option("fog", ui.overlayKnowledgeFog, "Knowledge fog")}</div></fieldset><fieldset class="observer-overlay-group"><legend>➜ Movement</legend><div class="observer-overlays">${option("personal", ui.overlayPersonalSpace, "Personal space")}${option("ring", ui.overlaySelectionRing, "Selection ring")}${option("navigation", ui.overlayNavigationCues, "Direction")}${option("trails", ui.overlayMotionTrails, "Recent path")}${option("focus", ui.overlayEntityFocus, "Known world")}</div></fieldset><fieldset class="observer-overlay-group"><legend>📣 Communication</legend><div class="observer-overlays">${option("calls", ui.overlayCalls, "Calls and receivers")}</div></fieldset><fieldset class="observer-overlay-group"><legend>◉ Environment</legend><div class="observer-overlays">${option("biomass", ui.overlayBiomass, "Vegetation")}${option("water", ui.overlayWater, "Water")}${option("scent", ui.overlayPheromone, "Scent field")}${option("history", ui.overlayEnvironmentalHistory, "Environmental history")}${option("territories", ui.overlayTerritories, "Territory")}</div></fieldset><fieldset class="observer-overlay-group"><legend>▣ Presentation</legend><div class="observer-overlays">${presentationOption}</div></fieldset></div>${counters}${observerLaboratoryLink("map", "Open perception records in Laboratory")}`;
 }
 
 function updateObserverHud(selected, herb, carn, corpse = selectedCorpse()) {

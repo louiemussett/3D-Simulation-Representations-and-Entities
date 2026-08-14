@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { evaluateVision, visionFov, withinVisionCone } from "../src/vision-model.js";
+import { evaluateVision, eyeDetection, visionFov, withinVisionCone } from "../src/vision-model.js";
 
 test("a moving predator sees prey in its forward cone", () => {
   const hunter = { speciesId: "hunter", x: 0, z: 0, orientation: 0, stationaryTicks: 0 };
@@ -54,4 +54,14 @@ test("head rotation steers sight without itself widening the field", () => {
   assert.equal(withinVisionCone(viewer, { x: 0, z: 5 }, 8), true);
   assert.equal(withinVisionCone(viewer, { x: 5, z: 0 }, 8), false);
   assert.equal(visionFov(viewer.speciesId, viewer.sensoryFocusTicks), visionFov("hunter", 0));
+});
+
+test("authoritative sight reports separate left, right, and binocular sensors", () => {
+  const viewer = { speciesId: "hunter", x: 0, z: 0, orientation: 0, stationaryTicks: 0 };
+  const centre = eyeDetection(viewer, 0);
+  assert.equal(centre.binocular, true);
+  assert.deepEqual(centre.detectedBy, ["left-eye", "right-eye"]);
+  const side = evaluateVision(viewer, { x: 4, z: 3 }, { range: 12, surfaceHeight: () => 0, coverOpacity: () => 0 });
+  assert.equal(side.visible, true);
+  assert.ok(side.detectedBy.length >= 1);
 });

@@ -155,7 +155,7 @@ Regional weather is a lightweight synoptic approximation: moving low-pressure ra
 
 ## Animals
 
-Every world retains the generic deer-like Valley Grazer and wolf-like Ridge Hunter. Compact, Medium, Standard and Vast worlds currently select progressively broader 6-, 14-, 20- and 26-species ecosystems; the count follows ecological functions rather than a fixed target. The remaining catalogue entries are simplified real species spanning trophic roles, climates, body scales, social systems and reproductive strategies. Every organism has age, sex, body size, mass, health, energy, hydration, fullness, fatigue, injuries, temperature stress, aggression and individual sensory/memory state.
+The catalogue retains the original generic deer-like Valley Grazer and wolf-like Ridge Hunter unchanged, alongside separately selectable updated versions with current visual anatomy and simulation profiles. Compact, Medium, Standard and Vast worlds select progressively broader 6-, 14-, 20- and 28-species ecosystems; the count follows ecological functions rather than a fixed target. The remaining catalogue entries are simplified real species spanning trophic roles, climates, body scales, social systems and reproductive strategies. Every organism has age, sex, body size, mass, health, energy, hydration, fullness, fatigue, injuries, temperature stress, aggression and individual sensory/memory state.
 
 They can search, drink, graze, hunt, scavenge, flee, rest, digest, communicate, court, reject a mate, conceive, give birth, nurse, follow caregivers, defend young, form groups and die. Occupied cells prevent animals from sharing the same space.
 

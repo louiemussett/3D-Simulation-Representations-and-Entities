@@ -60,6 +60,8 @@ const gait = (family, label, cadence, amplitude, feedingStyle, stalk = true) => 
 export const SPECIES_LOCOMOTION = Object.freeze({
   grazer: gait("elastic-walk", "elastic deer walk and bounding run", .0042, .045, "graze"),
   hunter: gait("lope", "wolf-like walk, lope and ground stalk", .004, .04, "tear"),
+  "valley-grazer-updated": gait("long-stride", "red-deer-informed walk, trot and bounding gallop", .0044, .052, "browse"),
+  "ridge-hunter-updated": gait("lope", "grey-wolf-informed walk, endurance lope and coordinated stalk", .0042, .044, "tear"),
   "meadow-nibbler": gait("hop", "compact rabbit hop", .0068, .115, "nibble", false),
   "great-plains-grazer": gait("heavy-plod", "heavy rolling plod", .0032, .032, "graze"),
   "woodland-browser": gait("long-stride", "long high woodland stride", .0035, .05, "browse"),

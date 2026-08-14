@@ -16,6 +16,8 @@ const visualDesign = (bodyShape, bodyScale, headShape, headScale, headOffset, fe
 const BASE_SPECIES_VISUAL_DESIGNS = freeze({
   grazer: null,
   hunter: null,
+  "valley-grazer-updated": visualDesign("long", [.76, .5, 1.02], "long", [.34, .34, .48], [0, .5, .68], [{ kind: "broad-antlers", attach: "head" }, { kind: "large-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
+  "ridge-hunter-updated": visualDesign("sloped", [.72, .43, 1.02], "tapered", [.4, .4, .5], [0, .43, .7], [{ kind: "pointed-ears", attach: "head" }, { kind: "bushy-tail", attach: "body" }]),
   "meadow-nibbler": visualDesign("ellipsoid", [.62, .42, .72], "round", [.31, .33, .3], [0, .34, .48], [{ kind: "long-ears", attach: "head" }, { kind: "short-tail", attach: "body" }]),
   "great-plains-grazer": visualDesign("barrel", [.94, .62, 1.02], "block", [.48, .43, .48], [0, .5, .65], [{ kind: "shoulder-hump", attach: "body" }, { kind: "paired-horns", attach: "head" }]),
   "woodland-browser": visualDesign("long", [.76, .58, 1.12], "long", [.34, .32, .5], [0, .55, .72], [{ kind: "broad-antlers", attach: "head" }, { kind: "large-ears", attach: "head" }]),
@@ -52,6 +54,8 @@ const silhouette = (bodyProfile, headProfile, featureGroups = [], options = {}) 
 });
 
 const SILHOUETTE_RECIPES = freeze({
+  "valley-grazer-updated": silhouette("elevated-deep", "elongated", [{ kind: "broad-antlers", attach: "head" }, { kind: "large-ears", attach: "head" }, { kind: "short-tail", attach: "body" }], { bodyElevation: .56, footprint: 1.08, markings: [{ kind: "dark-mantle", attach: "body" }] }),
+  "ridge-hunter-updated": silhouette("sloped-wedge", "pointed", [{ kind: "pointed-ears", attach: "head" }, { kind: "bushy-tail", attach: "body" }], { footprint: 1.05, markings: [{ kind: "dark-mantle", attach: "body" }] }),
   "meadow-nibbler": silhouette("pear", "rounded", [{ kind: "long-ears", attach: "head" }, { kind: "short-tail", attach: "body" }], { displayScale: .92 }),
   "great-plains-grazer": silhouette("front-heavy", "blunt", [{ kind: "paired-horns", attach: "head" }], { footprint: 1.12 }),
   "woodland-browser": silhouette("elevated-deep", "elongated", [{ kind: "broad-antlers", attach: "head" }, { kind: "large-ears", attach: "head" }], { bodyElevation: .64, footprint: 1.12 }),
@@ -131,6 +135,8 @@ const entry = (id, values) => {
 export const SPECIES = freeze({
   grazer: entry("grazer", { label: "Valley Grazer", generic: true, realLifeBasis: "average deer", symbol: "VG", guild: "herbivore", feeding: "grass", sizeClass: "medium", adultMass: 65, speed: 1, vision: 8, smell: 5, hearing: 7, energyCapacity: 120, enduranceMultiplier: 1, reproductionEnergy: 70, femaleCriticalFat: 12, hungerRate: .18, thirstRate: .65, maternalCare: .9, herdTendency: .65, social: "stable-herd", habitat: "grassland", colour: 0xe6bc52, enabledByDefault: true, defaultPopulation: 18 }),
   hunter: entry("hunter", { label: "Ridge Hunter", generic: true, realLifeBasis: "average grey wolf", symbol: "RH", guild: "carnivore", feeding: "prey-carrion", sizeClass: "medium", adultMass: 42, speed: 1, vision: 11, smell: 8, hearing: 7, energyCapacity: 360, enduranceMultiplier: 3, reproductionEnergy: 78, femaleCriticalFat: 10, hungerRate: .045, thirstRate: .65, maternalCare: .72, herdTendency: .22, social: "pack", hunting: "pursuit", preySizes: ["small", "medium"], habitat: "open", colour: 0xd96cff, enabledByDefault: true, defaultPopulation: 4 }),
+  "valley-grazer-updated": entry("valley-grazer-updated", { label: "Valley Grazer — Updated", generic: true, realLifeBasis: "red deer-informed updated model", symbol: "VU", guild: "herbivore", feeding: "mixed-plants", sizeClass: "medium", adultMass: 160, speed: 1.04, vision: 9, smell: 8, hearing: 9, energyCapacity: 155, enduranceMultiplier: 1.2, reproductionEnergy: 72, femaleCriticalFat: 12, hungerRate: .17, thirstRate: .62, maternalCare: .92, herdTendency: .62, social: "seasonal-herd", habitat: "woodland-edge", colour: 0x8b5a32, enabledByDefault: false, defaultPopulation: 8 }),
+  "ridge-hunter-updated": entry("ridge-hunter-updated", { label: "Ridge Hunter — Updated", generic: true, realLifeBasis: "grey wolf-informed updated model", symbol: "RU", guild: "carnivore", feeding: "prey-carrion", sizeClass: "medium", adultMass: 43, speed: 1.08, vision: 11, smell: 11, hearing: 10, energyCapacity: 390, enduranceMultiplier: 3.2, reproductionEnergy: 78, femaleCriticalFat: 10, hungerRate: .043, thirstRate: .62, maternalCare: .82, herdTendency: .5, social: "pack", hunting: "cooperative-pursuit", preySizes: ["small", "medium", "large"], habitat: "woodland-edge", colour: 0x7b858c, enabledByDefault: false, defaultPopulation: 3 }),
   "meadow-nibbler": entry("meadow-nibbler", { label: "European Rabbit", scientificName: "Oryctolagus cuniculus", symbol: "ER", guild: "herbivore", feeding: "grass", sizeClass: "tiny", adultMass: 4, speed: 1.12, vision: 8, hearing: 10, energyCapacity: 55, hungerRate: .26, thirstRate: .52, herdTendency: .4, social: "colony", habitat: "cover-edge", colour: 0x8d795e, enabledByDefault: true, defaultPopulation: 12 }),
   "great-plains-grazer": entry("great-plains-grazer", { label: "American Bison", scientificName: "Bison bison", symbol: "BI", guild: "herbivore", feeding: "grass", sizeClass: "large", adultMass: 500, speed: .78, energyCapacity: 250, hungerRate: .24, thirstRate: .82, maternalCare: .9, herdTendency: .85, social: "large-herd", habitat: "long-grass", defence: "mass", colour: 0x6f4d32, enabledByDefault: true, defaultPopulation: 6 }),
   "woodland-browser": entry("woodland-browser", { label: "Moose", scientificName: "Alces alces", symbol: "MO", guild: "herbivore", feeding: "shrub", sizeClass: "large", adultMass: 450, speed: .94, energyCapacity: 220, hungerRate: .19, thirstRate: .65, maternalCare: .96, herdTendency: .18, social: "family", habitat: "woodland", defence: "mass", colour: 0x66513d, enabledByDefault: true, defaultPopulation: 7 }),
@@ -165,6 +171,8 @@ export const SPECIES_IDS = freeze(Object.keys(SPECIES));
 export const FOOD_ECOLOGY = freeze({
   grazer: freeze({ plants: freeze({ grass: 1.15, shrub: .08, tree: 0 }), carrion: freeze({}) }),
   hunter: freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ grazer: 1.15, "dryland-runner": 1, "waterline-grazer": .9, "armoured-browser": .12 }) }),
+  "valley-grazer-updated": freeze({ plants: freeze({ grass: 1, shrub: .82, tree: .28 }), carrion: freeze({}) }),
+  "ridge-hunter-updated": freeze({ plants: freeze({ grass: 0, shrub: 0, tree: 0 }), carrion: freeze({ "valley-grazer-updated": 1.25, grazer: 1.05, "dryland-runner": 1, "waterline-grazer": .9, "great-plains-grazer": .35 }) }),
   "meadow-nibbler": freeze({ plants: freeze({ grass: 1.25, shrub: .12, tree: 0 }), carrion: freeze({}) }),
   "great-plains-grazer": freeze({ plants: freeze({ grass: 1.2, shrub: .06, tree: 0 }), carrion: freeze({}) }),
   "woodland-browser": freeze({ plants: freeze({ grass: .08, shrub: 1.2, tree: .72 }), carrion: freeze({}) }),
@@ -196,6 +204,7 @@ export const FOOD_ECOLOGY = freeze({
 // explicit territory is reserved for species/resources that can be defended.
 export const SPATIAL_ECOLOGY = freeze({
   grazer: freeze({ mode: "home-range", territoriality: .12, radius: 10 }), hunter: freeze({ mode: "seasonal-territory", territoriality: .62, radius: 15, breedingMultiplier: 1.25 }),
+  "valley-grazer-updated": freeze({ mode: "seasonal-home-range", territoriality: .16, radius: 13 }), "ridge-hunter-updated": freeze({ mode: "pack-territory", territoriality: .74, radius: 18, breedingMultiplier: 1.2 }),
   "meadow-nibbler": freeze({ mode: "home-range", territoriality: .08, radius: 6 }), "great-plains-grazer": freeze({ mode: "home-range", territoriality: .08, radius: 15 }),
   "woodland-browser": freeze({ mode: "core-range", territoriality: .28, radius: 10 }), "brush-fox": freeze({ mode: "pair-territory", territoriality: .72, radius: 11 }),
   "shadow-stalker": freeze({ mode: "territory", territoriality: .86, radius: 16 }), "great-omnivore": freeze({ mode: "seasonal-territory", territoriality: .52, radius: 17, resourceMultiplier: 1.2 }),
@@ -220,6 +229,8 @@ const habitat = (preferred, tolerated, moisture, temperature, cover) => freeze({
 export const HABITAT_ECOLOGY = freeze({
   grazer: habitat(["short-grassland", "tall-grassland"], ["open-woodland", "dry-grassland", "wet-meadow"], [.28, .7], [-8, 28], [0, .42]),
   hunter: habitat(["open-woodland", "short-grassland", "boreal-forest"], ["tall-grassland", "temperate-forest", "dry-grassland"], [.2, .78], [-18, 28], [.08, .72]),
+  "valley-grazer-updated": habitat(["open-woodland", "temperate-forest", "tall-grassland"], ["short-grassland", "wet-meadow", "shrubland"], [.3, .78], [-12, 26], [.08, .76]),
+  "ridge-hunter-updated": habitat(["open-woodland", "boreal-forest", "temperate-forest"], ["short-grassland", "tall-grassland", "dry-grassland"], [.2, .82], [-24, 26], [.1, .82]),
   "meadow-nibbler": habitat(["short-grassland", "open-woodland"], ["tall-grassland", "shrubland", "dry-grassland"], [.25, .68], [-5, 28], [.12, .62]),
   "great-plains-grazer": habitat(["tall-grassland", "short-grassland"], ["dry-grassland", "open-woodland"], [.2, .68], [-12, 30], [0, .34]),
   "woodland-browser": habitat(["boreal-forest", "riparian-woodland", "shrub-swamp"], ["temperate-forest", "wooded-swamp", "riparian-thicket"], [.45, .92], [-20, 20], [.38, 1]),
@@ -312,6 +323,7 @@ export const speciesCategoryTotals = (counts = {}) => { const exact = enabledSpe
 
 export const ECOLOGY_PRESETS = freeze({
   "ridge-hunter-web": freeze(["grazer", "hunter", "dryland-runner"]),
+  "updated-originals": freeze(["valley-grazer-updated", "ridge-hunter-updated"]),
   "brush-fox-web": freeze(["meadow-nibbler", "brush-nibbler", "brush-fox"]),
   "shadow-stalker-web": freeze(["grazer", "woodland-browser", "shadow-stalker"]),
   "pack-breaker-web": freeze(["great-plains-grazer", "armoured-browser", "northern-shaggy-grazer", "pack-breaker"]),
@@ -349,6 +361,7 @@ export function ecologyRosterForWorldScale(span = 1) {
 // these values are never compressed representatives of a larger population.
 export const ECOLOGY_PRESET_POPULATIONS = freeze({
   "ridge-hunter-web": freeze({ hunter: 1, grazer: 54, "dryland-runner": 95 }),
+  "updated-originals": freeze({ "valley-grazer-updated": 18, "ridge-hunter-updated": 4 }),
   "brush-fox-web": freeze({ "brush-fox": 1, "meadow-nibbler": 267, "brush-nibbler": 197 }),
   "shadow-stalker-web": freeze({ "shadow-stalker": 1, grazer: 50, "woodland-browser": 72 }),
   "pack-breaker-web": freeze({ "pack-breaker": 1, "great-plains-grazer": 11, "armoured-browser": 7, "northern-shaggy-grazer": 10 }),
@@ -363,7 +376,8 @@ export const ECOLOGY_PRESET_POPULATIONS = freeze({
     "brush-nibbler": 456, "waterline-ambusher": 1, "northern-shaggy-grazer": 10,
     "highland-prowler": 1, "little-opportunist": 1, "cold-country-scavenger": 1,
     "sunscale-ambusher": 1, "shieldback-colony": 1, "wild-boar": 5,
-    "african-elephant": 3, dromedary: 5, "common-ostrich": 5
+    "african-elephant": 3, dromedary: 5, "common-ostrich": 5,
+    "valley-grazer-updated": 8, "ridge-hunter-updated": 3
   })
 });
 

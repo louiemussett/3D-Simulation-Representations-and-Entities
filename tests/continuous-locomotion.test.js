@@ -5,6 +5,17 @@ import { interactionRadius, physicalContact, resolveAnimalBodyCollision, softSep
 import { buildNavMesh } from "../src/navmesh.js";
 import { findNavPath } from "../src/navmesh-pathfinding.js";
 import { bodySupportedByNavmesh, createLocomotionState, createMovementRequest, predictedRequestDestination, runLocomotionMinute } from "../src/locomotion-system.js";
+
+test("motor latency delays only the beginning of a new movement request", () => {
+  const mesh = { worldRadius: 1, polygons: new Map([["land", { id: "land", slope: 0, rocky: false }]]), polygonAt: () => "land" };
+  const animal = { id: "latency", speciesId: "grazer", alive: true, x: 0, z: 0, orientation: 0 };
+  animal.locomotion = createLocomotionState(animal);
+  animal.movementRequest = createMovementRequest("go", { x: 3, z: 0 }, { motorDelayHours: .5, allowOutsideNavmesh: true });
+  runLocomotionMinute([animal], mesh, { elapsed: .25, substeps: 1, neighboursFor: () => [] });
+  assert.equal(animal.x, 0); assert.ok(animal.movementRequest.motorDelayHours > 0);
+  runLocomotionMinute([animal], mesh, { elapsed: .5, substeps: 1, neighboursFor: () => [] });
+  assert.ok(animal.x > 0); assert.equal(animal.movementRequest.motorDelayHours, 0);
+});
 const profile = { maxSpeed: 2, acceleration: 2, braking: 2, turnRate: Math.PI * 2, bodyRadius: .25, separationWeight: 1 };
 test("steering turns shortest and cannot overshoot", () => { assert.ok(shortestAngle(Math.PI - .1, -Math.PI + .1) > 0); assert.equal(brakingDistance(2, 2), 1); const next = steeringStep({ x: 0, z: 0, vx: 4, vz: 0, heading: 0 }, { x: .2, z: 0 }, profile, 1, { stoppingRadius: .1 }); assert.ok(next.x <= .1 + 1e-9); });
 test("pursuit is capped and contact target is exempt from separation", () => { assert.deepEqual(predictIntercept({ x: 0, z: 0 }, { x: 10, z: 0, vx: 1, vz: 0, confidence: 1 }, 1, 2), { x: 12, z: 0, lead: 2 }); assert.equal(interactionRadius({ bodyRadius: .2 }, { bodyRadius: .3 }, "attack"), .5); assert.equal(interactionRadius({ bodyRadius: .2 }, { bodyRadius: .3 }, "mating"), .5); assert.equal(interactionRadius({ bodyRadius: .2 }, { bodyRadius: .3 }, "nursing"), .5); assert.equal(interactionRadius({ bodyRadius: .2 }, { bodyRadius: .3 }, "feeding"), .5); assert.equal(physicalContact({ x: 0, z: 0, bodyRadius: .2 }, { x: .51, z: 0, bodyRadius: .3 }), true); assert.equal(physicalContact({ x: 0, z: 0, bodyRadius: .2 }, { x: .511, z: 0, bodyRadius: .3 }), false); assert.deepEqual(softSeparation({ id: "a", x: 0, z: 0, bodyRadius: .2 }, [{ id: "b", x: .1, z: 0, bodyRadius: .2 }], { contactTargetId: "b" }), { x: 0, z: 0 }); });

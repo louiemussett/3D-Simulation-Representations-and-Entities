@@ -59,14 +59,23 @@ export function evidenceRef(contact, tick, overrides = {}) {
     identifiedSpecies: contact.identifiedSpecies ?? null, speciesId: contact.speciesId ?? null,
     coarseClass: contact.coarseClass ?? null, identifiedIndividual: contact.identifiedIndividual ?? null,
     detectedMotion: contact.detectedMotion == null ? null : Boolean(contact.detectedMotion),
+    motionConfidence: Number.isFinite(contact.motionConfidence) ? Math.max(0, Math.min(1, contact.motionConfidence)) : 0,
     vx: Number.isFinite(contact.vx) ? contact.vx : null, vz: Number.isFinite(contact.vz) ? contact.vz : null,
     velocityConfidence: Number.isFinite(contact.velocityConfidence) ? Math.max(0, Math.min(1, contact.velocityConfidence)) : 0,
+    velocityUncertainty: Number.isFinite(contact.velocityUncertainty) ? Math.max(0, contact.velocityUncertainty) : null,
+    temporalResolution: contact.temporalResolution ? immutableProjection(contact.temporalResolution, { maxDepth: 3, maxArrayLength: 8, maxObjectKeys: 16 }) : null,
     heading: Number.isFinite(contact.heading) ? contact.heading : null,
     headHeading: Number.isFinite(contact.headHeading) ? contact.headHeading : null,
     bearing: Number.isFinite(contact.bearing) ? contact.bearing : null,
     region: contact.region && typeof contact.region === "object" ? immutableProjection(contact.region, { maxDepth: 3, maxArrayLength: 12, maxObjectKeys: 16 }) : contact.region ?? null, occlusionReason: contact.occlusionReason ?? null,
     apparentMass: Number.isFinite(contact.apparentMass) ? contact.apparentMass : null,
-    bodyCues: contact.bodyCues ? immutableProjection(contact.bodyCues, { maxDepth: 3, maxArrayLength: 12, maxObjectKeys: 24 }) : null
+    bodyCues: contact.bodyCues ? immutableProjection(contact.bodyCues, { maxDepth: 3, maxArrayLength: 12, maxObjectKeys: 24 }) : null,
+    acoustic: contact.acoustic ? immutableProjection(contact.acoustic, { maxDepth: 5, maxArrayLength: 16, maxObjectKeys: 32 }) : null,
+    traceKind: contact.traceKind ?? null,
+    freshness: contact.freshness ? immutableProjection(contact.freshness, { maxDepth: 3, maxArrayLength: 8, maxObjectKeys: 16 }) : null,
+    airborne: Boolean(contact.airborne), groundContact: Boolean(contact.groundContact),
+    upwindX: Number.isFinite(contact.upwindX) ? contact.upwindX : null, upwindZ: Number.isFinite(contact.upwindZ) ? contact.upwindZ : null,
+    evidenceBoundary: contact.evidenceBoundary ?? contact.informationBoundary ?? null
   };
   return Object.freeze(ref);
 }

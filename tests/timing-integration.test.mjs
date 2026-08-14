@@ -14,12 +14,13 @@ test("application weather and reproduction use the shared timing models", async 
   assert.doesNotMatch(source, /speciesId === "grazer" \? 28 : 36/);
 });
 
-test("world schema five rejects old biological timing saves without deleting them", async () => {
+test("world schema six migrates schema five and rejects older saves without deleting them", async () => {
   const source = await read("../src/app.js");
-  assert.match(source, /const WORLD_SCHEMA = 5/);
-  assert.match(source, /365-day biological timing model requires schema/);
+  assert.match(source, /const WORLD_SCHEMA = 6/);
+  assert.match(source, /COMPATIBLE_WORLD_SCHEMAS = new Set\(\[5, WORLD_SCHEMA\]\)/);
+  assert.match(source, /migrateIndividualAcousticTraits\(animal, sim\.seed\)/);
   assert.match(source, /Incompatible previous world/);
-  assert.match(source, /incompatible · new 365-day world required/);
+  assert.match(source, /incompatible · unsupported world schema/);
 });
 
 test("time controls and documentation describe the 365-day calendar", async () => {
@@ -27,7 +28,7 @@ test("time controls and documentation describe the 365-day calendar", async () =
   assert.match(html, /value="43200">30 days/);
   assert.match(html, /value="525600">1 ecological year \(365 days\)/);
   assert.match(readme, /Spring 92, Summer 92, Autumn 91 and Winter 90/);
-  assert.match(development, /World schema 5 deliberately rejects older timing-model saves/);
+  assert.match(development, /World schema 6 adds deterministic acoustic identities/);
 });
 
 test("new worlds can load an entered seed at an exact absolute day", async () => {

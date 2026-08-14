@@ -48,10 +48,10 @@ const graphicsPresetDefinition = (overrides) => Object.freeze({
 });
 
 export const GRAPHICS_PRESETS = Object.freeze({
-  low: graphicsPresetDefinition({ iconTextureQuality: 1, renderScale: .65, adaptiveMinScale: .5, adaptiveMaxScale: .65, vegetationStride: 4, animalDetail: .72, diagnosticScale: 1.25, effects: false, contactShadows: false, adaptiveResolution: true, frameCap: 30 }),
-  balanced: graphicsPresetDefinition({ iconTextureQuality: 2, renderScale: 1, adaptiveMinScale: .65, adaptiveMaxScale: 1, vegetationStride: 2, animalDetail: 1, diagnosticScale: 1.25, effects: true, contactShadows: true, adaptiveResolution: true, frameCap: 30 }),
-  high: graphicsPresetDefinition({ iconTextureQuality: 4, renderScale: 1.25, adaptiveMinScale: .75, adaptiveMaxScale: 1.25, vegetationStride: 1, animalDetail: 1.22, diagnosticScale: 1.25, effects: true, contactShadows: true, adaptiveResolution: true, frameCap: 60 }),
-  ultra: graphicsPresetDefinition({ iconTextureQuality: 8, renderScale: 1.5, adaptiveMinScale: .75, adaptiveMaxScale: 1.5, vegetationStride: 1, animalDetail: 1.5, diagnosticScale: 1.25, effects: true, contactShadows: true, adaptiveResolution: true, frameCap: 60 })
+  low: graphicsPresetDefinition({ iconTextureQuality: 1, renderScale: .65, adaptiveMinScale: .5, adaptiveMaxScale: .65, vegetationStride: 4, animalDetail: .72, diagnosticScale: 1.25, effects: false, contactShadows: false, adaptiveResolution: true, frameCap: 30, weatherCloudQuality: "low", weatherLocalPrecipitation: true, weatherDistantShafts: false, weatherCloudShadows: true, weatherWetGround: true, weatherSplashes: false, weatherLightning: false, weatherHaze: true, weatherParticleDensity: .45 }),
+  balanced: graphicsPresetDefinition({ iconTextureQuality: 2, renderScale: 1, adaptiveMinScale: .65, adaptiveMaxScale: 1, vegetationStride: 2, animalDetail: 1, diagnosticScale: 1.25, effects: true, contactShadows: true, adaptiveResolution: true, frameCap: 30, weatherCloudQuality: "high", weatherLocalPrecipitation: true, weatherDistantShafts: true, weatherCloudShadows: true, weatherWetGround: true, weatherSplashes: true, weatherLightning: true, weatherHaze: true, weatherParticleDensity: .75 }),
+  high: graphicsPresetDefinition({ iconTextureQuality: 4, renderScale: 1.25, adaptiveMinScale: .75, adaptiveMaxScale: 1.25, vegetationStride: 1, animalDetail: 1.22, diagnosticScale: 1.25, effects: true, contactShadows: true, adaptiveResolution: true, frameCap: 60, weatherCloudQuality: "cinematic", weatherLocalPrecipitation: true, weatherDistantShafts: true, weatherCloudShadows: true, weatherWetGround: true, weatherSplashes: true, weatherLightning: true, weatherHaze: true, weatherParticleDensity: 1 }),
+  ultra: graphicsPresetDefinition({ iconTextureQuality: 8, renderScale: 1.5, adaptiveMinScale: .75, adaptiveMaxScale: 1.5, vegetationStride: 1, animalDetail: 1.5, diagnosticScale: 1.25, effects: true, contactShadows: true, adaptiveResolution: true, frameCap: 60, weatherCloudQuality: "cinematic", weatherLocalPrecipitation: true, weatherDistantShafts: true, weatherCloudShadows: true, weatherWetGround: true, weatherSplashes: true, weatherLightning: true, weatherHaze: true, weatherParticleDensity: 1.35 })
 });
 const FIRST_RUN_GRAPHICS_DEFAULTS = graphicsPresetDefinition({
   iconTextureQuality: 2,
@@ -64,7 +64,18 @@ const FIRST_RUN_GRAPHICS_DEFAULTS = graphicsPresetDefinition({
   effects: true,
   contactShadows: true,
   adaptiveResolution: true,
-  frameCap: 30
+  frameCap: 30,
+  weatherCloudQuality: "high",
+  weatherLocalPrecipitation: true,
+  weatherDistantShafts: true,
+  weatherCloudShadows: true,
+  weatherWetGround: true,
+  weatherSplashes: true,
+  weatherLightning: true,
+  weatherHaze: true,
+  weatherScientificOverlay: false,
+  weatherOverlayLayer: "precipitation",
+  weatherParticleDensity: .75
 });
 export const READABLE_INTERFACE_DEFAULTS = Object.freeze({
   interfaceScale: .85,
@@ -190,6 +201,17 @@ export function normalizeGraphicsSettings(value = {}) {
     titleTextScale: clamp(Number(value.titleTextScale ?? READABLE_INTERFACE_DEFAULTS.titleTextScale), .75, 1.75),
     effects: value.effects ?? base.effects,
     contactShadows: value.contactShadows ?? base.contactShadows,
+    weatherCloudQuality: ["off", "low", "high", "cinematic"].includes(value.weatherCloudQuality ?? base.weatherCloudQuality) ? (value.weatherCloudQuality ?? base.weatherCloudQuality) : "high",
+    weatherLocalPrecipitation: value.weatherLocalPrecipitation ?? base.weatherLocalPrecipitation ?? true,
+    weatherDistantShafts: value.weatherDistantShafts ?? base.weatherDistantShafts ?? true,
+    weatherCloudShadows: value.weatherCloudShadows ?? base.weatherCloudShadows ?? true,
+    weatherWetGround: value.weatherWetGround ?? base.weatherWetGround ?? true,
+    weatherSplashes: value.weatherSplashes ?? base.weatherSplashes ?? true,
+    weatherLightning: value.weatherLightning ?? base.weatherLightning ?? true,
+    weatherHaze: value.weatherHaze ?? base.weatherHaze ?? true,
+    weatherScientificOverlay: value.weatherScientificOverlay === true,
+    weatherOverlayLayer: ["precipitation", "cloud-cover", "ground-wetness", "visibility", "storm"].includes(value.weatherOverlayLayer) ? value.weatherOverlayLayer : "precipitation",
+    weatherParticleDensity: nearest(clamp(Number(value.weatherParticleDensity ?? base.weatherParticleDensity ?? .75), .35, 1.5), [.35, .45, .6, .75, 1, 1.35, 1.5]),
     adaptiveResolution: value.adaptiveResolution ?? base.adaptiveResolution,
     frameCap
   };

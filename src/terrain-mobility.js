@@ -6,6 +6,8 @@ const profile = (label, comfortableSlope, maximumSlope, strengthDemand, rockPass
 export const TERRAIN_MOBILITY = Object.freeze({
   grazer: profile("sure-footed deer travel", .22, .58, .85),
   hunter: profile("wolf-like rough-ground travel", .30, .72, .9, true),
+  "valley-grazer-updated": profile("red-deer-informed woodland and ridge travel", .28, .66, .82, true),
+  "ridge-hunter-updated": profile("grey-wolf-informed endurance rough-ground travel", .34, .76, .84, true),
   "meadow-nibbler": profile("short hopping ascent", .25, .55, .8),
   "great-plains-grazer": profile("heavy plains travel", .16, .42, 1.15),
   "woodland-browser": profile("long-legged woodland ascent", .20, .52, 1),
