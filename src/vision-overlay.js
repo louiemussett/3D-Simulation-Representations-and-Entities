@@ -7,7 +7,7 @@ export function buildGroundVisionSector(viewer, range, surfaceHeight, options = 
   const angularSegments = Math.max(4, options.angularSegments || 24);
   const radialSegments = Math.max(1, options.radialSegments || Math.ceil(range / 2));
   const lift = options.lift ?? 0.055;
-  const fov = visionFov(viewer.speciesId, viewer.sensoryFocusTicks ?? viewer.focusTicks ?? viewer.stationaryTicks ?? 0), heading = visionHeading(viewer);
+  const fov = options.fov ?? visionFov(viewer.speciesId, viewer.sensoryFocusTicks ?? viewer.focusTicks ?? viewer.stationaryTicks ?? 0), heading = options.heading ?? visionHeading(viewer);
   const positions = [];
   const point = (radiusIndex, angleIndex) => {
     const radius = range * radiusIndex / radialSegments;

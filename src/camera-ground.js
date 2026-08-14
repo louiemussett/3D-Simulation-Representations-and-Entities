@@ -1,5 +1,10 @@
 const distance3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
+export function observerCameraClearance(orbitDistance) {
+  const distance = Number.isFinite(Number(orbitDistance)) ? Number(orbitDistance) : 12;
+  return Math.max(.32, Math.min(2.4, distance * .22));
+}
+
 export function constrainCameraToTerrain(camera, target, heightAt, { cameraClearance = 2.4, targetClearance = .12, preserveOrbit = true } = {}) {
   const targetGround = heightAt(target.x, target.z);
   const previousTargetY = Number(target.y) || 0;

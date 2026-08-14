@@ -18,7 +18,11 @@ export const LOCOMOTION_PROFILES = Object.freeze(Object.fromEntries(SPECIES_IDS.
   return [id, { maxSpeed: .92 * speed, sprintSpeed: (meat ? 1.68 : 1.52) * speed * (biology.sprint || 1), acceleration: (meat ? 2.35 : 2.1) * (biology.acceleration || 1), braking: (meat ? 3.05 : 2.8) * (biology.recovery || 1), turnRate: (species.sizeClass === "tiny" ? 3.3 : species.sizeClass === "large" || species.sizeClass === "giant" ? 2.05 : 2.65) * (biology.turning || 1), bodyRadius: radius, separationWeight: meat ? .72 : .85, predictionCap: meat ? 2.1 : 1.6, terrain: biology }];
 })));
 export function createLocomotionState(animal, profile = LOCOMOTION_PROFILES[animal.speciesId]) { return { x: animal.x, z: animal.z, vx: 0, vz: 0, heading: animal.orientation || 0, angularVelocity: 0, collisionRadius: collisionRadiusFor(animal, profile.bodyRadius), mode: "idle", activeMode: "idle", completedMode: null, completedRequestId: null, completedContactIntent: null, arrivalState: "idle", distanceTravelled: 0, turningEffort: 0 }; }
-export function createMovementRequest(id, destination, options = {}) { return { id, destination: { x: destination.x, z: destination.z }, destinationSource: options.destinationSource || "world", allowOutsideNavmesh: Boolean(options.allowOutsideNavmesh), perceivedTarget: options.perceivedTarget || null, observationId: options.observationId || options.perceivedTarget?.evidenceId || null, observationTick: options.observationTick ?? options.perceivedTarget?.observedTick ?? null, predictedVelocity: options.predictedVelocity || (options.perceivedTarget ? { vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0 } : null), velocityConfidence: options.velocityConfidence ?? options.perceivedTarget?.velocityConfidence ?? 0, interactionRadius: options.interactionRadius || 0, urgency: options.urgency || 0, mode: options.mode || "walk", completionCondition: options.completionCondition || "arrival", contactTargetId: options.contactTargetId || null, contactIntent: options.contactIntent || null }; }
+export function createMovementRequest(id, destination, options = {}) { return { id, destination: { x: destination.x, z: destination.z }, destinationSource: options.destinationSource || "world", allowOutsideNavmesh: Boolean(options.allowOutsideNavmesh), perceivedTarget: options.perceivedTarget || null, observationId: options.observationId || options.perceivedTarget?.evidenceId || null, observationTick: options.observationTick ?? options.perceivedTarget?.observedTick ?? null, predictedVelocity: options.predictedVelocity || (options.perceivedTarget ? { vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0 } : null), velocityConfidence: options.velocityConfidence ?? options.perceivedTarget?.velocityConfidence ?? 0, interactionRadius: options.interactionRadius || 0, urgency: options.urgency || 0, mode: options.mode || "walk", completionCondition: options.completionCondition || "arrival", contactTargetId: options.contactTargetId || null, contactIntent: options.contactIntent || null, motorDelayHours: Math.max(0, Number(options.motorDelayHours) || 0), motorDelayReason: options.motorDelayReason || null }; }
+export function equivalentMovementRequest(current, next, epsilon = .08) {
+  if (!current || !next || current.id !== next.id || current.mode !== next.mode || current.destinationSource !== next.destinationSource || current.contactTargetId !== next.contactTargetId) return false;
+  return Math.hypot(Number(current.destination?.x) - Number(next.destination?.x), Number(current.destination?.z) - Number(next.destination?.z)) <= epsilon;
+}
 function speedForMode(profile, mode) {
   if (mode === "stationary") return 0;
   if (mode === "slow-walk") return profile.maxSpeed * .42;
@@ -57,6 +61,7 @@ export function runLocomotionMinute(animals, mesh, options = {}) {
   const alive = animals.filter((a) => a.alive), elapsed = Math.max(0, options.elapsed == null ? 1 : Number(options.elapsed) || 0), fastest = alive.reduce((value, animal) => Math.max(value, LOCOMOTION_PROFILES[animal.speciesId]?.sprintSpeed || 0), 0), sweptSteps = Math.ceil(fastest * elapsed / Math.max(.08, mesh.worldRadius * .28)), substeps = Math.min(40, Math.max(options.substeps || LOCOMOTION_SUBSTEPS, sweptSteps)), dt = elapsed / substeps;
   if (dt <= 0) { for (const animal of alive) { animal.locomotion ||= createLocomotionState(animal); animal.locomotion.vx = animal.locomotion.vz = animal.locomotion.speed = 0; } return; }
   for (let step = 0; step < substeps; step++) for (const animal of alive) {
+    let motionDt = dt;
     const baseProfile = options.profileFor?.(animal) || LOCOMOTION_PROFILES[animal.speciesId], profile = effectiveProfile(animal, baseProfile); animal.locomotion ||= createLocomotionState(animal, profile);
     const request = animal.movementRequest;
     const collisionActor = { ...animal, ...animal.locomotion, bodyRadius: animal.locomotion.collisionRadius }, external = options.neighboursFor?.(animal) || [], candidateRange = Math.max(mesh.worldRadius * 1.4, profile.bodyRadius * 4 + speedForMode(profile, request?.mode) * dt * 2), neighbours = new Map();
@@ -72,13 +77,20 @@ export function runLocomotionMinute(animals, mesh, options = {}) {
       } else animal.locomotion.vx = animal.locomotion.vz = 0;
       continue;
     }
+    if (request.motorDelayHours > 0) {
+      const consumed = Math.min(dt, request.motorDelayHours); request.motorDelayHours -= consumed;
+      motionDt = Math.max(0, dt - consumed);
+      animal.locomotion.vx = animal.locomotion.vz = animal.locomotion.speed = 0;
+      animal.locomotion.arrivalState = "motor-latency";
+      if (motionDt <= 1e-9) continue;
+    }
     animal.locomotion.activeMode = request.mode;
     route.points[route.points.length - 1] = { ...request.destination };
     let waypoint = route.points[route.waypointIndex];
     if (Math.hypot(waypoint.x - animal.locomotion.x, waypoint.z - animal.locomotion.z) <= Math.max(.06, mesh.worldRadius * .12) && route.waypointIndex < route.points.length - 1) waypoint = route.points[++route.waypointIndex];
     const separation = softSeparation(collisionActor, neighbourStates, { contactTargetId: request.contactTargetId, range: mesh.worldRadius * .35, weight: profile.separationWeight });
     const before = animal.locomotion, currentPolygon = mesh.polygons?.get(mesh.polygonAt(before.x, before.z)), currentMobility = terrainMobilityAssessment(animal, currentPolygon || {});
-    let next = steeringStep(before, waypoint, profile, dt, { stoppingRadius: route.waypointIndex === route.points.length - 1 ? request.interactionRadius : 0, maxSpeed: speedForMode(profile, request.mode), separation, terrainSpeed: (options.terrainSpeedAt?.(animal.locomotion.x, animal.locomotion.z, animal) ?? 1) * currentMobility.speedMultiplier, alignmentSlowAngle: options.alignmentSlowAngle });
+    let next = steeringStep(before, waypoint, profile, motionDt, { stoppingRadius: route.waypointIndex === route.points.length - 1 ? request.interactionRadius : 0, maxSpeed: speedForMode(profile, request.mode), separation, terrainSpeed: (options.terrainSpeedAt?.(animal.locomotion.x, animal.locomotion.z, animal) ?? 1) * currentMobility.speedMultiplier, alignmentSlowAngle: options.alignmentSlowAngle });
     // The corridor is authoritative. A feeler that would cross into an
     // impassable polygon is rejected and causes deterministic braking/replan.
     const directLocalSteering = request.destinationSource === "player-camera-relative";
@@ -98,7 +110,7 @@ export function runLocomotionMinute(animals, mesh, options = {}) {
     if (collisionResolved.collided) {
       const collisionPolygonId = mesh.polygonAt(collisionResolved.x, collisionResolved.z), collisionPolygon = collisionPolygonId == null ? null : mesh.polygons?.get(collisionPolygonId) || { id: collisionPolygonId, slope: 0, rocky: false };
       const supported = request.allowOutsideNavmesh || bodySupportedByNavmesh(mesh, collisionResolved.x, collisionResolved.z, bodyRadius(collisionActor), 10, polygonAllowed) || (directLocalSteering && !currentBodySupported && collisionPolygon && polygonAllowed(collisionPolygon));
-      if (supported) next = { ...collisionResolved, vx: (collisionResolved.x - before.x) / dt, vz: (collisionResolved.z - before.z) / dt, speed: Math.hypot(collisionResolved.x - before.x, collisionResolved.z - before.z) / dt, arrived: false, arrivalState: "body-contact" };
+      if (supported) next = { ...collisionResolved, vx: (collisionResolved.x - before.x) / motionDt, vz: (collisionResolved.z - before.z) / motionDt, speed: Math.hypot(collisionResolved.x - before.x, collisionResolved.z - before.z) / motionDt, arrived: false, arrivalState: "body-contact" };
       else next = { ...before, vx: 0, vz: 0, speed: 0, braking: true, arrived: false, arrivalState: "body-blocked" };
     }
     const contactTarget = request.contactTargetId ? options.contactTargetFor?.(request.contactTargetId) : null; let contactReached = false;
@@ -110,7 +122,7 @@ export function runLocomotionMinute(animals, mesh, options = {}) {
     route.stalledSubsteps = progress < .0005 && !next.arrived ? route.stalledSubsteps + 1 : 0;
     route.progress += progress;
     if (route.stalledSubsteps >= substeps * 2) { animal.routeState = null; next.arrivalState = "replanning"; }
-    next.distanceTravelled = before.distanceTravelled + Math.hypot(next.x - before.x, next.z - before.z); next.turningEffort = before.turningEffort + Math.abs(next.angularVelocity) * dt; animal.locomotion = next;
+    next.distanceTravelled = before.distanceTravelled + Math.hypot(next.x - before.x, next.z - before.z); next.turningEffort = before.turningEffort + Math.abs(next.angularVelocity) * motionDt; animal.locomotion = next;
     animal.x = animal.fx = next.x; animal.z = animal.fz = next.z; animal.orientation = next.heading;
     if (contactReached || (next.arrived && route.waypointIndex === route.points.length - 1)) { next.arrivalState = contactReached ? "contact" : "arrived"; next.completedMode = request.mode; next.completedRequestId = request.id; next.completedContactIntent = request.contactIntent ? { ...request.contactIntent } : null; next.activeMode = "idle"; animal.movementRequest = null; animal.routeState = null; }
   }

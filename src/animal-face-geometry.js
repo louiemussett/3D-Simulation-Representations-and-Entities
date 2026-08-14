@@ -46,3 +46,11 @@ export function attachedAnimalEyePosition({ side = 1, headScale, headKind = "rou
 export function ellipsoidSurfaceValue(position, radii) {
   return (position.x / radii.x) ** 2 + (position.y / radii.y) ** 2 + (position.z / radii.z) ** 2;
 }
+
+// Keep a rendered iris on its own outward-facing side of the head. Biological
+// sensor fields remain authoritative; this is only the visible eyeball stop.
+export function constrainedVisualEyeYaw(side, requestedYaw = 0, { minimumOutward = .08, maximumOutward = .62 } = {}) {
+  const direction = Math.sign(side || 1), requested = Math.abs(Number(requestedYaw) || 0);
+  const magnitude = Math.max(minimumOutward, Math.min(maximumOutward, requested));
+  return direction * magnitude;
+}

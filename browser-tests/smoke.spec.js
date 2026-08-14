@@ -1,5 +1,71 @@
 import { expect, test } from "@playwright/test";
 
+test("water commitment thresholds and Laboratory diagnostics initialise", async ({ page }) => {
+  const errors = []; page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => typeof window.rssDiagnostics), { timeout: 20_000 }).toBe("object");
+  const contract = await page.evaluate(async () => {
+    const water = await import("/src/water-commitment.js");
+    return {
+      acquisition: water.HYDRATION_ACQUISITION_TARGET,
+      reentry: water.HYDRATION_REENTRY_LEVEL,
+      threatPrecedence: water.immediateThreatPrecedesWater({ action: "flee", urgency: 80 }),
+    };
+  });
+  expect(contract).toEqual({ acquisition: 92, reentry: 85, threatPrecedence: true });
+  await page.evaluate(() => window.rssDiagnostics.prepareBaseline("follow"));
+  await page.evaluate(() => {
+    document.querySelector("#lab-toggle").click();
+    document.querySelector("#laboratory-size-toggle").click();
+    document.querySelector("#laboratory-tab-planning").click();
+  });
+  await expect(page.locator("#need-planning-live")).toContainText("Water target and safety arbitration");
+  await expect(page.locator("#need-planning-live")).toContainText("Why not flee?");
+  await expect(page.locator("#startup-error")).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await page.evaluate(() => window.rssDiagnostics.stopAnimationLoop());
+});
+
+test("acoustic ecology controls, profiles, and procedural audio initialise", async ({ page }) => {
+  const errors = []; page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => typeof window.rssDiagnostics), { timeout: 20_000 }).toBe("object");
+  const weatherField = await page.evaluate(() => window.rssDiagnostics.weatherFieldState());
+  expect(weatherField.cells).toBeGreaterThan(0);
+  expect(weatherField.dryCells).toBeGreaterThan(0);
+  await page.locator(".acoustic-controls > summary").click();
+  await expect(page.locator("#sensory-perspective")).toHaveValue("human-observer");
+  await expect(page.locator("#audio-enabled")).not.toBeChecked();
+  const catalogue = await page.evaluate(async () => { const profiles = await import("/src/acoustic-profiles.js"), scores = await import("/src/acoustic-score.js"), settings = await import("/src/audio-settings.js"); return { count: Object.keys(profiles.SPECIES_ACOUSTIC_PROFILES).length, scoreCount: scores.SPECIES_SIGNATURE_IDS.length, languages: settings.SOUND_LANGUAGE_IDS.length, errors: profiles.validateAcousticProfiles(), founders: [profiles.SPECIES_ACOUSTIC_PROFILES.grazer.scientificName, profiles.SPECIES_ACOUSTIC_PROFILES.hunter.scientificName] }; });
+  expect(catalogue).toEqual({ count: 26, scoreCount: 26, languages: 5, errors: [], founders: ["Cervus elaphus", "Canis lupus"] });
+  await page.locator("#sensory-perspective").selectOption("physical-scientific");
+  await expect(page.locator("#sensory-perspective-status")).toContainText("Physical field before biological filtering");
+  await page.locator("#audio-enabled").click();
+  await expect(page.locator("#sound-language-selector")).toBeVisible();
+  await expect(page.locator("#audio-enabled")).not.toBeChecked();
+  await page.locator('[data-sound-language-select="bioacoustic-signature"]').click();
+  await expect(page.locator("#sound-language-selector")).toBeHidden();
+  await expect(page.locator("#audio-enabled")).not.toBeChecked();
+  await page.locator("#graphics-open").click();
+  await expect(page.locator("#settings-audio-enabled")).not.toBeChecked();
+  await expect(page.locator("#settings-audio-animals")).toHaveValue("0.9");
+  await expect(page.locator("#settings-audio-language")).toHaveValue("bioacoustic-signature");
+  await expect(page.locator("#settings-audio-wind")).toHaveValue("0.7");
+  await expect(page.locator("#settings-audio-vegetation")).toHaveValue("0.68");
+  await expect(page.locator("#settings-audio-rain")).toHaveValue("0.82");
+  await expect(page.locator("#settings-audio-river")).toHaveValue("0.76");
+  await page.locator("#settings-audio-dynamic-range").selectOption("night");
+  await page.locator("#settings-audio-spatialization").selectOption("mono");
+  const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem("rss-laboratory-audio-settings-v3")));
+  expect(persisted.dynamicRange).toBe("night"); expect(persisted.spatialization).toBe("mono"); expect(persisted.soundLanguage).toBe("bioacoustic-signature");
+  await page.evaluate(() => document.querySelector("#step")?.click());
+  await page.evaluate(() => { document.querySelector("#graphics-close")?.click(); document.querySelector("#lab-toggle")?.click(); document.querySelector("#laboratory-size-toggle")?.click(); document.querySelector("#laboratory-tab-acoustics")?.click(); });
+  await expect(page.locator("#acoustic-laboratory-workspace")).toContainText(/Acoustic evidence|No authoritative sound event/);
+  await expect(page.locator("#startup-error")).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await page.evaluate(() => window.rssDiagnostics.stopAnimationLoop());
+});
+
 test("Map clears focus and visibly reframes the complete world", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => typeof window.rssDiagnostics), { timeout: 20_000 }).toBe("object");

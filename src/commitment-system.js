@@ -1,7 +1,7 @@
 const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, Number(value) || 0));
 const average = (...values) => values.reduce((sum, value) => sum + (Number(value) || 0), 0) / Math.max(1, values.length);
 export const COMMITMENT_PROTOCOL_SCHEMA = 2;
-export const COMMITMENT_STATE_SCHEMA = 2;
+export const COMMITMENT_STATE_SCHEMA = 3;
 
 const automaticRankingReuse = new WeakMap();
 
@@ -73,6 +73,8 @@ export function migrateCommitment(animal, tick = 0) {
     confidence: clamp(state.confidence ?? animal.commitmentProfile.confidence), progress: Number(state.progress || 0), previousMetric: state.previousMetric ?? null,
     switchReason: state.switchReason || "not yet selected", status: state.status || "uncommitted", publicIntention: state.publicIntention || null,
     socialForecast: state.socialForecast || null, protocolKey: state.protocolKey || null, riskReward: state.riskReward || null,
+    commitmentId: state.commitmentId || null, minimumReviewTick: Number(state.minimumReviewTick ?? state.startedTick ?? tick), method: state.method || null, targetKey: state.targetKey || null,
+    phase: state.phase || null, suspended: Boolean(state.suspended), suspendedAtTick: state.suspendedAtTick ?? null, suspensionReason: state.suspensionReason || null, lastRetentionReason: state.lastRetentionReason || null,
   };
   animal.learnedProtocols ||= {};
   for (const key of Object.keys(animal.learnedProtocols)) {
@@ -155,14 +157,14 @@ export function evaluateRiskReward(animal, candidate = {}, context = {}, prepare
 }
 
 function rankCandidates(animal, candidates, state, profile, context, reuse) {
-  const emergency = candidates.some((candidate) => candidate.urgent);
   return candidates.map((candidate) => {
     const key = assessmentCacheKey(candidate);
     let assessment = reuse.assessments.get(key);
     if (assessment) reuse.hits += 1;
     else { assessment = evaluateRiskReward(animal, candidate, context, profile); reuse.assessments.set(key, assessment); reuse.misses += 1; }
     const same = state.priority === candidate.drive, social = assessment.social;
-    const persistence = !emergency && same ? 18 + profile.commitmentStability * 25 + profile.perseverance * 20 + state.confidence * 16 + clamp(state.progress) * 12 : 0;
+    const strongerUrgentChallenger = same && candidates.some(other => other.drive !== candidate.drive && other.urgent && Number(other.score || 0) > Number(candidate.score || 0));
+    const persistence = same && !strongerUrgentChallenger ? 18 + profile.commitmentStability * 25 + profile.perseverance * 20 + state.confidence * 16 + clamp(state.progress) * 12 : 0;
     const hesitation = !candidate.urgent && !same ? (social.rejectionRisk + social.exclusionRisk + social.reputationRisk + social.coordinationCost * .5) * profile.socialSusceptibility * 22 : 0;
     return { ...candidate, baseScore: candidate.score, score: candidate.score + assessment.utility * .55 + persistence - hesitation, commitmentPersistence: persistence, socialHesitation: hesitation, socialForecast: social, riskReward: assessment };
   }).sort((left, right) => right.score - left.score || String(left.drive).localeCompare(String(right.drive)));
@@ -176,9 +178,14 @@ export function rankCommitmentCandidates(animal, candidates, tick, context = {},
 
 export function selectWithCommitment(animal, candidates, tick, context = {}, rankingReuse = null) {
   const state = migrateCommitment(animal, tick), reuse = prepareRankingReuse(animal, tick, context, rankingReuse), p = reuse.profile ||= expressedCommitmentProfileCurrent(animal);
-  const emergency = candidates.some((candidate) => candidate.urgent), scored = rankCandidates(animal, candidates, state, p, context, reuse);
+  const scored = rankCandidates(animal, candidates, state, p, context, reuse);
   const incumbent = scored.find((candidate) => candidate.drive === state.priority), challenger = scored[0];
-  if (!emergency && incumbent && challenger !== incumbent) {
+  if (incumbent && challenger !== incumbent && !challenger.urgent) {
+    if (tick < Number(state.minimumReviewTick || -Infinity) && !context.currentPlanBlocked) {
+      scored.splice(scored.indexOf(incumbent), 1); scored.unshift(incumbent);
+      incumbent.retainedAgainst = challenger.drive; incumbent.switchThreshold = Infinity; incumbent.minimumHold = true;
+      return scored;
+    }
     const switchThreshold = 8 + p.commitmentStability * 30 + p.evidenceThreshold * 20 - p.flexibility * 22 + state.confidence * 8;
     if (challenger.score - incumbent.score < switchThreshold && !context.currentPlanBlocked) {
       scored.splice(scored.indexOf(incumbent), 1); scored.unshift(incumbent);
@@ -228,17 +235,26 @@ export function observeCommitment(animal, chosen, tick, context = {}) {
   state.reconsiderations += 1; state.lastReviewedTick = tick;
   if (!previous || changed) {
     if (changed) { state.switches += 1; state.lastSwitchTick = tick; animal.commitmentHistory.push({ tick, from: previous, to: chosen.drive, reason: context.switchReason || (chosen.urgent ? "urgent override" : "stronger viable plan") }); }
-    state.priority = chosen.drive; state.startedTick = tick; state.progress = 0; state.previousMetric = context.progressMetric ?? null; state.switchReason = changed ? (context.switchReason || "evidence justified a change") : "initial selection";
+    state.priority = chosen.drive; state.startedTick = tick; state.minimumReviewTick = tick + Math.max(1, Number(chosen.commitTicks) || 1); state.commitmentId = `${animal.id || "animal"}:${tick}:${chosen.drive}`; state.progress = 0; state.previousMetric = context.progressMetric ?? null; state.switchReason = changed ? (context.switchReason || "evidence justified a change") : "initial selection";
   } else if (Number.isFinite(context.progressMetric) && Number.isFinite(state.previousMetric)) {
     state.progress = clamp(state.progress * .7 + Math.max(0, context.progressMetric - state.previousMetric) * .03);
     state.previousMetric = context.progressMetric;
   }
+  state.commitmentId ||= `${animal.id || "animal"}:${state.startedTick}:${chosen.drive}`;
+  if (!Number.isFinite(state.minimumReviewTick)) state.minimumReviewTick = state.startedTick + Math.max(1, Number(chosen.commitTicks) || 1);
   state.socialForecast = chosen.socialForecast || forecastSocialCommitment(animal, chosen, context);
   state.riskReward = chosen.riskReward || evaluateRiskReward(animal, chosen, context);
   const p = expressedCommitmentProfile(animal), risk = state.socialForecast.rejectionRisk + state.socialForecast.exclusionRisk;
   state.status = chosen.urgent ? "emergency" : changed || !previous ? "committed" : "continuing";
   state.publicIntention = risk > 1 && p.socialCourage < .48 ? "withheld" : risk > .55 ? "tentative proposal" : state.socialForecast.conflicts ? "public proposal" : "acting openly";
   state.protocolKey = protocolKey(chosen.drive, context.method || animal.needDependencyPlan?.method || animal.actionState?.key);
+  state.method = context.method || animal.needDependencyPlan?.method || animal.actionState?.key || null;
+  state.targetKey = animal.needDependencyPlan?.targetKey || null;
+  state.phase = animal.needDependencyPlan?.phase || animal.actionState?.key || null;
+  state.suspended = Boolean(animal.needDependencyPlan?.suspended);
+  state.suspendedAtTick = animal.needDependencyPlan?.suspendedAtTick ?? null;
+  state.suspensionReason = animal.needDependencyPlan?.suspensionReason || null;
+  state.lastRetentionReason = chosen.retainedAgainst ? `retained against ${chosen.retainedAgainst}; challenger remained below ${Number(chosen.switchThreshold || 0).toFixed(1)}` : changed ? state.switchReason : "commitment retained";
   const protocol = animal.learnedProtocols[state.protocolKey];
   state.confidence = clamp(state.confidence * .88 + (protocol?.confidence ?? p.confidence) * .12);
   if (animal.commitmentHistory.length > 24) animal.commitmentHistory.splice(0, animal.commitmentHistory.length - 24);

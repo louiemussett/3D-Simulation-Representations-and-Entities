@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cameraPresentationMetrics, cinemaPopulationPresentation, constrainCameraToTerrain, followTargetPreservingOrbit, populationPresentationForDistance, usesAggregateAnimalMarkers } from "../src/camera-ground.js";
+import { cameraPresentationMetrics, cinemaPopulationPresentation, constrainCameraToTerrain, followTargetPreservingOrbit, observerCameraClearance, populationPresentationForDistance, usesAggregateAnimalMarkers } from "../src/camera-ground.js";
+
+test("observer terrain clearance scales down for close inspection", () => {
+  assert.equal(observerCameraClearance(.5), .32);
+  assert.equal(observerCameraClearance(4), .88);
+  assert.equal(observerCameraClearance(20), 2.4);
+});
 
 test("camera and orbit target cannot pass through rendered ground", () => {
   const camera = { x: 4, y: -5, z: 2 }, target = { x: 1, y: -8, z: 1 };

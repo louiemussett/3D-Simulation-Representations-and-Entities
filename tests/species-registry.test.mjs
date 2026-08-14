@@ -15,7 +15,17 @@ test("the catalogue retains the two generic originals while world rosters vary b
   assert.equal(ECOLOGY_PRESETS.original.length, 2);
   assert.deepEqual([1, 2, 3, 4].map(span => ecologyRosterForWorldScale(span).length), [6, 14, 20, SPECIES_IDS.length]);
   assert.deepEqual([1, 2, 3, 4].map(ecologyPresetForWorldScale), ["compact", "balanced", "expanded", "full"]);
-  assert.equal(SPECIES_IDS.length, 26);
+  assert.equal(SPECIES_IDS.length, 28);
+  assert.deepEqual(ECOLOGY_PRESETS.original, ["grazer", "hunter"]);
+  assert.deepEqual(ECOLOGY_PRESETS["updated-originals"], ["valley-grazer-updated", "ridge-hunter-updated"]);
+  assert.equal(SPECIES_VISUAL_DESIGNS.grazer, null);
+  assert.equal(SPECIES_VISUAL_DESIGNS.hunter, null);
+  assert.ok(SPECIES_VISUAL_DESIGNS["valley-grazer-updated"]);
+  assert.ok(SPECIES_VISUAL_DESIGNS["ridge-hunter-updated"]);
+  assert.equal(SPECIES.grazer.enabledByDefault, true);
+  assert.equal(SPECIES.hunter.enabledByDefault, true);
+  assert.equal(SPECIES["valley-grazer-updated"].enabledByDefault, false);
+  assert.equal(SPECIES["ridge-hunter-updated"].enabledByDefault, false);
   for (const design of Object.values(WORLD_SCALE_ECOLOGY_DESIGNS)) assert.ok(design.factors.length >= 3);
 });
 

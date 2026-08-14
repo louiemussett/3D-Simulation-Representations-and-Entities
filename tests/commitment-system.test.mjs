@@ -16,6 +16,14 @@ test("urgent evidence overrides commitment", () => {
   assert.equal(ranked[0].drive, "flee");
 });
 
+test("minimum commitment duration blocks ordinary switching but not the urgent challenger itself", () => {
+  const subject = animal(); migrateCommitment(subject, 0); observeCommitment(subject, { drive: "water", score: 70, commitTicks: 16 }, 0);
+  const held = selectWithCommitment(subject, [{ drive: "water", score: 60 }, { drive: "forage", score: 500 }], 4);
+  assert.equal(held[0].drive, "water"); assert.equal(held[0].minimumHold, true);
+  const danger = selectWithCommitment(subject, [{ drive: "water", score: 600, urgent: true }, { drive: "flee", score: 700, urgent: true }], 5);
+  assert.equal(danger[0].drive, "flee");
+});
+
 test("terminal dehydration makes water reward maximum without hiding predator risk", () => {
   const subject = animal({ speciesId: "grazer", hydration: 12 });
   const assessment = evaluateRiskReward(subject, { drive: "water", method: "drink" }, { waterPredatorRisk: 1 });

@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { animalEyePosition, attachedAnimalEyePosition, ellipsoidSurfaceValue } from "../src/animal-face-geometry.js";
+import { animalEyePosition, attachedAnimalEyePosition, constrainedVisualEyeYaw, ellipsoidSurfaceValue } from "../src/animal-face-geometry.js";
+
+test("visible eyes cannot rotate through the head", () => {
+  assert.ok(constrainedVisualEyeYaw(-1, 10) < 0);
+  assert.ok(constrainedVisualEyeYaw(1, -10) > 0);
+  assert.equal(constrainedVisualEyeYaw(-1, 10), -.62);
+  assert.equal(constrainedVisualEyeYaw(1, 0), .08);
+});
 import { SPECIES_IDS, canHunt, speciesProfile } from "../src/species-registry.js";
 
 test("grazer eyeball centres sit on the head surface instead of floating ahead", () => {

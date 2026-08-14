@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "policy": {
+    "recordingsDistributed": false,
+    "recordingsPermittedUse": "Research reference and temporary measurement only; no bundling, replay, redistribution, or training use without separate authorization.",
+    "requiredMeasurementFields": ["archiveId", "url", "recordist", "licence", "accessDate", "scientificTaxon", "population", "context", "segmentStart", "segmentEnd", "derivationMethod"]
+  },
+  "sources": [
+    { "id": "iso-9613-1", "url": "https://www.iso.org/standard/17426.html", "use": "Atmospheric absorption calibration", "accessed": "2026-08-13" },
+    { "id": "animal-audiogram-database", "url": "https://www.animalaudiograms.org/", "use": "Audiogram discovery and original-publication links", "accessed": "2026-08-13" },
+    { "id": "macaulay-library", "url": "https://www.macaulaylibrary.org/manage-files-data/", "use": "Reference recording metadata", "accessed": "2026-08-13" },
+    { "id": "tierstimmenarchiv", "url": "https://www.museumfuernaturkunde.berlin/forschung/sammlung/tierstimmenarchiv/", "use": "Reference recording archive", "accessed": "2026-08-13" },
+    { "id": "xeno-canto-land-mammals", "url": "https://www.gbif.org/dataset/80f94317-a61f-477f-af06-037632ad6e3b", "use": "Reference metadata only", "licence": "CC BY-NC 4.0 permitted subset; never a distributable game asset", "accessed": "2026-08-13" }
+    ,{ "id": "hurtado-etal-red-deer-vocalisations", "url": "https://www.deerlab.org/Publ/pdfs/62.pdf", "use": "Exact-species red-deer duration, frequency, and formant-spacing measurements", "accessed": "2026-08-14" }
+    ,{ "id": "garcia-etal-2013-red-deer-source-filter", "url": "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0083946", "use": "Exact-species red-deer source-filter and receiver-response evidence", "licence": "CC BY", "accessed": "2026-08-14" }
+    ,{ "id": "palacios-etal-2007-iberian-wolf-howls", "url": "https://www.uv.es/fon/Palacios_etal2007.pdf", "use": "Exact-species wolf howl duration, frequency, harmonic, modulation, and individuality measurements", "accessed": "2026-08-14" }
+    ,{ "id": "miklavcic-etal-2004-rain-synthesis", "url": "https://www.dafx.de/paper-archive/2004/P_169.PDF", "use": "Physical procedural-rain synthesis architecture", "accessed": "2026-08-14" }
+  ],
+  "catalogueStatus": {
+    "requiredSpecies": 26,
+    "profilesPresent": 26,
+    "runtimeGrade": "exact-species partial founder call shapes; composite-model elsewhere with explicit known gaps",
+    "founderModels": { "grazer": "Cervus elaphus (red deer)", "hunter": "Canis lupus (grey wolf)" },
+    "primaryLiteratureReviewComplete": false,
+    "nextResearchGate": "Replace each composite parameter independently with exact-species measurements or an explicitly cited genus/family proxy."
+  }
+}

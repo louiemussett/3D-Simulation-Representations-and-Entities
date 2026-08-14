@@ -11,7 +11,8 @@ test("world setup exposes calculated food webs, five quick levels and an exact s
   assert.match(index, /id="ecology-population-scale"[^>]*min="20"[^>]*max="200"[^>]*step="10"/);
   assert.match(index, /option value="compact" selected>Compact world — 6 species/);
   assert.match(index, /option value="expanded">Standard world — 20 species/);
-  assert.match(index, /option value="full">Vast world — 26 species/);
+  assert.match(index, /option value="full">Vast world — 28 species/);
+  assert.match(index, /option value="updated-originals">Updated Valley Grazer &amp; Ridge Hunter — 2 species/);
   assert.match(index, /no fixed 22-species target/);
   assert.match(index, /id="start-herbivores"[^>]*value="34"/);
   assert.match(index, /id="start-carnivores"[^>]*value="11"/);

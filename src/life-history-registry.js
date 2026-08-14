@@ -5,7 +5,7 @@ const deepFreeze = (value) => {
 };
 
 export const LIFE_HISTORY_SPECIES_IDS = Object.freeze([
-  "grazer", "hunter", "meadow-nibbler", "great-plains-grazer", "woodland-browser", "brush-fox",
+  "grazer", "hunter", "valley-grazer-updated", "ridge-hunter-updated", "meadow-nibbler", "great-plains-grazer", "woodland-browser", "brush-fox",
   "shadow-stalker", "great-omnivore", "dryland-runner", "highland-grazer", "armoured-browser",
   "pack-breaker", "carrion-runner", "waterline-grazer", "brush-nibbler", "waterline-ambusher",
   "northern-shaggy-grazer", "highland-prowler", "little-opportunist", "cold-country-scavenger",
@@ -45,6 +45,14 @@ export const LIFE_HISTORY = deepFreeze({
   hunter: profile("generic wolf-like carnivore", development(913, 3650, 6935, 45, 365), {
     mode: "live-birth", strategy: "annual-monoestrous", ovulation: "spontaneous", activeSeasons: ["Winter"], cycleDays: null, receptiveDays: 10,
     broodRange: [4, 7], gestationDays: 63, implantationDelayDays: 0, preLayDays: null, incubationDays: null, postpartumDays: 45, minimumRebreedDays: 0, maxBroodsPerYear: 1, environmentTrigger: "calendar", nestCare: "none"
+  }),
+  "valley-grazer-updated": profile("red deer-informed updated Valley Grazer", development(548, 3650, 11315, 70, 365), {
+    mode: "live-birth", strategy: "seasonal-polyestrous", ovulation: "spontaneous", activeSeasons: ["Autumn"], cycleDays: 18, receptiveDays: 2,
+    broodRange: [1, 2], gestationDays: 233, implantationDelayDays: 0, preLayDays: null, incubationDays: null, postpartumDays: 70, minimumRebreedDays: 0, maxBroodsPerYear: 1, environmentTrigger: "calendar", nestCare: "none"
+  }),
+  "ridge-hunter-updated": profile("grey wolf-informed updated Ridge Hunter", development(670, 3650, 5840, 56, 365), {
+    mode: "live-birth", strategy: "annual-monoestrous", ovulation: "spontaneous", activeSeasons: ["Winter"], cycleDays: null, receptiveDays: 10,
+    broodRange: [4, 7], gestationDays: 63, implantationDelayDays: 0, preLayDays: null, incubationDays: null, postpartumDays: 56, minimumRebreedDays: 0, maxBroodsPerYear: 1, environmentTrigger: "calendar", nestCare: "none"
   }),
   "meadow-nibbler": profile("European rabbit", development(240, 1460, 4745, 28, 35), {
     mode: "live-birth", strategy: "opportunistic-continuous", ovulation: "induced", activeSeasons: allSeasons, cycleDays: null, receptiveDays: null,
