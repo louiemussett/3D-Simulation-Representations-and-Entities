@@ -7,45 +7,373 @@
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
   <body>
+    <script>
+      window.__showStartupError = (error, source = "") => {
+        if (document.getElementById("startup-error")) return;
+        const banner = document.createElement("pre");
+        banner.id = "startup-error";
+        banner.style.cssText = "position:fixed;z-index:10000;inset:16px auto auto 16px;max-width:min(760px,calc(100vw - 32px));padding:14px;background:#3b1111;color:#ffd7d7;border:1px solid #ff7777;white-space:pre-wrap";
+        const message = error?.message || String(error || "Unknown JavaScript error");
+        banner.textContent = `Simulation startup failed\n${message}${source ? `\n${source}` : ""}`;
+        document.body.appendChild(banner);
+      };
+      window.addEventListener("error", (event) => {
+        const location = event.filename ? `${event.filename}:${event.lineno || ""}` : "";
+        window.__showStartupError(event.error || event.message, location);
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        window.__showStartupError(event.reason);
+      });
+    </script>
     <main class="app">
       <section id="viewport" aria-label="3D ecosystem viewport">
-        <section id="observer-hud" aria-label="Observer controls">
-          <div class="hud-top"><strong id="hud-mode">World observer</strong><span id="hud-day">Day 1 · Spring</span></div>
-          <div class="hud-controls"><button id="hud-play" type="button">Pause</button><button id="hud-map" type="button">Map</button><button id="hud-reality" type="button">Reality</button><button id="lab-toggle" type="button">Laboratory</button></div>
-          <label class="hud-speed">Simulation <strong id="hud-speed-value">2 ticks/s</strong><input id="hud-speed" type="range" min="0" max="10" step="1" value="2" /></label>
+        <section id="game-menu" class="game-menu" aria-label="Living Laboratory game menu">
+          <div class="game-menu-shade"></div>
+          <div class="game-menu-content">
+            <div class="game-menu-brand"><p>RSS experimental ecosystem</p><h1>Living<br>Laboratory</h1><span>Observe. Understand. Let the world continue.</span></div>
+            <div id="game-menu-main" class="game-menu-page">
+              <button id="menu-continue" class="game-menu-primary game-menu-world-action" type="button" aria-describedby="menu-world-explanation">
+                <span id="menu-world-source" class="game-menu-action-kicker">Ready now</span>
+                <strong id="menu-world-action">Begin observing this world</strong>
+                <span id="menu-world-state">Preparing world summary…</span>
+                <small id="menu-world-detail">This opens the ecosystem currently behind the menu.</small>
+              </button>
+              <p id="menu-world-explanation" class="game-menu-world-explanation">The primary action always identifies the exact world it will open.</p>
+              <button id="menu-new-world" type="button">New world</button>
+              <button id="menu-showcase-world" type="button">Screenshot showcase</button>
+              <button id="menu-save-load" type="button">Saved worlds</button>
+              <button id="menu-settings" type="button">Settings</button>
+            </div>
+            <div id="game-menu-saves" class="game-menu-page" hidden>
+              <div class="game-menu-page-heading"><button id="menu-saves-back" type="button">← Back</button><div><small>World archive</small><h2>Save &amp; load</h2></div></div>
+              <div id="game-menu-save-controls"></div>
+            </div>
+            <div id="game-menu-showcase" class="game-menu-page" hidden>
+              <div class="game-menu-page-heading"><button id="menu-showcase-back" type="button">← Back</button><div><small>Staged observation</small><h2>Screenshot showcase</h2></div></div>
+              <p class="game-menu-page-intro">Choose a deterministic paused scene. All subjects are real simulation entities staged for inspection and photography.</p>
+              <div class="showcase-scenario-grid">
+                <button type="button" data-showcase-scenario="overview"><strong>Expressions &amp; overlays</strong><span>Facial states, calls, actions and diagnostics.</span></button>
+                <button type="button" data-showcase-scenario="mating"><strong>Courtship &amp; mating</strong><span>Paired adults in close reproductive interaction.</span></button>
+                <button type="button" data-showcase-scenario="chase"><strong>Predator chase</strong><span>A hunter pursuing fleeing prey.</span></button>
+                <button type="button" data-showcase-scenario="pack-hunt"><strong>Pack against herd</strong><span>Several hunters confronting a defended herd.</span></button>
+                <button type="button" data-showcase-scenario="separated-young"><strong>Separated young</strong><span>A dependent calling for its distant group.</span></button>
+                <button type="button" data-showcase-scenario="birth"><strong>Pregnancy &amp; birth</strong><span>A female in labour with nearby support.</span></button>
+                <button type="button" data-showcase-scenario="demographics"><strong>Full demographics</strong><span>Both species across every maturity stage.</span></button>
+              </div>
+            </div>
+            <p class="game-menu-footer">A living generational ecosystem simulation</p>
+          </div>
+          <div class="game-menu-caption"><strong>Worlds remember.</strong><span>Families form, seasons pass, predators learn and every decision leaves evidence.</span><small>Captured directly from the running simulation</small></div>
+        </section>
+        <section id="world-generation-progress" class="world-generation-progress" role="status" aria-live="polite" aria-busy="true" hidden>
+          <div>
+            <small>Building the ecosystem</small>
+            <strong id="world-generation-phase">Preparing world</strong>
+            <span id="world-generation-detail">0%</span>
+          </div>
+          <progress id="world-generation-bar" max="1" value="0">0%</progress>
+          <button id="world-generation-cancel" type="button">Cancel</button>
+        </section>
+        <section id="sound-language-selector" class="sound-language-selector" role="dialog" aria-modal="true" aria-labelledby="sound-language-title" hidden>
+          <div class="sound-language-card">
+            <p class="eyebrow">Entirely synthetic diegetic sound</p>
+            <h2 id="sound-language-title">Choose how the ecology is rendered</h2>
+            <p>Sound development is paused and playback stays off by default. Choosing a language stores only the presentation style; it does not enable sound. Optional previews use the same researched scores, animal positions and weather field. Reference recordings are never played.</p>
+            <div class="sound-language-grid">
+              <article><h3>Bioacoustic Signature</h3><p>Characteristic researched features are emphasized within supported ranges for rapid recognition.</p><div><button type="button" data-sound-language-preview="bioacoustic-signature">Preview scene</button><button type="button" data-sound-language-select="bioacoustic-signature">Use this language</button></div></article>
+              <article><h3>Natural Reconstruction</h3><p>The closest entirely synthetic reconstruction of measured contours, resonances and pulse patterns.</p><div><button type="button" data-sound-language-preview="natural-reconstruction">Preview scene</button><button type="button" data-sound-language-select="natural-reconstruction">Use this language</button></div></article>
+              <article><h3>Analogue Ecology</h3><p>Warm oscillators and resonator banks preserve the complete authoritative phrase.</p><div><button type="button" data-sound-language-preview="analogue-ecology">Preview scene</button><button type="button" data-sound-language-select="analogue-ecology">Use this language</button></div></article>
+              <article><h3>Digital Ecology</h3><p>Generated wavetables and controlled low-bit texture preserve each species’ rhythm and contour.</p><div><button type="button" data-sound-language-preview="digital-ecology">Preview scene</button><button type="button" data-sound-language-select="digital-ecology">Use this language</button></div></article>
+              <article><h3>Instrumental Sonification</h3><p>An explicitly labelled scientific translation into pitched and percussive instrument families.</p><div><button type="button" data-sound-language-preview="instrumental-sonification">Preview scene</button><button type="button" data-sound-language-select="instrumental-sonification">Use this language</button></div></article>
+            </div>
+            <output id="sound-language-preview-status" class="hint" aria-live="polite">Each preview contains an animal call, foot contact, wind, rain and water.</output>
+          </div>
+        </section>
+        <aside id="weather-field-legend" class="weather-field-legend" aria-live="polite" hidden>
+          <header><strong id="weather-field-title">Precipitation</strong><span>Scientific Weather Field</span></header>
+          <div id="weather-field-stops" class="weather-field-stops"></div>
+          <p id="weather-field-status">Authoritative field</p>
+        </aside>
+        <section id="escape-menu" class="escape-menu" role="dialog" aria-modal="true" aria-labelledby="escape-menu-title" hidden>
+          <button class="escape-menu-backdrop" type="button" data-escape-resume tabindex="-1" aria-label="Resume simulation"></button>
+          <div class="escape-menu-card">
+            <header class="escape-menu-heading"><div><small>In-game menu</small><h2 id="escape-menu-title">Simulation paused</h2><p id="escape-menu-status">Your world is held exactly where you left it.</p></div><button id="escape-menu-close" class="panel-close" type="button" aria-label="Resume simulation">×</button></header>
+            <button id="escape-resume" class="escape-resume" type="button">Resume</button>
+            <section class="escape-window-section" aria-labelledby="escape-windows-title"><div class="escape-section-heading"><div><small>Window recovery</small><h3 id="escape-windows-title">Visible interface</h3></div><span>Show, hide or restore any window</span></div><div id="escape-window-list" class="escape-window-list"></div></section>
+            <div class="escape-menu-actions"><button id="escape-laboratory-size" type="button">Open Main Laboratory</button><button id="escape-reset-layout" type="button">Reset window sizes</button><button id="escape-unstuck-entity" type="button">Unstuck selected entity</button><button id="escape-new-world" type="button">New world…</button><button id="escape-exit-movie" type="button" hidden>Exit Cinema Mode</button><button id="escape-save-exit" type="button">Save and exit to main menu</button><button id="escape-main-menu" type="button">Main menu without saving</button></div>
+            <section id="escape-save-choice" class="escape-save-choice" aria-labelledby="escape-save-choice-title" hidden>
+              <div><small>Save destination</small><h3 id="escape-save-choice-title">Where should this world be saved?</h3><p>Choose exactly what Continue will reopen.</p></div>
+              <label><input type="radio" name="escape-save-mode" value="existing" checked> <span><strong>Update a named save</strong><small>Overwrite the selected named slot and make it the Continue world.</small></span></label>
+              <select id="escape-save-existing" aria-label="Named save to update"></select>
+              <label><input type="radio" name="escape-save-mode" value="quick"> <span><strong>Quick save only</strong><small>Update Continue without changing any named slot.</small></span></label>
+              <label><input type="radio" name="escape-save-mode" value="new"> <span><strong>Create a new named save</strong><small>Keep the existing slots and save this world under a new name.</small></span></label>
+              <input id="escape-save-new-name" type="text" maxlength="80" placeholder="e.g. World day 1" aria-label="New save name">
+              <div class="escape-save-choice-actions"><button id="escape-save-choice-cancel" type="button">Cancel</button><button id="escape-save-choice-confirm" type="button">Save and exit</button></div>
+            </section>
+            <p class="escape-menu-hint">Drag a window’s striped lower-right corner to change its width and height. Press Esc at any time to return. Closing a window never removes its data.</p>
+          </div>
+        </section>
+        <nav id="window-dock" class="window-dock" aria-label="Minimised windows" hidden></nav>
+        <section id="observer-hud" data-window-id="observer" data-window-title="Observer controls" aria-label="Observer controls">
+          <div class="hud-top"><strong id="hud-mode">World observer</strong><span id="hud-day">Day 1 · Spring</span><div class="panel-heading-actions"><button id="observer-hud-toggle" class="panel-minimise" type="button" data-minimise-panel="#observer-hud" aria-expanded="true" aria-label="Minimise observer controls">−</button><button class="panel-close" type="button" data-close-window="observer" aria-label="Close observer controls">×</button></div></div>
+          <div class="hud-controls"><button id="hud-play" type="button">Pause</button><button id="hud-map" type="button">Map</button><button id="new-world-open" type="button">New world</button><button id="hud-reality" type="button">Reality</button><button id="graphics-open" type="button">Settings</button><button id="lab-toggle" type="button">Laboratory</button><button id="hud-movie" type="button">Movie mode</button></div>
+          <details class="acoustic-controls">
+            <summary>Sound and sensory perspective</summary>
+            <label><span>Perspective</span><select id="sensory-perspective"><option value="human-observer">Human Observer</option><option value="species-lens">Species Lens</option><option value="entity-experience">Entity Experience</option><option value="physical-scientific">Physical / Scientific</option></select></label>
+            <label><span>Sound language</span><select id="audio-language"><option value="">Choose…</option><option value="bioacoustic-signature">Bioacoustic Signature</option><option value="natural-reconstruction">Natural Reconstruction</option><option value="analogue-ecology">Analogue Ecology</option><option value="digital-ecology">Digital Ecology</option><option value="instrumental-sonification">Instrumental Sonification</option></select></label>
+            <label class="graphics-check"><input id="audio-enabled" type="checkbox"/><span>Enable procedural diegetic audio</span></label>
+            <label><span>Master volume</span><input id="audio-volume" type="range" min="0" max="1" step="0.05" value="0.7"/></label>
+            <label><span>Dynamic range</span><select id="audio-dynamic-range"><option value="natural">Natural</option><option value="reduced">Reduced</option><option value="night">Night listening</option></select></label>
+            <p id="sensory-perspective-status" class="hint">Human-accessible scene at the floating camera. Animal hearing remains authoritative even while audio is muted.</p>
+            <p id="sound-caption-live" class="hint sound-caption-live" aria-live="polite" hidden></p>
+          </details>
+          <label class="hud-speed">Simulation <strong id="hud-speed-value">1 minute tick/s</strong><input id="hud-speed" type="range" min="0" max="60" step="1" value="1" /></label>
+          <p id="hud-performance" class="hud-performance">Measuring FPS…</p>
           <p id="hud-event" class="hud-event">Observing a new world.</p>
           <details class="world-symbol-key">
-            <summary>World symbols</summary>
-            <div><b class="symbol water-symbol">W</b><span>Water request — an animal is critically thirsty.</span></div>
-            <div><b class="symbol alarm-symbol">!</b><span>Threat sighting — predator evidence received; the animal is scanning or fleeing.</span></div>
-            <div><b class="symbol attack-symbol">✹</b><span>Physical attack — the animal was struck moments ago; this is the highest emergency signal.</span></div>
-            <div><b class="symbol injury-symbol">+</b><span>Injury — health is impaired, but no current strike is being reported.</span></div>
-            <div><b class="symbol heart-symbol">♥</b><span>Dependent care request or courtship. An attacked dependent sends ✹ instead.</span></div>
+            <summary>World symbols — visual dictionary</summary>
+            <label class="symbol-key-search"><span>Find a symbol or generated combination</span><input id="symbol-key-search" type="search" placeholder="e.g. juvenile carnivore hunger" autocomplete="off" /></label>
+            <div id="symbol-key-content"></div>
+          </details>
+          <details class="entity-overlay-guide">
+            <summary>Entity display guide — overlays and durations</summary>
+            <p class="hint">This guide explains screen presentation only. It does not expose information the animal has not sensed.</p>
+            <div class="entity-guide-diagram" data-entity-constellation-guide aria-label="Selected animal with one continuously scaled tethered ownership card: private thought and forecast above the public expression, identity and communication row">
+              <div class="guide-bars"><div class="guide-fuel"><span><i data-physiology-symbol-slot="gutNutrients"></i><b>Gut nutrients</b></span><span><i data-physiology-symbol-slot="bloodLiverFuel"></i><b>Blood/liver fuel</b></span><span><i data-physiology-symbol-slot="bodyFat"></i><b>Body fat</b></span><span><i data-physiology-symbol-slot="water"></i><b>Water</b></span></div><div class="guide-endurance"><span><i data-physiology-symbol-slot="aerobicEndurance"></i><b>Aerobic endurance</b></span><span><i data-physiology-symbol-slot="muscleGlycogen"></i><b>Muscle glycogen</b></span><span><i data-physiology-symbol-slot="adrenalineCapacity"></i><b>Adrenaline + stress</b></span></div><div class="guide-health">Health — only when damaged</div></div>
+              <div class="guide-world-layout">
+                <div class="guide-entity-card" data-guide-entity-card>
+                  <div class="guide-cloud-row">
+                    <div class="guide-thought" data-guide-thought-cloud><strong>🌿 → 💧</strong><span>IS</span><small>private thought · now</small></div>
+                    <div class="guide-forecast" data-guide-predictive-cloud><strong>☁ ?</strong><span>WATER MAY REMAIN</span><small>private forecast · uncertain</small></div>
+                  </div>
+                  <div class="guide-card-row">
+                    <div class="guide-card-expression"><span class="guide-face">🙂</span><small>expression</small></div>
+                    <div class="guide-identity-rail" data-guide-owner-tag>
+                      <div class="guide-identity-main"><strong>VG12</strong><span>♀</span><span>A</span></div>
+                      <small class="guide-pregnancy">pregnant · 62%</small>
+                      <small class="guide-identity-caption">identity · sex · life stage</small>
+                    </div>
+                    <div class="guide-changing"><span class="guide-changing-row"><i class="guide-signal">⚠</i><small>call</small></span><span class="guide-changing-row"><i class="guide-action">⚑</i><small>action</small></span></div>
+                  </div>
+                </div>
+                <span class="guide-owner-tether" data-guide-owner-tether aria-hidden="true"></span>
+                <div class="guide-animal" data-guide-owner-anchor><span class="guide-head"></span><span class="guide-body"></span><i class="guide-owner-anchor-mark" aria-hidden="true"></i></div>
+              </div>
+              <p class="guide-channel-note"><strong>Selected-animal example:</strong> the one thick dark panel, local colour border and tether keep every channel attached to this animal. The public lower row reads expression → identity/sex/life stage/pregnancy → communication/action. Every admitted animal uses this same card design; a wheel event samples camera-to-animal distance and continuously scales the complete surface. Only the selected animal may add the private upper row: the solid white thought describes its current priority while the dashed forecast describes a separate fallible prediction. An undecided ellipsis or broken forecast ring can briefly occupy those bays when real content is unavailable. Semantic colours still mean danger, water, care and other world cues; ownership never recolours them.</p>
+            </div>
+            <dl class="entity-guide-list">
+              <div><dt>One scroll-scaled ownership card</dt><dd>There are no thin, summary or expanded zoom variants. With no selection, a stable centre-weighted budget admits a small set of thick public cards. Selecting a living animal suppresses every other animal card and nameplate, leaving only that animal's expanded instrument; deselection restores the strategic budget. Cinema follows the same exclusive rule but nominates its own camera-primary subject without granting private observer selection, and subjectless world shots show none. On a wheel event, the active card samples distance to its own animal—not the ground—and stores one continuous bounded scale until the next wheel event. Camera movement changes viewport visibility, not panel size.</dd></div>
+              <div><dt>Two selected-only private clouds</dt><dd>The solid white thought cloud is a Laboratory rendering of the selected animal's current priority: what matters now, not a prediction. If no priority has committed, a branching <strong>⋯ UNDECIDED</strong> symbol pulses instead of inventing a motive. A dashed pale-cyan FORECAST cloud may appear beside it when a meaningful admitted forecast becomes eligible. It uses uncertain wording such as “possible danger”; threat forecasts label estimated event chance, while other families label a model-confidence band. If none qualifies, a broken <strong>◌? FORECAST NOT READY</strong> or <strong>NO QUALIFIED FORECAST</strong> status pulses. If a qualified estimate has not materially changed, the same ring says <strong>FORECAST UNCHANGED</strong> rather than pretending it failed. These statuses describe the prediction process—they never mean safe, no predator, no water or no event. Hover, Laboratory access or Cinema interest cannot place either private cloud above an unselected animal. Neither is a public signal, invented inner speech or verified world fact.</dd></div>
+              <div><dt>Type-specific transition timing</dt><dd>Expressions, callouts and ordinary thoughts use semantic profiles between 0.5 and 5 seconds rather than one global hold. Text-bearing private forecasts remain for 3 to 8 seconds; empty forecast pulses vary from 3 to 5 seconds before a 1.75-second quiet phase. Each profile has an entry delay, minimum readable time, release grace and interruption priority. A sudden startle lasts 0.5 seconds; settled safe rest must remain eligible for 1.5 seconds before appearing and receives a 5-second minimum. Fast changes are coalesced to the newest eligible replacement, while urgent danger can interrupt after the universal 0.5-second readability floor. The animal's physiology, decisions, actions, learning and narration evidence continue immediately. Empty thought uses a 1.25-second visible, 1.75-second quiet heartbeat. Selection, viewport or privacy loss, a Cinema owner cut and animal removal clear ineligible artwork immediately.</dd></div>
+              <div><dt>Action badge</dt><dd>Remains visible while a notable behaviour is actively being performed, then disappears when that behaviour ends or an urgent symbol takes precedence.</dd></div>
+              <div><dt>Call or signal</dt><dd>A public badge stays attached to its speaker and uses a 0.75–4 second type-specific hold: immediate impact warnings are short, while directional resource reports remain longer. A genuinely new occurrence of the same call can rearm its timer. Sound arcs are not held: they appear only while the animal is actually vocalising. A receiver link appears only when retained observational evidence confirms receipt; an intended recipient alone is not proof that the call was heard. Urgent cues take precedence over ordinary badges.</dd></div>
+              <div><dt>Identity centre</dt><dd>The middle of the card keeps a short entity ID with sex and maturity markers: B baby, J juvenile, YA young adult, A adult and O old. P and any pregnancy progress shown there are observer-only diagnostic state, not a public announcement or knowledge automatically available to another animal. A local shape/accent and tether pattern redundantly identify ownership in a crowded visible cluster; they do not change the animal or need to be globally unique.</dd></div>
+              <div><dt>Metabolic reserves</dt><dd>Selected-organism diagnostic showing gut nutrients, blood/liver fuel (blood glucose and liver glycogen), body fat and hydration. When Performance fuels is also visible, it forms the attached upper half of one physiology stack. Its independent Overlays checkbox can still hide only this half; if shown alone, it occupies the common stack position without an empty gap.</dd></div>
+              <div><dt>Performance fuels</dt><dd>Selected-organism diagnostic showing aerobic endurance, muscle glycogen, adrenaline capacity and accumulated adrenaline stress. Adrenaline mobilises fuel; it is not itself an energy reserve. It forms the attached lower half of the physiology stack when Metabolic reserves is visible, but its independent Overlays checkbox still controls it separately.</dd></div>
+              <div><dt>Health</dt><dd>Appears when health or maximum recoverable health is below full.</dd></div>
+              <div><dt>Rings, arrows and links</dt><dd>Most long colour-matched patterned lines are ownership tethers: each joins one card to its animal. White shows facing; the short intent arrow uses the current priority colour. Other separately licensed lines can show a decision cause, recent movement, a recorded actor-to-target action, or confirmed receipt of a call. They may coexist because they answer different questions; none is a prediction path or a permanent social bond.</dd></div>
+            </dl>
           </details>
         </section>
-        <section id="observer-selection" hidden>
-          <div class="section-title">Selected organism</div><h2 id="hud-selected-name">—</h2>
-          <p id="hud-selected-action">—</p>
-          <div class="hud-stats"><span>Energy <strong id="hud-energy">—</strong></span><span>Health <strong id="hud-health">—</strong></span><span>Water <strong id="hud-water">—</strong></span><span>Drive <strong id="hud-drive">—</strong></span></div>
-          <div class="hud-controls"><button id="hud-lock" type="button">Lock camera</button><button id="hud-favourite" type="button">Favourite</button></div>
-          <div class="observer-tabs" role="tablist" aria-label="Selection information"><button type="button" data-observer-tab="details" class="is-active">Details</button><button type="button" data-observer-tab="priorities">Priorities</button><button type="button" data-observer-tab="trace">RSS trace</button><button type="button" data-observer-tab="view">View</button></div>
-          <div id="hud-detail-content" class="observer-detail" aria-live="polite"></div>
+        <section id="movie-hud" class="movie-hud" data-window-id="cinema" data-window-title="Cinema controls" hidden aria-label="Nature documentary controls">
+          <div class="movie-hud-heading"><div><small>Autonomous ecosystem cinematography</small><strong>Nature documentary</strong></div><button id="movie-stop" type="button">Exit</button></div>
+          <section class="movie-output-controls" aria-label="Cinema output controls">
+            <label class="movie-master-preset"><span>Cinema mode</span><select id="movie-production-preset"><option value="classic" selected>Observe simulation</option><option value="follow">Follow a connected story</option><option value="carnivore">Carnivore watch</option><option value="overview">Wide world context</option></select></label>
+            <div class="movie-output-toggles">
+              <label><input id="movie-panel-narration-enabled" type="checkbox" checked/><span>Voice</span></label>
+              <label><input id="movie-panel-captions-enabled" type="checkbox" checked/><span>Captions</span></label>
+              <label><input id="movie-ai-enabled" type="checkbox"/><span>AI overview</span></label>
+              <button id="movie-obs-enable" type="button">Enable OBS</button>
+            </div>
+            <div class="movie-output-status" aria-live="polite"><span id="movie-voice-status">Voice on</span><span id="movie-caption-status">Captions on</span><span id="movie-ai-status">AI off</span><span id="movie-obs-status">OBS off</span></div>
+          </section>
+          <div class="movie-shot-copy"><span id="movie-shot-kind">Establishing shot</span><strong id="movie-shot-title">Surveying the ecosystem</strong><p id="movie-shot-detail">Finding activity across the world…</p></div>
+          <div class="movie-progress" aria-hidden="true"><i id="movie-progress-fill"></i></div>
+          <div class="movie-actions"><button id="movie-pause-camera" type="button">Pause camera</button><button id="movie-next" type="button">Next shot</button><label><span>Pacing</span><select id="movie-pacing"><option value="relaxed">Relaxed</option><option value="balanced" selected>Balanced</option><option value="lively">Lively</option></select></label></div>
+          <section class="movie-scene-review" aria-label="Review this documentary scene" hidden>
+            <div class="movie-scene-review-heading"><strong>Review this scene</strong><span id="movie-audience-scene-status">Feedback is optional</span></div>
+            <div class="movie-rating-row" role="group" aria-label="Scene rating"><button id="movie-audience-thumb-down" type="button" aria-label="Dislike this scene">−</button><button type="button" data-movie-rating="1" aria-label="Rate 1 out of 5">1</button><button type="button" data-movie-rating="2" aria-label="Rate 2 out of 5">2</button><button type="button" data-movie-rating="3" aria-label="Rate 3 out of 5">3</button><button type="button" data-movie-rating="4" aria-label="Rate 4 out of 5">4</button><button type="button" data-movie-rating="5" aria-label="Rate 5 out of 5">5</button><button id="movie-audience-thumb-up" type="button" aria-label="Like this scene">+</button></div>
+            <div class="movie-scene-review-options"><select id="movie-audience-reason" aria-label="Reason for feedback"><option value="">Reason (optional)</option><option value="GOOD_SUBJECT">Good subject</option><option value="GOOD_CAMERA_ANGLE">Good camera angle</option><option value="GOOD_DISTANCE">Good camera distance</option><option value="GOOD_PACING">Good pacing</option><option value="GOOD_EXPLANATION">Good explanation</option><option value="USEFUL_LABORATORY_DETAIL">Useful Laboratory detail</option><option value="FOLLOW_ENTITY">Keep following this entity</option><option value="GOOD_STORY_CONTINUATION">Good story continuation</option><option value="NOT_INTERESTED_SUBJECT">Not interested in this subject</option><option value="TOO_MUCH_NARRATION">Too much narration</option><option value="NOT_ENOUGH_EXPLANATION">Not enough explanation</option><option value="SHOT_TOO_LONG">Shot too long</option><option value="SHOT_TOO_SHORT">Shot too short</option><option value="TOO_MANY_CUTS">Too many cuts</option><option value="MORE_WORLD_CONTEXT">More world context</option><option value="MORE_CHARACTER_FOCUS">More character focus</option><option value="CAMERA_TOO_DISTANT">Camera too distant</option><option value="CAMERA_TOO_CLOSE">Camera too close</option><option value="CAMERA_TOO_ACTIVE">Camera too active</option><option value="CAMERA_TOO_STATIC">Camera too static</option></select><button id="movie-audience-more" type="button">More like this</button><button id="movie-audience-less" type="button">Less like this</button><button id="movie-audience-undo" type="button" disabled>Undo last review</button></div>
+          </section>
+          <aside id="movie-audience-prompt" class="movie-audience-prompt" hidden aria-live="polite"><strong id="movie-audience-prompt-text">What should receive more attention next?</strong><div id="movie-audience-prompt-options" class="movie-production-actions"></div><div class="movie-production-actions"><button id="movie-audience-prompt-dismiss" type="button">Not now</button><button id="movie-audience-prompt-stop" type="button">Stop questions this session</button></div></aside>
+          <div class="movie-presets" hidden>
+            <label><span>Information lens</span><select id="movie-lens-preset"><option value="adaptive">Adaptive · clean to detailed</option><option value="documentary" selected>Contextual documentary</option><option value="natural">Natural world</option><option value="perception">Animal perception</option><option value="ecology">Ecology explained</option><option value="world">World systems</option><option value="research">Laboratory research</option><option value="complete">All relevant information</option></select></label>
+            <label><span>Event priority</span><select id="movie-event-priority"><option value="quiet">Quiet observation</option><option value="balanced">Balanced</option><option value="events" selected>Events first</option></select></label>
+          </div>
+          <div id="movie-lens-summary" class="movie-lens-summary" hidden><strong>Director lens</strong><span>Natural world</span></div>
+          <details class="movie-cinema-controls" hidden><summary>Cinematography controls</summary><div class="movie-control-grid">
+            <label><span>Shot length</span><select id="movie-shot-length"><option value="short">Mostly short</option><option value="varied" selected>Documentary variation</option><option value="long">Mostly long</option></select></label>
+            <label><span>Shot subjects</span><select id="movie-shot-types"><option value="all">All shot types</option><option value="wildlife" selected>Wildlife focused</option><option value="landscape">Landscape focused</option><option value="intimate">Close and intimate</option></select></label>
+            <label><span>Camera movement</span><select id="movie-motion-types"><option value="all" selected>All movement</option><option value="still">Mostly still</option><option value="smooth">Smooth movement</option><option value="dynamic">Dynamic movement</option></select></label>
+            <label><span>Perception inserts</span><select id="movie-perception-inserts"><option value="auto">Automatic</option><option value="frequent" selected>Frequent</option><option value="off">Off</option></select></label>
+          </div></details>
+          <details class="movie-cinema-controls movie-narration-controls" hidden><summary>Narration controls</summary><div class="movie-control-grid">
+            <label><span>Narration style</span><select id="movie-panel-narration-preset"><option value="brief" selected>Brief remarks</option><option value="standard">Standard documentary</option><option value="long">Long-form explanation</option><option value="deep">Deep ecosystem documentary</option><option value="custom">Custom</option></select></label>
+            <label><span>Context depth</span><select id="movie-panel-narration-context"><option value="1">1 · Small remarks</option><option value="2" selected>2 · Immediate context</option><option value="3">3 · Connected ecology</option><option value="4">4 · Hidden systems</option><option value="5">5 · Maximum world context</option></select></label>
+            <label><span>Length</span><select id="movie-panel-narration-length"><option value="short" selected>Short</option><option value="standard">Standard</option><option value="long">Long</option><option value="extended">Extended</option></select></label>
+          </div></details>
+          <details class="movie-cinema-controls movie-production-controls" hidden><summary>Live documentary studio</summary>
+            <div class="movie-control-grid"><label><span>Authored knowledge</span><select id="movie-author-mode"><option value="V3_SHADOW" selected>ACSS learning shadow</option><option value="V3_ACTIVE">ACSS predictive author</option><option value="V2_SHADOW">Older predictive shadow</option><option value="V2_ACTIVE">Older predictive prototype</option><option value="LEGACY">Legacy deterministic</option></select></label><span class="hint" id="movie-author-status">ACSS models observing in shadow mode</span></div>
+            <details id="movie-acss-diagnostics"><summary>ACSS author mind</summary><div class="movie-status-stack"><span id="movie-acss-concern">Concern: observing</span><span id="movie-acss-method">Method: none selected</span><span id="movie-acss-models">Models: awaiting evidence</span><span id="movie-acss-decision-reason">Decision: waiting for a valid dependency plan</span><span id="movie-acss-learning">Learning: observing</span><span id="movie-acss-revisions">Observation 0 · evidence 0 · profile 0</span><span id="movie-acss-forecast-health">Forecasts: awaiting evidence</span><span id="movie-acss-obligations">Return obligations: none</span><span id="movie-acss-failures">Failures: none</span></div><div class="movie-control-grid"><label><span>Learning lifecycle</span><select id="movie-acss-lifecycle"><option value="OBSERVING">Observe only</option><option value="CALIBRATING">Calibrate forecasts</option><option value="SHADOW_POLICY">Learn policy in shadow</option><option value="BOUNDED_ACTIVE">Bounded active learning</option><option value="VALIDATED_ACTIVE">Validated active profile</option></select></label></div><div class="movie-production-actions"><button id="movie-acss-rollback" type="button">Rollback learning</button><button id="movie-acss-reset" type="button">Reset learning</button></div></details>
+            <details id="movie-audience-learning"><summary>Audience learning and fault reports</summary>
+              <div id="movie-audience-profile-status" class="movie-documentary-status"><strong>Local audience profile</strong><span>Waiting for a reviewed scene</span></div>
+              <fieldset id="movie-audience-priming" class="movie-audience-priming" hidden><legend>Optional two-minute preference setup</legend><p class="hint">These answers prime the documentary for this audience. You can skip them and teach it by reviewing scenes instead.</p><div class="movie-audience-profile-picker"><label><span>Existing profile</span><select id="movie-audience-profile-select" aria-label="Audience profile"></select></label><button id="movie-audience-use-profile" type="button">Use profile</button><label><span>New profile name</span><input id="movie-audience-profile-name" maxlength="80" placeholder="Documentary viewer"/></label><label><span>Profile type</span><select id="movie-audience-profile-mode"><option value="PERSONAL">Personal preferences</option><option value="SHARED_AGGREGATE">Shared audience ratings</option></select></label><button id="movie-audience-create-profile" type="button">Create profile</button><button id="movie-audience-start-guest" type="button">Guest session</button></div><div class="movie-control-grid"><label><span>Primary interest</span><select id="movie-audience-purpose"><option value="neutral">Balanced</option><option value="characters">Individual animals</option><option value="world">Weather, water and plants</option><option value="rare">Rare and dramatic events</option><option value="quiet">Quiet observation</option><option value="laboratory">Deep Laboratory explanations</option><option value="everything">Explore everything available</option></select></label><label><span>Camera distance</span><select id="movie-audience-camera-distance"><option value="medium">Balanced</option><option value="close">Closer</option><option value="wide">Wider context</option></select></label><label><span>Camera movement</span><select id="movie-audience-camera-motion"><option value="stable">Stable and measured</option><option value="moving">More movement</option></select></label><label><span>Narration depth</span><select id="movie-audience-narration-depth"><option value="3">Connected ecology</option><option value="2">Immediate and concise</option><option value="5">Maximum Laboratory depth</option></select></label></div><div class="movie-audience-comparisons"><span>Quick either/or preferences</span><div><em>Framing</em><button type="button" data-audience-comparison="distance" data-audience-choice="A">Closer animals</button><button type="button" data-audience-comparison="distance" data-audience-choice="B">Wider habitat</button></div><div><em>Movement</em><button type="button" data-audience-comparison="motion" data-audience-choice="A">Stable camera</button><button type="button" data-audience-comparison="motion" data-audience-choice="B">Moving camera</button></div><div><em>Subject</em><button type="button" data-audience-comparison="subject" data-audience-choice="A">Characters</button><button type="button" data-audience-comparison="subject" data-audience-choice="B">World processes</button></div><div><em>Explanation</em><button type="button" data-audience-comparison="narration" data-audience-choice="A">Concise</button><button type="button" data-audience-comparison="narration" data-audience-choice="B">Deep</button></div><div><em>Cutting</em><button type="button" data-audience-comparison="cutting" data-audience-choice="A">Longer holds</button><button type="button" data-audience-comparison="cutting" data-audience-choice="B">Faster cutting</button></div><div><em>Viewpoint</em><button type="button" data-audience-comparison="elevation" data-audience-choice="A">Ground level</button><button type="button" data-audience-comparison="elevation" data-audience-choice="B">Elevated overview</button></div><div><em>Coverage</em><button type="button" data-audience-comparison="coverage" data-audience-choice="A">One protagonist</button><button type="button" data-audience-comparison="coverage" data-audience-choice="B">Groups</button></div></div><div class="movie-audience-topics"><label><input type="checkbox" data-audience-topic="perception"/>Perception</label><label><input type="checkbox" data-audience-topic="physiology"/>Physiology</label><label><input type="checkbox" data-audience-topic="danger"/>Predation and danger</label><label><input type="checkbox" data-audience-topic="reproduction"/>Reproduction and mate choice</label><label><input type="checkbox" data-audience-topic="weather"/>Weather</label><label><input type="checkbox" data-audience-topic="water"/>Water</label><label><input type="checkbox" data-audience-topic="plants"/>Plants</label><label><input type="checkbox" data-audience-topic="social"/>Family and social lives</label></div><div class="movie-audience-topics"><label><input type="checkbox" data-audience-narration-choice="questions"/>Questions and hypotheses</label><label><input type="checkbox" data-audience-narration-choice="quiet"/>Allow quiet scenes</label><label><input type="checkbox" data-audience-narration-choice="names" checked/>Use recurring entity names</label><label><input type="checkbox" data-audience-narration-choice="recap"/>Recap returning stories</label></div><label class="movie-audience-remember"><input id="movie-audience-remember" type="checkbox" checked/>Remember explicit choices on this computer</label><div class="movie-production-actions"><button id="movie-audience-prime" type="button">Apply preferences</button><button id="movie-audience-skip-prime" type="button">Skip setup</button></div></fieldset>
+              <div class="movie-audience-written"><label for="movie-audience-written">Written feedback</label><textarea id="movie-audience-written" maxlength="2000" placeholder="For example: keep following this animal, use a closer camera, or show more water processes."></textarea><div class="movie-production-actions"><button id="movie-audience-interpret" type="button">Interpret feedback</button><button id="movie-audience-confirm-written" type="button" disabled>Confirm suggested changes</button><button id="movie-audience-discard-written" type="button">Discard</button></div><span id="movie-audience-written-status" class="hint">Text is interpreted locally and changes nothing until you confirm.</span></div>
+              <div class="movie-audience-fault"><strong>Report an error or glitch</strong><div class="movie-control-grid"><label><span>Problem</span><select id="movie-audience-fault-code"><option value="SUBJECT_OUT_OF_FRAME">Subject out of frame</option><option value="CAMERA_TOO_DISTANT">Camera too distant</option><option value="CAMERA_TOO_CLOSE">Camera too close</option><option value="CAMERA_BAD_ANGLE">Bad camera angle</option><option value="CAMERA_INSIDE_TERRAIN">Camera inside terrain</option><option value="CAMERA_SHAKING">Camera shaking</option><option value="CAMERA_LOOP">Camera loop</option><option value="EXCESSIVE_CUTTING">Excessive cutting</option><option value="CAMERA_FAILED_TO_FOLLOW">Failed to follow subject</option><option value="WRONG_ENTITY_HIGHLIGHTED">Wrong entity highlighted</option><option value="WRONG_NARRATION_SUBJECT">Wrong narration subject</option><option value="IMPORTANT_EVENT_IGNORED">Important event ignored</option><option value="STORY_NOT_COMPLETED">Story not completed</option><option value="UNRELATED_TERRAIN_ROOT">Unrelated terrain focus</option><option value="NARRATION_REPEATED">Narration repeated</option><option value="NARRATION_SCENE_MISMATCH">Narration does not match scene</option><option value="FACTUAL_ERROR">Factual error</option><option value="NARRATION_TOO_VAGUE">Narration too vague</option><option value="VOICE_OVERLAP">Voices overlap</option><option value="SEVERE_LAG">Severe lag</option><option value="CONTROL_FAILED">Control failed</option><option value="RECORDING_FAILURE">Recording failure</option><option value="OTHER">Other</option></select></label><label><span>Severity</span><select id="movie-audience-fault-severity"><option value="MINOR">Minor</option><option value="MAJOR" selected>Major</option><option value="UNUSABLE">Scene unusable</option></select></label></div><button id="movie-audience-report-fault" type="button">Report fault</button></div>
+              <div class="movie-audience-consent"><label><input id="movie-audience-implicit-enabled" type="checkbox" checked/>Learn weakly from qualified Next Shot, Keep, Highlight and Favourite actions</label><label><input id="movie-audience-prompts-enabled" type="checkbox" checked/>Ask occasional preference questions at safe scene boundaries</label></div><div class="movie-production-actions"><button id="movie-audience-export" type="button">Export audience profile</button><button id="movie-audience-clear-camera" type="button">Reset camera preferences</button><button id="movie-audience-rollback" type="button">Rollback audience learning</button><button id="movie-audience-reset-session" type="button">Clear session preferences</button><button id="movie-audience-reset-all" type="button">Reset saved audience profile</button><button id="movie-audience-guest" type="button">Use guest mode</button></div>
+            </details>
+            <div class="movie-control-grid"><label><span>Documentary subject</span><select id="movie-subject-mode"><option value="balanced">Balanced world + animals</option><option value="characters" selected>Interaction-led animal stories</option><option value="world">World reality only</option></select></label><label><span>Character continuity</span><select id="movie-character-continuity"><option value="off">Off</option><option value="prefer">Prefer established animals</option><option value="strong" selected>Follow connected event threads</option></select></label></div>
+            <div class="movie-production-actions"><button id="movie-favorite-subject" type="button">Favourite current animal</button><button id="movie-clear-favorites" type="button">Clear favourites</button><span id="movie-favorite-status">No favourite animals</span></div>
+            <div class="movie-control-grid"><label><span>AI overview length</span><select id="movie-ai-overview-length"><option value="concise">Concise · faster</option><option value="standard" selected>Standard</option><option value="detailed">Detailed · slower</option></select></label><label><span>AI overview cadence</span><select id="movie-ai-overview-cadence"><option value="60000">Every 1 minute</option><option value="120000" selected>Every 2 minutes</option><option value="240000">Every 4 minutes</option></select></label></div>
+            <p class="hint">The first overview begins after three verified developments. Later overviews follow this cadence and wait for a natural gap in immediate narration.</p>
+            <div class="movie-ai-progress" id="movie-ai-progress" data-state="COLLECTING" role="status" aria-live="polite"><div><strong id="movie-ai-progress-label">AI overview · collecting facts</strong><span id="movie-ai-progress-detail">0 of 3 verified developments</span></div><progress id="movie-ai-progress-bar" max="100" value="0">0%</progress></div>
+            <div class="movie-documentary-status" aria-live="polite"><strong id="movie-session-status">Documentary session inactive</strong><span id="movie-thread-status">No primary story thread yet</span><span id="movie-timeline-status">0 threads · 0 active ranges · 0 narration ready</span></div>
+            <div class="movie-control-grid"><label><span>Companion WebSocket</span><input id="movie-companion-url" value="ws://127.0.0.1:8765/documentary"/></label><label><span>Session token</span><input id="movie-companion-token" type="password" autocomplete="off" placeholder="Not stored"/></label></div>
+            <div class="movie-production-actions"><button id="movie-companion-connect" type="button">Connect companion</button><button id="movie-marker-highlight" type="button">Highlight</button><button id="movie-marker-keep" type="button">Keep</button><button id="movie-marker-compress" type="button">Compress</button><button id="movie-marker-remove" type="button">Remove</button><button id="movie-safe-camera" type="button">Safe camera</button></div>
+          </details>
+          <details class="movie-lens-controls" hidden><summary>Advanced information channels</summary><p>These overrides refine the preset after scene context is applied. Prefer raises a channel when relevant; Always forces it on; Never disables it. Narration separately draws from the wider Laboratory archive, including metabolism, recovery, planning, relationships, reproduction, memory, perception, weather, water, vegetation and terrain.</p><div class="movie-lens-grid">
+            <h4>Behaviour and identity</h4>
+            <label><span>Thought / priority</span><select data-movie-channel="thoughts"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label><label><span>Expression</span><select data-movie-channel="expressions"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label>
+            <label><span>Calls</span><select data-movie-channel="calls"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label><label><span>Action</span><select data-movie-channel="actions"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label>
+            <label><span>Identity</span><select data-movie-channel="identity"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label><label><span>Physiology / stats</span><select data-movie-channel="physiology"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label>
+            <h4>Perception and memory</h4>
+            <label><span>Vision</span><select data-movie-channel="vision"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label><label><span>Sound</span><select data-movie-channel="sound"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label>
+            <label><span>Smell</span><select data-movie-channel="smell"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label><label><span>Memory</span><select data-movie-channel="memory"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label>
+            <h4>Landscape and movement</h4>
+            <label><span>Surface water</span><select data-movie-channel="water"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label><label><span>Plant biomass</span><select data-movie-channel="biomass"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label>
+            <label><span>Scent field</span><select data-movie-channel="scent"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label><label><span>Decision / movement</span><select data-movie-channel="decisions"><option value="auto">Auto</option><option value="prefer">Prefer</option><option value="always">Always</option><option value="never">Never</option></select></label>
+          </div></details>
         </section>
-        <section id="reality-panel" hidden aria-label="Reality overview">
-          <div class="reality-heading"><div><div class="section-title">Reality overview</div><h2>World state</h2></div><button id="reality-close" type="button" aria-label="Close reality overview">×</button></div>
+        <div id="movie-captions" class="movie-captions" role="status" aria-live="polite" hidden></div>
+        <div id="movie-transition-layer" class="movie-transition-layer" aria-hidden="true"></div>
+        <section id="showcase-hud" class="showcase-hud" data-window-id="showcase" data-window-title="Showcase controls" hidden aria-label="Screenshot showcase controls">
+          <div class="showcase-hud-heading"><div><small>Developer presentation mode</small><strong>Screenshot showcase</strong></div><div class="panel-heading-actions"><button id="showcase-panel-toggle" class="panel-minimise" type="button" data-minimise-panel="#showcase-hud" aria-expanded="true" aria-label="Minimise screenshot showcase controls">−</button><button id="showcase-hide-controls" type="button">Hide controls</button><button class="panel-close" type="button" data-close-window="showcase" aria-label="Close showcase controls">×</button></div></div>
+          <label><span>Staged scenario</span><select id="showcase-scenario"><option value="overview">Expressions &amp; overlays</option><option value="mating">Courtship &amp; mating</option><option value="chase">Predator chase</option><option value="pack-hunt">Pack against herd</option><option value="separated-young">Separated young</option><option value="birth">Pregnancy &amp; birth</option><option value="demographics">Full demographics</option></select></label>
+          <label><span>Presentation</span><select id="showcase-presentation"><option value="complete">Complete staged display</option><option value="expressions">Expressions and identity only</option><option value="physiology">Physiology only</option><option value="actions">Signals and actions</option><option value="clean">Clean animals and world</option></select></label>
+          <fieldset class="showcase-director-controls"><legend>Scene director</legend>
+            <label><span>Scene mode</span><select id="showcase-playback-mode"><option value="static">Static composition</option><option value="live" selected>Live staged action</option><option value="natural">Live autonomous simulation</option></select></label>
+            <label><span>Map</span><select id="showcase-map"><option value="balanced">Balanced meadow</option><option value="grassland">Open grassland</option><option value="woodland">Woodland edge</option><option value="waterside">Waterside</option><option value="highland">High ground</option></select></label>
+            <div class="showcase-cast-controls"><label><span>Herbivores</span><input id="showcase-herbivore-count" type="number" min="1" max="12" value="4"></label><label><span>Carnivores</span><input id="showcase-carnivore-count" type="number" min="0" max="8" value="2"></label></div>
+            <label><span>Animal behaviour</span><select id="showcase-behaviour"><option value="directed">Keep authored scene roles</option><option value="natural">Allow natural choices</option><option value="hold">Hold current poses</option></select></label>
+            <div class="showcase-transport"><button id="showcase-play-pause" type="button">Pause scene</button><button id="showcase-step" type="button">Step frame</button><button id="showcase-jump-event" type="button">Jump to event</button></div>
+          </fieldset>
+          <div class="showcase-hud-actions"><button id="showcase-reload" type="button">Reset with controls</button><button id="showcase-main-menu" type="button">Main menu</button></div>
+          <p id="showcase-time" class="showcase-time" aria-live="polite">World time and event timing will appear here.</p>
+          <p id="showcase-status">Live staged action · use Pause scene to freeze the exact screenshot moment.</p>
+        </section>
+        <button id="showcase-restore-controls" class="showcase-restore-controls" type="button" hidden>Show showcase controls</button>
+        <section id="observer-selection" data-window-id="selection" data-window-title="Selected organism" hidden>
+          <div class="selection-heading"><div class="section-title">Selected organism</div><div class="panel-heading-actions"><button id="observer-selection-toggle" class="panel-minimise" type="button" aria-expanded="true" aria-label="Minimise selected organism panel">−</button><button class="panel-close" type="button" data-close-window="selection" aria-label="Close selected organism panel">×</button></div></div>
+          <div class="selection-collapsible"><h2 id="hud-selected-name">—</h2>
+            <p id="hud-selected-action">—</p>
+            <div class="hud-stats" hidden aria-hidden="true"><span>Accessible fuel <strong id="hud-energy">—</strong></span><span>Health <strong id="hud-health">—</strong></span><span>Water <strong id="hud-water">—</strong></span><span>Drive <strong id="hud-drive">—</strong></span></div>
+            <div class="hud-controls"><button id="hud-lock" type="button">Lock camera</button><button id="hud-favourite" type="button">Favourite</button></div>
+            <div class="observer-tabs" role="tablist" aria-label="Selection information"><button type="button" role="tab" aria-selected="true" data-observer-tab="details" class="is-active">Overview</button><button type="button" role="tab" aria-selected="false" data-observer-tab="memory">Social</button><button type="button" role="tab" aria-selected="false" data-observer-tab="priorities">Commitment</button><button type="button" role="tab" aria-selected="false" data-observer-tab="predictive">Forecasts</button><button type="button" role="tab" aria-selected="false" data-observer-tab="view">Overlays</button></div>
+            <div id="hud-detail-content" class="observer-detail" role="tabpanel" aria-live="polite"></div>
+          </div>
+        </section>
+        <section id="reality-panel" data-window-id="reality" data-window-title="Reality overview" hidden aria-label="Reality overview">
+          <div class="reality-heading"><div><div class="section-title">Reality overview</div><h2>World state</h2></div><div class="panel-heading-actions"><button id="reality-minimise" class="panel-minimise" type="button" data-minimise-panel="#reality-panel" aria-expanded="true" aria-label="Minimise reality overview">−</button><button id="reality-close" class="panel-close" type="button" aria-label="Close reality overview">×</button></div></div>
           <div id="reality-terrain" class="reality-grid"></div>
           <div class="section-title">Population</div><div id="reality-population" class="reality-grid"></div>
           <div class="section-title">Active groups</div><div id="reality-groups" class="reality-groups"></div>
         </section>
+        <section id="graphics-panel" data-window-id="settings" data-window-title="Settings" hidden aria-label="Presentation settings">
+          <div class="reality-heading"><div><p class="eyebrow">Presentation only</p><h2>Settings</h2></div><div class="panel-heading-actions"><button id="graphics-minimise" class="panel-minimise" type="button" data-minimise-panel="#graphics-panel" aria-expanded="true" aria-label="Minimise settings">−</button><button id="graphics-close" class="panel-close" type="button" aria-label="Close settings">×</button></div></div>
+          <p class="hint">These settings affect rendering only. Animal decisions and ecological results remain unchanged.</p>
+          <div class="graphics-settings">
+            <fieldset><legend>Display</legend><label><span>Frame-rate target</span><select id="graphics-frame-cap"><option value="60" selected>60 FPS target</option><option value="30">30 FPS minimum target</option></select></label><label><span>Render resolution</span><select id="graphics-resolution"><option value="0.5">50%</option><option value="0.65">65%</option><option value="0.75" selected>75%</option><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option></select></label><label class="graphics-check"><input id="graphics-adaptive-resolution" type="checkbox" checked/><span>Adaptive resolution</span></label><label><span>Adaptive lower limit</span><select id="graphics-adaptive-min"><option value="0.5" selected>50%</option><option value="0.65">65%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.25">125%</option></select></label><label><span>Adaptive upper limit</span><select id="graphics-adaptive-max"><option value="0.5">50%</option><option value="0.65">65%</option><option value="0.75" selected>75%</option><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option></select></label></fieldset>
+            <fieldset><legend>Graphics</legend><label><span>Quality preset</span><select id="graphics-preset"><option value="low">Low</option><option value="balanced">Balanced</option><option value="high">High</option><option value="ultra">Ultra</option><option value="custom">Custom</option></select></label><label><span>Vegetation detail</span><select id="graphics-vegetation"><option value="5">Very low</option><option value="4">Low</option><option value="2">Balanced</option><option value="1">High</option></select></label><label><span>Animal detail distance</span><select id="graphics-animals"><option value="0.6">Short</option><option value="0.72">Reduced</option><option value="1">Balanced</option><option value="1.22">Long</option><option value="1.5">Very long</option></select></label><label><span>Observer zoom limit</span><select id="graphics-observer-zoom"><option value="map-sized">Map-sized</option><option value="far">Far</option><option value="very-far">Very far</option><option value="extreme">Extreme</option></select></label><label><span>Atmospheric haze</span><select id="graphics-observer-haze"><option value="off">Off</option><option value="light">Light</option><option value="natural">Natural</option></select></label><label class="graphics-check"><input id="graphics-large-map-performance" type="checkbox"/><span>Large-map performance mode — recommended for 20k/40k</span></label><label class="graphics-check"><input id="graphics-effects" type="checkbox"/><span>Decorative effects and highlights</span></label><label class="graphics-check"><input id="graphics-shadows" type="checkbox"/><span>Animal contact shadows</span></label></fieldset>
+            <fieldset><legend>Animal detail</legend><p class="hint">These controls change cartoon presentation only. Animal senses and decisions remain identical.</p><label class="graphics-check"><input id="graphics-dynamic-eyes" type="checkbox"/><span>Dynamic eyes</span></label><label class="graphics-check"><input id="graphics-dynamic-pupils" type="checkbox"/><span>Pupil and iris changes</span></label><label class="graphics-check"><input id="graphics-independent-ears" type="checkbox"/><span>Independent ear movement</span></label><label class="graphics-check"><input id="graphics-small-sensory-animations" type="checkbox"/><span>Small sensory animations</span></label><label class="graphics-check"><input id="graphics-minor-animal-features" type="checkbox"/><span>Whiskers and minor identifying features</span></label></fieldset>
+            <fieldset class="weather-settings"><legend>Weather visuals</legend>
+              <p class="hint">Every layer samples the same localized field used by rainfall, hydrology and acoustic masking. These controls never change simulation weather.</p>
+              <label><span>Clouds</span><select id="weather-cloud-quality"><option value="off">Off</option><option value="low">Low</option><option value="high">High</option><option value="cinematic">Cinematic</option></select></label>
+              <label><span>Precipitation density</span><select id="weather-particle-density"><option value="0.35">Very low</option><option value="0.45">Low</option><option value="0.6">Reduced</option><option value="0.75">Balanced</option><option value="1">High</option><option value="1.35">Cinematic</option><option value="1.5">Maximum</option></select></label>
+              <label class="graphics-check"><input id="weather-local-precipitation" type="checkbox"/><span>Local rain and snow streaks</span></label>
+              <label class="graphics-check"><input id="weather-distant-shafts" type="checkbox"/><span>Distant precipitation shafts</span></label>
+              <label class="graphics-check"><input id="weather-cloud-shadows" type="checkbox"/><span>Cloud shadows on terrain</span></label>
+              <label class="graphics-check"><input id="weather-wet-ground" type="checkbox"/><span>Wet-ground darkening</span></label>
+              <label class="graphics-check"><input id="weather-splashes" type="checkbox"/><span>Rain splashes and water ripples</span></label>
+              <label class="graphics-check"><input id="weather-lightning" type="checkbox"/><span>Lightning illumination</span></label>
+              <label class="graphics-check"><input id="weather-haze" type="checkbox"/><span>Rain haze and visibility reduction</span></label>
+              <label class="graphics-check"><input id="weather-scientific-overlay" type="checkbox"/><span>Scientific Weather Field overlay</span></label>
+              <label><span>Weather Field layer</span><select id="weather-overlay-layer"><option value="precipitation">Precipitation intensity</option><option value="cloud-cover">Cloud cover</option><option value="ground-wetness">Ground wetness</option><option value="visibility">Visibility</option><option value="storm">Storm intensity and motion</option></select></label>
+            </fieldset>
+            <fieldset class="sound-settings"><legend>Soundscape</legend>
+              <p class="hint">Presentation only. Animal hearing continues to use the authoritative acoustic model even when this output is muted.</p>
+              <label><span>Sound language</span><select id="settings-audio-language"><option value="">Choose before enabling…</option><option value="bioacoustic-signature">Bioacoustic Signature</option><option value="natural-reconstruction">Natural Reconstruction</option><option value="analogue-ecology">Analogue Ecology</option><option value="digital-ecology">Digital Ecology</option><option value="instrumental-sonification">Instrumental Sonification</option></select></label>
+              <button id="settings-audio-compare-languages" type="button">Compare all five languages</button>
+              <label class="graphics-check"><input id="settings-audio-enabled" type="checkbox"/><span>Enable procedural diegetic audio</span></label>
+              <label><span>Master volume</span><input id="settings-audio-master" type="range" min="0" max="1" step="0.01"/></label>
+              <label><span>Animal vocalisations</span><input id="settings-audio-animals" type="range" min="0" max="1.5" step="0.01"/></label>
+              <label><span>Footsteps and movement</span><input id="settings-audio-movement" type="range" min="0" max="1.5" step="0.01"/></label>
+              <label><span>Wind</span><input id="settings-audio-wind" type="range" min="0" max="1.5" step="0.01"/></label>
+              <label><span>Vegetation</span><input id="settings-audio-vegetation" type="range" min="0" max="1.5" step="0.01"/></label>
+              <label><span>Rain</span><input id="settings-audio-rain" type="range" min="0" max="1.5" step="0.01"/></label>
+              <label><span>Thunder</span><input id="settings-audio-thunder" type="range" min="0" max="1.5" step="0.01"/></label>
+              <label><span>Rivers and waterfalls</span><input id="settings-audio-river" type="range" min="0" max="1.5" step="0.01"/></label>
+              <label><span>Shoreline water</span><input id="settings-audio-shoreline" type="range" min="0" max="1.5" step="0.01"/></label>
+              <label><span>Interface sounds</span><input id="settings-audio-interface" type="range" min="0" max="1.5" step="0.01"/></label>
+              <label><span>Cinema narration</span><input id="settings-audio-cinema" type="range" min="0" max="1.5" step="0.01"/></label>
+              <label><span>Environmental detail density</span><input id="settings-audio-density" type="range" min="0" max="1.5" step="0.01"/></label>
+              <label><span>Near / far environment</span><input id="settings-audio-environment" type="range" min="0.25" max="2" step="0.05"/></label>
+              <label><span>Environmental reverberation</span><input id="settings-audio-reverberation" type="range" min="0" max="1" step="0.01"/></label>
+              <label><span>Dynamic range</span><select id="settings-audio-dynamic-range"><option value="natural">Natural</option><option value="reduced">Reduced</option><option value="night">Night listening</option></select></label>
+              <label><span>Spatial output</span><select id="settings-audio-spatialization"><option value="hrtf">Headphones / HRTF</option><option value="stereo">Stereo speakers</option><option value="mono">Mono compatibility</option></select></label>
+              <label><span>Maximum active voices</span><select id="settings-audio-voices"><option value="16">16 · reduced</option><option value="24">24</option><option value="32">32 · balanced</option><option value="48">48 · high</option><option value="64">64 · maximum</option></select></label>
+              <label class="graphics-check"><input id="settings-audio-translated" type="checkbox"/><span>Translate ultrasound and infrasound when scientifically requested</span></label>
+              <label class="graphics-check"><input id="settings-audio-captions" type="checkbox"/><span>Retain visual sound indicators and captions</span></label>
+              <label class="graphics-check"><input id="settings-audio-visual-overlay" type="checkbox"/><span>Visual sound overlay</span></label>
+              <div class="sound-test-grid"><button type="button" data-audio-test="animal">Test selected animal</button><button type="button" data-audio-test="rain">Test rain</button><button type="button" data-audio-test="wind">Test wind</button><button type="button" data-audio-test="water">Test water</button></div>
+              <output id="settings-audio-status" class="hint">Audio begins only after an explicit click.</output>
+            </fieldset>
+            <fieldset class="entity-recovery-settings"><legend>Entity recovery</legend><p class="hint">Moves the selected or embodied animal to the nearest verified traversable space. Its identity, needs, physiology, memories and relationships are preserved.</p><button id="graphics-unstuck-entity" type="button">Unstuck selected entity</button><output id="entity-unstuck-status" class="hint">Select an animal if one is not currently embodied.</output></fieldset>
+            <fieldset><legend>Icon rendering</legend><label><span>Icon texture quality</span><select id="graphics-icon-quality"><option value="1">Standard · 1×</option><option value="2">High · 2×</option><option value="4">Ultra · 4×</option><option value="8">8K-equivalent · 8×</option></select></label><p class="hint">Regenerates every identity, expression, thought, signal and action icon. The 8× tier can use substantial GPU memory.</p></fieldset>
+            <fieldset><legend>User interface</legend><label><span>Interface scale</span><select id="interface-scale"><option value="0.85">Compact</option><option value="1">Standard</option><option value="1.15">Large</option><option value="1.3">Very large</option></select></label><label><span>Font scale</span><select id="font-scale"><option value="0.85">Small</option><option value="1">Standard</option><option value="1.15">Large</option><option value="1.3">Very large</option></select></label><div class="menu-background-settings"><div class="menu-background-heading"><strong>Menu backgrounds</strong><span>Click an image to use it</span></div><select id="menu-background" aria-label="Selected menu background" hidden><option value="prototype">Prototype concept</option><option value="gameplay">Original gameplay capture</option><option value="showcase-world">Showcase world</option><option value="showcase-expressions">Showcase expressions</option><option value="showcase-selected">Selected organism showcase</option></select><div id="menu-background-library" class="menu-background-library" aria-label="Available menu backgrounds"></div><div class="menu-background-actions"><label class="file-button" for="menu-background-files">Browse and add images</label><input id="menu-background-files" type="file" accept="image/png,image/jpeg,image/webp,image/avif" multiple hidden/><button id="menu-background-remove" type="button">Delete selected image</button></div><p id="menu-background-status" class="hint">Images in assets/menu are discovered automatically when Settings opens. Browser imports are stored separately and can be deleted individually.</p></div><label class="graphics-check"><input id="cinematic-hud-binding-enabled" type="checkbox"/><span>Enable screenshot-HUD keyboard binding</span></label><label><span>Screenshot-HUD key</span><select id="cinematic-hud-key"><option value="KeyH">H</option><option value="F10">F10</option><option value="Backslash">Backslash</option><option value="Backquote">Backquote / `</option></select></label><label class="graphics-check"><input id="cinematic-keep-selection" type="checkbox" checked/><span>Keep Selected Organism panel in screenshots</span></label><button id="cinematic-hud-now" type="button">Toggle screenshot HUD</button><p class="hint">Screenshot mode hides Strategic Overview and Laboratory. The selected panel can remain for explanatory screenshots. World symbols and overlays are never removed. The binding is disabled by default; Escape restores the HUD.</p></fieldset>
+            <fieldset><legend>Cinematic narration</legend><label class="graphics-check"><input id="movie-narration-enabled" type="checkbox" checked/><span>Nature-documentary voice narration</span></label><label class="graphics-check"><input id="movie-captions-enabled" type="checkbox" checked/><span>Display synchronized captions</span></label><label><span>Narration preset</span><select id="movie-narration-preset"><option value="brief">Brief remarks</option><option value="standard">Standard documentary</option><option value="long">Long-form explanation</option><option value="deep">Deep ecosystem documentary</option><option value="custom" selected>Custom</option></select></label><label><span>World context depth</span><select id="movie-narration-context"><option value="1">1 · Small remarks</option><option value="2" selected>2 · Immediate context</option><option value="3">3 · Connected ecology</option><option value="4">4 · Hidden systems</option><option value="5">5 · Maximum world context</option></select></label><label><span>Narration length</span><select id="movie-narration-length"><option value="short">Short</option><option value="standard" selected>Standard</option><option value="long">Long</option><option value="extended">Extended</option></select></label><label><span>Narrator volume</span><select id="movie-narration-volume"><option value="0.45">Quiet</option><option value="0.65">Reduced</option><option value="0.85" selected>Standard</option><option value="1">Full</option></select></label><label><span>Narrator pace</span><select id="movie-narration-rate"><option value="0.78">Slow and spacious</option><option value="0.9">Measured</option><option value="0.96">Concise documentary</option><option value="1" selected>Natural</option><option value="1.1">Brisk</option></select></label><p class="hint">Context depth controls how far the narrator reaches beyond the image. Length controls how many selected facts become speech; shots wait for enabled narration to finish.</p></fieldset>
+          </div>
+          <p id="graphics-summary" class="hint"></p>
+        </section>
+        <section id="new-world-panel" data-window-id="new-world" data-window-title="New world" hidden aria-label="New world settings">
+          <div class="reality-heading"><div><p class="eyebrow">World generation</p><h2>Generate new world</h2></div><div class="panel-heading-actions"><button id="new-world-minimise" class="panel-minimise" type="button" data-minimise-panel="#new-world-panel" aria-expanded="true" aria-label="Minimise new world settings">−</button><button id="new-world-close" class="panel-close" type="button" aria-label="Close new world settings">×</button></div></div>
+          <p class="new-world-warning">Generating replaces the current world. Save first if you want to return to it.</p>
+          <div id="new-world-settings">
+            <details class="world-settings-group" open>
+              <summary>Seed and starting date</summary>
+              <div class="world-settings-grid">
+                <label class="world-setting number-setting"><span>Map seed (optional)</span><input id="new-world-seed" type="number" min="0" max="4294967295" step="1" placeholder="Leave blank for a random seed"><output>Enter a known seed to recreate it with the selected world settings.</output></label>
+                <label class="world-setting number-setting"><span>Load at absolute day</span><input id="new-world-day" type="number" min="1" step="1" value="1"><output>Day 1 opens immediately. Later days simulate the intervening history.</output></label>
+                <p id="new-world-seed-date-review" class="hint">A random seed will open at day 1.</p>
+              </div>
+            </details>
+            <details class="world-settings-group embodiment-setup" open>
+              <summary>Experience and inhabited organism</summary>
+              <div class="world-settings-grid">
+                <label class="world-setting"><span>Experience</span><select id="embodiment-experience"><option value="observer">Observer Laboratory</option><option value="embodied">Embodied Simulation</option></select><output>Observer mode preserves the existing autonomous Laboratory experience.</output></label>
+                <label class="world-setting" data-embodied-field><span>Difficulty</span><select id="embodiment-difficulty"><option value="creative">Creative</option><option value="easy">Easy</option><option value="standard" selected>Standard</option><option value="challenging">Challenging</option><option value="hard">Hard</option><option value="very-hard">Very Hard</option><option value="extreme">Extreme</option><option value="insane-immersion">Insane Immersion</option><option value="impossible-immersion">Impossible Immersion</option></select><output id="embodiment-difficulty-summary"></output></label>
+                <label class="world-setting" data-embodied-field><span>Ecological role</span><select id="embodiment-role"><option value="herbivore">Herbivore</option><option value="carnivore">Carnivore</option><option value="omnivore">Omnivore</option><option value="random">Random</option></select><output>Available independently at every difficulty.</output></label>
+                <label class="world-setting" data-entity-setup><span>Species</span><select id="embodiment-species"><option value="">Random valid species</option></select></label>
+                <label class="world-setting" data-entity-setup><span>Sex</span><select id="embodiment-sex"><option value="">Random</option><option value="F">Female</option><option value="M">Male</option></select></label>
+                <label class="world-setting" data-entity-setup><span>Life stage</span><select id="embodiment-stage"><option value="">Random</option><option value="dependent">Baby / dependent</option><option value="juvenile">Juvenile</option><option value="subadult">Subadult</option><option value="adult">Adult</option><option value="old">Elder</option></select></label>
+                <label class="world-setting number-setting" data-entity-setup><span>Exact age (optional)</span><input id="embodiment-age" type="number" min="0" step="1" placeholder="Random valid age"></label>
+                <label class="world-setting range-setting" data-entity-setup><span>Starting hunger</span><output id="embodiment-hunger-value">20%</output><input id="embodiment-hunger" type="range" min="0" max="100" value="20"></label>
+                <label class="world-setting range-setting" data-entity-setup><span>Starting thirst</span><output id="embodiment-thirst-value">4%</output><input id="embodiment-thirst" type="range" min="0" max="100" value="4"></label>
+                <label class="world-setting range-setting" data-entity-setup><span>Starting health</span><output id="embodiment-health-value">100%</output><input id="embodiment-health" type="range" min="1" max="100" value="100"></label>
+                <label class="world-setting" data-entity-setup><span>Pregnancy</span><select id="embodiment-pregnancy"><option value="random">Random when valid</option><option value="no" selected>Not pregnant</option><option value="yes">Pregnant when valid</option></select></label>
+                <p id="embodiment-review" class="hint" data-embodied-field></p>
+              </div>
+            </details>
+          </div>
+          <div class="modal-actions"><button id="new-world-cancel" type="button">Cancel</button><button id="new-world-generate" type="button">Load seed world</button></div>
+        </section>
       </section>
-      <aside class="inspector is-closed">
+      <aside class="inspector is-closed is-mini-laboratory" data-window-id="laboratory" data-window-title="Living Laboratory" aria-label="Mini Laboratory">
         <header class="topbar">
           <div>
             <p class="eyebrow">RSS experimental ecosystem</p>
             <h1>Living Laboratory</h1>
           </div>
-          <span id="run-state" class="pill">Running</span>
-          <span id="view-mode" class="pill">Laboratory map</span>
+          <div class="panel-heading-actions"><span id="run-state" class="pill">Running</span><span id="view-mode" class="pill">Laboratory map</span><button id="laboratory-size-toggle" class="laboratory-size-toggle" type="button" aria-pressed="false">Main Laboratory</button><button id="laboratory-minimise" class="panel-minimise" type="button" data-minimise-panel=".inspector" aria-expanded="true" aria-label="Minimise Laboratory">−</button><button class="panel-close" type="button" data-close-window="laboratory" aria-label="Close Laboratory">×</button></div>
         </header>
 
         <div class="controls">
@@ -69,23 +397,40 @@
         <section class="rss-card world-setup">
           <div class="section-title">Next world setup</div>
           <label class="world-setting"><span>Landscape preset</span><select id="world-preset"><option value="mixed" selected>Mixed temperate</option><option value="arid">Arid basin</option><option value="alpine">Alpine winter</option><option value="maritime">Cool maritime</option><option value="boreal">Northern forest lakes</option></select><output id="world-preset-value">Choose a preset, then Reset</output></label>
-          <label class="world-setting"><span>Physical world span</span><select id="world-size"><option value="1">Compact</option><option value="2">Medium</option><option value="3" selected>Standard</option><option value="4">Vast</option></select><output id="world-size-value">Standard physical span</output></label>
+          <label class="world-setting"><span>Physical world span</span><select id="world-size"><option value="1" selected>Compact — 90</option><option value="2">Medium — 150</option><option value="3">Standard — 220</option><option value="4">Vast — 300</option></select><output id="world-size-value">Compact · 90 world units</output></label>
+          <label class="world-setting number-setting"><span>Custom physical span (optional)</span><input id="custom-world-size" type="number" min="1" step="1" placeholder="e.g. 90" /><output>Enter world units. Presets are 90, 150, 220 and 300; very large values may exhaust browser memory.</output></label>
           <label class="world-setting"><span>Hex terrain detail</span><select id="hex-detail"><option value="5000" selected>Balanced — 5,000 hexes</option><option value="10000">High — 10,000 hexes</option><option value="20000">Very high — 20,000 hexes</option><option value="40000">Ultra — 40,000 hexes</option></select><output id="hex-detail-value">5,000 connected hexes</output></label>
           <label class="world-setting"><span>Starting season</span><select id="start-season"><option value="Spring" selected>Spring</option><option value="Summer">Summer</option><option value="Autumn">Autumn</option><option value="Winter">Winter</option></select><output>Applies when you press Reset</output></label>
           <label class="world-setting"><span>Prevailing wind direction</span><select id="wind-direction"><option value="west" selected>West → east</option><option value="southwest">South-west → north-east</option><option value="south">South → north</option><option value="southeast">South-east → north-west</option><option value="east">East → west</option></select><output>Shapes moisture, rain shadows and sediment</output></label>
-          <label class="world-setting number-setting"><span>Starting herbivores</span><input id="start-herbivores" type="number" min="0" max="500" step="1" value="220" /><output id="start-herbivores-value" hidden>220</output></label>
-          <label class="world-setting number-setting"><span>Starting carnivores</span><input id="start-carnivores" type="number" min="0" max="200" step="1" value="36" /><output id="start-carnivores-value" hidden>36</output></label>
-          <label class="world-setting range-setting"><span>Terrain height variation</span><output id="terrain-relief-value">Normal · 1.00×</output><input id="terrain-relief" type="range" min="0" max="2" step="0.05" value="1" /></label>
+          <label class="world-setting number-setting"><span>Starting herbivores</span><input id="start-herbivores" type="number" min="0" step="1" value="37" /><output id="start-herbivores-value" hidden>37</output></label>
+          <label class="world-setting number-setting"><span>Starting carnivores</span><input id="start-carnivores" type="number" min="0" step="1" value="3" /><output id="start-carnivores-value" hidden>3</output></label>
+          <label class="world-setting"><span>Ecology preset</span><select id="ecology-preset"><optgroup label="Calculated carnivore food webs"><option value="ridge-hunter-web">Ridge Hunter pursuit — 3 species</option><option value="brush-fox-web">Red Fox small-prey web — 3 species</option><option value="shadow-stalker-web">Eurasian Lynx woodland web — 3 species</option><option value="pack-breaker-web">Spotted Hyena large-prey web — 4 species</option><option value="waterline-ambusher-web">Nile Crocodile riparian web — 2 species</option><option value="highland-prowler-web">Snow Leopard alpine web — 2 species</option><option value="sunscale-ambusher-web">Ball Python small-prey web — 3 species</option></optgroup><optgroup label="World-scale ecosystems"><option value="original">Original generics — 2 species</option><option value="updated-originals" selected>Updated Valley Grazer &amp; Ridge Hunter — 2 species</option><option value="compact">Compact world — 6 species</option><option value="balanced">Medium world — 14 species</option><option value="expanded">Standard world — 20 species</option><option value="full">Vast world — 28 species</option></optgroup><optgroup label="Specialist compositions"><option value="compact-large">Large-bodied focus — 8 species</option><option value="compact-small">Small-bodied focus — 8 species</option><option value="compact-open">Open country — 8 species</option><option value="compact-woodland">Woodland — 8 species</option></optgroup><option value="custom">Custom selection</option></select><output>Scale rosters add ecological functions, climates, behaviours and reproductive strategies; there is no fixed 22-species target. Exact species counts remain editable below; original and updated founder models remain separate options.</output></label>
+          <label class="world-setting"><span>Population level</span><select id="ecology-population-level"><option value="20">Minimal · 20%</option><option value="50">Lean · 50%</option><option value="100" selected>Calculated central · 100%</option><option value="150">Abundant · 150%</option><option value="200">Maximum · 200%</option><option value="custom" hidden>Custom scale</option></select><output>Five quick levels scale the selected ecology preset.</output></label>
+          <label class="world-setting range-setting"><span>Preset population scale</span><output id="ecology-population-scale-value">Calculated central · 100%</output><input id="ecology-population-scale" type="range" min="20" max="200" step="10" value="100" list="ecology-population-scale-marks" /><datalist id="ecology-population-scale-marks"><option value="20"></option><option value="50"></option><option value="100"></option><option value="150"></option><option value="200"></option></datalist></label>
+          <p id="ecology-warnings" class="hint ecology-warnings"></p>
+          <label class="world-setting range-setting"><span>Terrain height variation</span><output id="terrain-relief-value">Low · 0.15×</output><input id="terrain-relief" type="range" min="0" max="2" step="0.05" value="0.15" /></label>
           <label class="world-setting range-setting"><span>Mountain height / frequency</span><output id="mountain-amount-value">Normal · 1.00×</output><input id="mountain-amount" type="range" min="0" max="2" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Rounded mountain massifs</span><output id="rounded-mountain-amount-value">Normal · 1.00×</output><input id="rounded-mountain-amount" type="range" min="0" max="2" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Pyramidal mountain peaks</span><output id="pyramidal-mountain-amount-value">Normal · 1.00×</output><input id="pyramidal-mountain-amount" type="range" min="0" max="2" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Alpine / Pyrenean mountain ranges</span><output id="alpine-range-amount-value">Normal · 1.25×</output><input id="alpine-range-amount" type="range" min="0" max="2" step="0.1" value="1.25" /></label>
+          <label class="world-setting range-setting"><span>Mountain base breadth</span><output id="mountain-breadth-value">Broad · 1.35×</output><input id="mountain-breadth" type="range" min="0.5" max="2.5" step="0.05" value="1.35" /></label>
+          <label class="world-setting range-setting"><span>Summit sharpness</span><output id="summit-sharpness-value">Natural · 1.00×</output><input id="summit-sharpness" type="range" min="0.5" max="2" step="0.05" value="1" /></label>
+          <label class="world-setting range-setting"><span>Mountain-range length</span><output id="mountain-range-length-value">Long · 1.40×</output><input id="mountain-range-length" type="range" min="0.5" max="2.5" step="0.05" value="1.4" /></label>
+          <label class="world-setting range-setting"><span>Range summit-chain complexity</span><output id="mountain-range-complexity-value">Natural · 1.00×</output><input id="mountain-range-complexity" type="range" min="0.5" max="2" step="0.05" value="1" /></label>
           <label class="world-setting range-setting"><span>Rolling hills</span><output id="hill-amount-value">Normal · 1.00×</output><input id="hill-amount" type="range" min="0" max="2" step="0.1" value="1" /></label>
           <label class="world-setting range-setting"><span>Valley depth</span><output id="valley-amount-value">Normal · 1.00×</output><input id="valley-amount" type="range" min="0" max="2" step="0.1" value="1" /></label>
-          <label class="world-setting range-setting"><span>Rivers and headwaters</span><output id="river-amount-value">Normal · 1.00×</output><input id="river-amount" type="range" min="0" max="3" step="0.25" value="1" /></label>
-          <label class="world-setting range-setting"><span>Lakes and ponds</span><output id="lake-amount-value">Normal · 1.00×</output><input id="lake-amount" type="range" min="0" max="3" step="0.25" value="1" /></label>
+          <label class="world-setting range-setting"><span>Long ridge regions</span><output id="ridge-amount-value">Low · 0.55×</output><input id="ridge-amount" type="range" min="0" max="2" step="0.05" value="0.55" /></label>
+          <label class="world-setting range-setting"><span>Raised plateau regions</span><output id="plateau-amount-value">Low · 0.35×</output><input id="plateau-amount" type="range" min="0" max="2" step="0.05" value="0.35" /></label>
+          <label class="world-setting range-setting"><span>Fine local height variation</span><output id="roughness-amount-value">Low · 0.30×</output><input id="roughness-amount" type="range" min="0" max="2" step="0.05" value="0.3" /></label>
+          <label class="world-setting range-setting"><span>Rivers and headwaters</span><output id="river-amount-value">Normal · 1.25×</output><input id="river-amount" type="range" min="0" max="3" step="0.25" value="1.25" /></label>
+          <label class="world-setting range-setting"><span>River size variation</span><output id="river-width-variation-value">Natural · 1.00×</output><input id="river-width-variation" type="range" min="0" max="2" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>River channel pattern variety</span><output id="river-pattern-diversity-value">Natural · 1.00×</output><input id="river-pattern-diversity" type="range" min="0" max="2" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Lakes, ponds and puddles</span><output id="lake-amount-value">Normal · 1.25×</output><input id="lake-amount" type="range" min="0" max="3" step="0.25" value="1.25" /></label>
           <label class="world-setting range-setting"><span>Woodland cover</span><output id="woodland-amount-value">Normal · 1.00×</output><input id="woodland-amount" type="range" min="0" max="2" step="0.1" value="1" /></label>
           <label class="world-setting range-setting"><span>Tree density</span><output id="tree-density-value">Normal · 1.00×</output><input id="tree-density" type="range" min="0" max="3" step="0.1" value="1" /></label>
           <label class="world-setting range-setting"><span>Bush density</span><output id="bush-density-value">Normal · 1.00×</output><input id="bush-density" type="range" min="0" max="3" step="0.1" value="1" /></label>
           <label class="world-setting range-setting"><span>Long-grass cover</span><output id="long-grass-value">Normal · 1.00×</output><input id="long-grass" type="range" min="0" max="3" step="0.1" value="1" /></label>
-          <label class="world-setting range-setting"><span>Rainfall / surface water</span><output id="rainfall-amount-value">Normal · 1.00×</output><input id="rainfall-amount" type="range" min="0" max="3" step="0.1" value="1" /></label>
+          <label class="world-setting range-setting"><span>Rainfall / surface water</span><output id="rainfall-amount-value">Normal · 1.20×</output><input id="rainfall-amount" type="range" min="0" max="3" step="0.1" value="1.2" /></label>
           <label class="world-setting range-setting"><span>Prevailing wind strength</span><output id="wind-strength-value">Normal · 1.00×</output><input id="wind-strength" type="range" min="0" max="3" step="0.1" value="1" /></label>
           <label class="world-setting range-setting"><span>Storm intensity / frequency</span><output id="storm-intensity-value">Normal · 1.00×</output><input id="storm-intensity" type="range" min="0" max="3" step="0.1" value="1" /></label>
           <label class="world-setting range-setting"><span>Mountain rain-shadow strength</span><output id="rain-shadow-value">Normal · 1.00×</output><input id="rain-shadow" type="range" min="0" max="3" step="0.1" value="1" /></label>
@@ -100,19 +445,26 @@
         </section>
 
         <label class="speed-control">
-          <span>Simulation rate: <strong id="speed-value">2 sim ticks/s</strong></span>
-          <input id="speed" type="range" min="0" max="10" step="1" value="2" />
+          <span>Simulation rate: <strong id="speed-value">1 minute tick/s</strong></span>
+          <input id="speed" type="range" min="0" max="60" step="1" value="1" />
         </label>
 
-        <label class="speed-control">
-          <span>Rate multiplier</span>
-          <select id="speed-multiplier" aria-label="Simulation rate multiplier">
-            <option value="1">×1 (0–10)</option>
-            <option value="2">×2 (0–20)</option>
-            <option value="3">×3 (0–30)</option>
-            <option value="5">×5 (0–50)</option>
+        <label class="speed-control observation-pace-control">
+          <span>Generational observation pace</span>
+          <select id="observation-pace">
+            <option value="60">Fast (approximate) · 1 ecological year / 60 min</option>
+            <option value="180" selected>Balanced · 1 ecological year / 180 min</option>
+            <option value="360">Detailed · 1 ecological year / 360 min</option>
           </select>
+          <output id="observation-pace-value" class="hint">Movement and interactions stay at normal speed; age, gestation, offspring development, weather and seasons use the 365-day calendar. Long-lived species may need several observed years to show generational change.</output>
         </label>
+
+        <div class="speed-control time-skip-control">
+          <span>Deterministic time skip</span>
+          <div class="time-skip-row"><select id="time-skip-period" aria-label="Time skip period"><option value="1">1 minute</option><option value="60">1 hour</option><option value="1440">1 day</option><option value="43200">30 days</option><option value="525600">1 ecological year (365 days)</option></select><button id="time-skip" type="button">Skip</button></div>
+          <progress id="time-skip-progress" max="1" value="0" hidden></progress>
+          <output id="time-skip-status" class="hint">Every intervening minute will be simulated in order.</output>
+        </div>
 
         <label class="speed-control">
           <span>Feedback return pathway</span>
@@ -120,7 +472,7 @@
             <option value="immediate">Immediate</option>
             <option value="delayed">Delayed</option>
             <option value="suppressed">Suppressed</option>
-            <option value="independent">Independent corrective</option>
+            <option value="independent">Independent diagnostic return</option>
           </select>
         </label>
 
@@ -136,31 +488,38 @@
         </div>
 
         <p id="performance" class="hint">Measuring display performance…</p>
+        <section id="laboratory-benchmark" class="benchmark-card">
+          <div class="section-title">Performance benchmark</div>
+          <p class="hint">Records bounded performance windows plus ecological, reproductive, inherited-trait, caregiving, predation, bereavement and population-drift diagnostics. It does not enter saved world state.</p>
+          <div class="benchmark-controls"><label>Duration per population <select id="benchmark-duration"><option value="1">1 minute each</option><option value="5" selected>5 minutes each</option><option value="10">10 minutes each</option></select></label><button id="benchmark-start" type="button">Start population sweep</button><button id="benchmark-copy" type="button" disabled>Copy report</button></div>
+          <p id="benchmark-status" class="hint">Ready.</p>
+          <pre id="benchmark-live" class="benchmark-live">Open Laboratory and start a benchmark for granular diagnostics.</pre>
+          <textarea id="benchmark-report" class="benchmark-report" readonly aria-label="Performance benchmark report" placeholder="Completed report appears here"></textarea>
+        </section>
 
         <section class="selected-card">
           <div class="section-title">Selected</div>
           <h2 id="selected-name">Map overview</h2>
-          <dl>
-            <div><dt>Kind</dt><dd id="selected-kind">World</dd></div>
-            <div><dt>Sex</dt><dd id="selected-sex">-</dd></div>
-            <div><dt>Age</dt><dd id="selected-age">-</dd></div>
-            <div><dt>Stage</dt><dd id="selected-stage">-</dd></div>
-            <div><dt>Body size</dt><dd id="selected-size">-</dd></div>
-            <div><dt>Pregnancy</dt><dd id="selected-pregnancy">-</dd></div>
-            <div><dt>Local climate</dt><dd id="selected-climate">-</dd></div>
-            <div><dt>Action</dt><dd id="selected-action">Observing</dd></div>
-            <div><dt>Energy</dt><dd id="selected-energy">-</dd></div>
-            <div><dt>Health</dt><dd id="selected-health">-</dd></div>
-            <div><dt>Hydration</dt><dd id="selected-hydration">-</dd></div>
-            <div><dt>Injuries</dt><dd id="selected-injuries">-</dd></div>
-            <div><dt>Feeding state</dt><dd id="selected-feeding">-</dd></div>
-            <div><dt>Drive</dt><dd id="selected-drive">-</dd></div>
-            <div><dt>Expression</dt><dd id="selected-expression">-</dd></div>
-            <div><dt>Relation</dt><dd id="selected-relation">-</dd></div>
-            <div><dt>Memory</dt><dd id="selected-memory">-</dd></div>
-            <div><dt>Current target</dt><dd id="selected-target">-</dd></div>
-            <div><dt>Awareness</dt><dd id="selected-awareness">-</dd></div>
-          </dl>
+          <div class="selected-sections">
+            <details id="selected-identity-section" class="selected-section" open><summary>Identity and life history</summary><dl>
+              <div><dt>Kind</dt><dd id="selected-kind">World</dd></div><div><dt>Sex</dt><dd id="selected-sex">-</dd></div><div><dt>Age and lifespan</dt><dd id="selected-age">-</dd></div><div><dt>Life stage</dt><dd id="selected-stage">-</dd></div>
+            </dl></details>
+            <details id="selected-behaviour-section" class="selected-section" open><summary>Current behaviour</summary><dl>
+              <div class="selected-wide"><dt>Action and reason</dt><dd id="selected-action">Observing</dd></div><div><dt>Primary drive</dt><dd id="selected-drive">-</dd></div><div><dt>Current target</dt><dd id="selected-target">-</dd></div><div class="selected-wide"><dt>Visible expression</dt><dd id="selected-expression">-</dd></div>
+            </dl></details>
+            <details id="selected-body-section" class="selected-section"><summary>Body, condition and needs</summary><dl>
+              <div class="selected-wide"><dt>Body composition</dt><dd id="selected-size">-</dd></div><div class="selected-wide"><dt>Metabolic fuel and performance</dt><dd id="selected-energy">-</dd></div><div><dt>Health</dt><dd id="selected-health">-</dd></div><div><dt>Hydration</dt><dd id="selected-hydration">-</dd></div><div class="selected-wide"><dt>Injuries</dt><dd id="selected-injuries">-</dd></div><div class="selected-wide"><dt>Feeding and metabolism</dt><dd id="selected-feeding">-</dd></div><div class="selected-wide"><dt>Biological phenotype</dt><dd id="selected-biology">-</dd></div>
+            </dl></details>
+            <details id="selected-social-section" class="selected-section" open><summary id="selected-social-heading">Reproduction and relationships</summary><dl>
+              <div id="selected-reproduction-row"><dt id="selected-reproduction-label">Reproductive state</dt><dd id="selected-pregnancy">-</dd></div><div class="selected-wide"><dt id="selected-relation-label">Relationships, traits and preferences</dt><dd id="selected-relation">-</dd></div>
+            </dl></details>
+            <details id="selected-knowledge-section" class="selected-section"><summary>Knowledge, memory and senses</summary><dl>
+              <div class="selected-wide"><dt>Retained memory</dt><dd id="selected-memory">-</dd></div><div class="selected-wide"><dt>Current awareness</dt><dd id="selected-awareness">-</dd></div>
+            </dl></details>
+            <details id="selected-perception-diagnostics-section" class="selected-section" open><summary>Perception diagnostics and causal explanation</summary><div id="selected-perception-diagnostics" class="laboratory-diagnostic">Select a living organism to compare its sensors and perceptions with simulation truth.</div></details>
+            <details id="selected-predictive-section" class="selected-section" open><summary>Predictive systems and decision effect</summary><div id="selected-predictive-summary" data-entity-predictive>Choose a living organism to inspect its forecasts.</div></details>
+            <details id="selected-environment-section" class="selected-section"><summary>Environment and physiology</summary><dl><div class="selected-wide"><dt>Climate and body temperature</dt><dd id="selected-climate">-</dd></div></dl></details>
+          </div>
         </section>
 
         <section class="rss-card">
@@ -172,7 +531,7 @@
 
         <section class="rss-card">
           <div class="section-title">Current priority chain</div>
-          <ol id="priority-list" class="trace"></ol>
+          <div id="priority-list" class="trace goal-horizon-grid"></div>
         </section>
 
         <section class="rss-card">
@@ -192,18 +551,77 @@
           <div class="section-title">Laboratory overlays</div>
           <div class="toggles">
             <label><input id="overlay-biomass" type="checkbox" /> Biomass</label>
-            <label><input id="overlay-water" type="checkbox" checked /> Water</label>
+            <label><input id="overlay-water" type="checkbox" /> Water</label>
             <label><input id="overlay-pheromone" type="checkbox" /> Scent trails</label>
+            <label><input id="overlay-territories" type="checkbox" /> Territories &amp; disputes</label>
           </div>
           <div class="section-title">Entity overlays</div>
           <div class="toggles">
-            <label><input id="overlay-perception" type="checkbox" checked /> Perception</label>
+            <label><input id="overlay-vision" type="checkbox" checked /> Vision</label>
+            <label><input id="overlay-personal-space" type="checkbox" /> Personal space</label>
+            <label><input id="overlay-predator-intent" type="checkbox" /> Predator intent inference</label>
+            <label><input id="overlay-knowledge-fog" type="checkbox" checked /> Knowledge fog</label>
+            <label><input id="overlay-smell" type="checkbox" /> Smell contacts</label>
             <label><input id="overlay-sound" type="checkbox" /> Ambient sound</label>
             <label><input id="overlay-calls" type="checkbox" /> Calls & messages</label>
-            <label><input id="overlay-memory" type="checkbox" checked /> Memory</label>
-            <label><input id="overlay-entity-focus" type="checkbox" /> Entity focus</label>
+            <label><input id="overlay-memory" type="checkbox" /> Memory</label>
+            <label><input id="overlay-environmental-history" type="checkbox" /> Environmental history</label>
+            <label><input id="overlay-selection-ring" type="checkbox" checked /> Selection ring</label>
+            <label><input id="overlay-navigation-cues" type="checkbox" checked /> Direction markers</label>
+            <label><input id="overlay-motion-trails" type="checkbox" /> Recent movement trails</label>
+            <label><input id="overlay-entity-focus" type="checkbox" /> Known world only</label>
+            <label><input id="overlay-hide-entity-presentation" type="checkbox" /> No panel and bubbles</label>
+            <input id="overlay-entity-symbols" type="checkbox" checked hidden />
+            <input id="overlay-entity-names" type="checkbox" hidden />
+            <input id="overlay-health-bars" type="checkbox" checked hidden />
+            <input id="overlay-endurance-bar" type="checkbox" checked hidden />
+            <input id="overlay-composition-bar" type="checkbox" checked hidden />
+            <label><input id="overlay-analysis-stage" type="checkbox" /> Terrainless analysis stage</label>
+            <label><input id="overlay-organism-only" type="checkbox" /> Body only</label>
           </div>
-          <p class="hint">Entity focus hides laboratory-only layers and keeps the selected organism plus only animals it can currently see.</p>
+          <details id="personal-space-overlay-settings" class="settings-subsection">
+            <summary>Personal-space display options</summary>
+            <div class="settings-grid">
+              <label>Relationships per displayed animal <select id="personal-space-relationship-mode"><option value="primary">One primary relationship per animal</option><option value="several">Several relationships per animal</option></select></label>
+              <label>Animals receiving overlays <select id="personal-space-scope"><option value="selected">Only the selected animal</option><option value="nearby">Selected animal and nearby animals</option><option value="visible">Selected animal and camera-visible population</option></select></label>
+              <label>Maximum displayed <input id="personal-space-maximum-entities" type="range" min="1" max="20" step="1" value="5" /><output id="personal-space-maximum-entities-value">5</output></label>
+              <label>Intensity <input id="personal-space-opacity" type="range" min="15" max="100" step="5" value="70" /><output id="personal-space-opacity-value">70%</output></label>
+            </div>
+            <div class="toggles">
+              <label><input id="personal-space-preferred-band" type="checkbox" checked /> Preferred-distance band</label>
+              <label><input id="personal-space-minimum-boundary" type="checkbox" checked /> Minimum boundary</label>
+              <label><input id="personal-space-maximum-boundary" type="checkbox" checked /> Maximum boundary</label>
+              <label><input id="personal-space-release-threshold" type="checkbox" checked /> Commitment-release threshold</label>
+              <label><input id="personal-space-direction-arrows" type="checkbox" checked /> Direction arrows</label>
+              <label><input id="personal-space-attraction-pressure" type="checkbox" checked /> Attraction pressure</label>
+              <label><input id="personal-space-avoidance-pressure" type="checkbox" checked /> Avoidance pressure</label>
+              <label><input id="personal-space-threat-pressure" type="checkbox" checked /> Threat pressure</label>
+              <label><input id="personal-space-affiliation-care-pressure" type="checkbox" checked /> Affiliation and care pressure</label>
+              <label><input id="personal-space-courtship-pressure" type="checkbox" checked /> Courtship pressure</label>
+              <label><input id="personal-space-current-band" type="checkbox" checked /> Current relationship band</label>
+              <label><input id="personal-space-uncertainty" type="checkbox" /> Perceived-distance uncertainty</label>
+              <label><input id="personal-space-truth-vs-perceived" type="checkbox" /> Truth versus perceived position</label>
+              <label><input id="personal-space-relationship-labels" type="checkbox" checked /> Relationship labels</label>
+              <label><input id="personal-space-legacy-fallback" type="checkbox" checked /> Legacy circular fallback</label>
+              <label><input id="personal-space-laboratory-details" type="checkbox" checked /> Laboratory diagnostic details</label>
+            </div>
+            <p class="hint"><strong>Ring layers:</strong> one relationship may show several rings—preferred minimum, preferred maximum, current-band threshold and commitment-release threshold. Turn individual layers off below if you want fewer rings.</p>
+            <p id="personal-space-overlay-status" class="hint">Enable Personal space above to inspect observer-owned relationship pressure. An animal without a perceived relationship shows one legacy fallback ring when that option is enabled.</p>
+          </details>
+          <p class="hint">Entity focus shows only what the selected organism can observe. Organism only hides the world, other entities, indicators and overlays for a clean body view.</p>
+        </section>
+
+        <section id="commitment-benchmark" class="benchmark-card">
+          <div class="section-title">Commitment integrity benchmark</div>
+          <p class="hint">Observes need, satisfier, method, target, phase, action and completion transitions without changing simulation behaviour or saved worlds.</p>
+          <div class="benchmark-controls">
+            <label>Scope <select id="commitment-benchmark-scope"><option value="population">All living organisms</option><option value="selected">Selected organism</option></select></label>
+            <label>Decision ticks <select id="commitment-benchmark-duration"><option value="50">50 ticks</option><option value="100" selected>100 ticks</option><option value="250">250 ticks</option></select></label>
+            <button id="commitment-benchmark-start" type="button">Start investigation</button><button id="commitment-benchmark-copy" type="button" disabled>Copy report</button>
+          </div>
+          <p id="commitment-benchmark-status" class="hint">Ready.</p>
+          <pre id="commitment-benchmark-live" class="benchmark-live">Start an investigation to classify commitment changes and likely defects.</pre>
+          <textarea id="commitment-benchmark-report" class="benchmark-report" readonly aria-label="Commitment integrity benchmark report" placeholder="Completed report appears here"></textarea>
         </section>
 
         <section>
@@ -235,12 +653,17 @@
     <script type="importmap">
       {
         "imports": {
-          "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
-          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+          "three": "./vendor/three/build/three.module.js",
+          "three/addons/": "./vendor/three/examples/jsm/"
         }
       }
     </script>
-    <script type="module" src="./src/app.js"></script>
+    <script type="module">
+      import("./src/app.js").catch((error) => {
+        console.error("Simulation startup failed", error);
+        window.__showStartupError(error, "Unable to load the application module graph.");
+      });
+    </script>
   </body>
 </html>
 

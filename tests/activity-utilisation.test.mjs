@@ -1,0 +1,13 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { applyActivityDemand, assessObjectiveContinuation, createActivityDemand, evaluateActivityDemand, migrateUtilisationState, selectAffordablePace } from "../src/activity-utilisation.js";
+import { initializeMetabolism } from "../src/metabolic-system.js";
+import { burstReserve, enduranceHeadroom } from "../src/performance-state.js";
+
+const animal = (extra = {}) => ({ speciesId: "grazer", sex: "F", lifeStage: "adult", bodyMass: 65, leanMass: 50, fatMass: 15, muscleMass: 30, health: 100, hydration: 90, tempStress: 0, fatigue: 0, stomach: 60, injuries: [], enduranceFitness: .5, ...extra });
+
+test("healthy ordinary walking is sustainable and does not consume burst capacity", () => { const a = animal(); initializeMetabolism(a); migrateUtilisationState(a); const before = burstReserve(a); for (let i = 0; i < 40; i++) applyActivityDemand(a, evaluateActivityDemand(a, createActivityDemand({ activity: "walk", distance: .35, averageSpeed: .35, bodyMass: a.bodyMass }))); assert.ok(enduranceHeadroom(a) > 75); assert.ok(Math.abs(burstReserve(a) - before) < 1); });
+test("sprinting consumes muscle substrate and creates anaerobic debt", () => { const a = animal(); const metabolism = initializeMetabolism(a), before = metabolism.muscleGlycogen; const result = evaluateActivityDemand(a, createActivityDemand({ activity: "sprint", distance: 2.4, averageSpeed: 1.6, acceleration: 2, bodyMass: a.bodyMass })); applyActivityDemand(a, result); assert.ok(metabolism.muscleGlycogen < before); assert.ok(metabolism.anaerobicDebt > 0); });
+test("climbing and turning cost more than level straight travel", () => { const a = animal(), base = evaluateActivityDemand(a, createActivityDemand({ activity: "walk", distance: 1, bodyMass: 65 })), hard = evaluateActivityDemand(a, createActivityDemand({ activity: "climb", distance: 1, elevationGain: .8, turningEffort: 4, terrainResistance: 1.4, bodyMass: 65 })); assert.ok(hard.workload > base.workload); });
+test("lost burst capacity downgrades pace without cancelling travel", () => { const a = animal(); initializeMetabolism(a).muscleGlycogen = 0; const pace = selectAffordablePace(a, "sprint"); assert.notEqual(pace.selected, "sprint"); assert.equal(pace.canContinueObjective, true); assert.notEqual(pace.selected, "stationary"); });
+test("objective continuation separates slower travel from abandonment", () => { assert.equal(assessObjectiveContinuation({ affordablePace: "walk", targetDistance: 4, targetConfidence: .8, arrivalReserve: .5 }).decision, "continue-slower"); assert.equal(assessObjectiveContinuation({ affordablePace: "walk", targetDistance: 4, targetConfidence: .05, arrivalReserve: .5 }).decision, "abandon-objective"); });

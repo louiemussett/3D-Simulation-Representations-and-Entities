@@ -1,0 +1,8 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { lostCallEligible, VisualEventManager } from "../src/visual-events.js";
+
+test("visual duration is wall-clock based at slow normal and fast tick rates", () => { for (const ticks of [1, 3, 15]) { let now = 100; const manager = new VisualEventManager({ now: () => now }); manager.emit({ type: "attack", entityId: "a", originTick: ticks, minimumVisibleMs: 800 }); now = 899; assert.equal(manager.active("attack", "a").length, 1); now = 901; assert.equal(manager.active("attack", "a").length, 0); } });
+test("same origin deduplicates and a new origin explicitly restarts", () => { let now = 0; const manager = new VisualEventManager({ now: () => now }); const first = manager.emit({ type: "call", entityId: "a", originTick: 4, minimumVisibleMs: 500 }); now = 300; assert.equal(manager.emit({ type: "call", entityId: "a", originTick: 4 }), first); assert.notEqual(manager.emit({ type: "call", entityId: "a", originTick: 5 }).id, first.id); });
+test("priority hysteresis rejects rapid alternation and accepts stability", () => { let now = 0; const manager = new VisualEventManager({ now: () => now, priorityHysteresisMs: 500 }); assert.equal(manager.priority("a", "food", 1), null); now = 200; assert.equal(manager.priority("a", "water", 2), null); now = 800; assert.ok(manager.priority("a", "water", 2)); });
+test("lost calls have one reachable adult ungrouped stationary condition", () => { assert.equal(lostCallEligible({ lifeStage: "adult", groupId: null, stationaryTicks: 9 }), true); assert.equal(lostCallEligible({ lifeStage: "dependent", groupId: null, stationaryTicks: 20 }), false); });
