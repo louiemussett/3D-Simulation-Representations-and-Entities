@@ -1,0 +1,210 @@
+﻿{
+    "report_schema":  1,
+    "generated_at":  "2026-07-28T02:26:09.6341957+01:00",
+    "safety":  "Read-only inspection except for this JSON report. No packages, models, services, or settings were changed.",
+    "project":  {
+                    "root":  "C:\\Users\\louie_000\\Documents\\Codex\\2026-07-28",
+                    "package_json":  true,
+                    "companion_package_json":  true,
+                    "companion_env":  {
+                                          "exists":  false,
+                                          "path":  "C:\\Users\\louie_000\\Documents\\Codex\\2026-07-28\\companion\\.env",
+                                          "keys":  [
+
+                                                   ]
+                                      },
+                    "companion_env_example":  {
+                                                  "exists":  true,
+                                                  "path":  "C:\\Users\\louie_000\\Documents\\Codex\\2026-07-28\\companion\\.env.example",
+                                                  "keys":  [
+                                                               "DOCUMENTARY_HOST",
+                                                               "DOCUMENTARY_MAX_MESSAGE_BYTES",
+                                                               "DOCUMENTARY_PORT",
+                                                               "DOCUMENTARY_SESSION_TOKEN",
+                                                               "DOCUMENTARY_SESSIONS_DIR",
+                                                               "FFMPEG_PATH",
+                                                               "FFPROBE_PATH",
+                                                               "OBS_ENABLED",
+                                                               "OBS_WEBSOCKET_PASSWORD",
+                                                               "OBS_WEBSOCKET_URL",
+                                                               "OLLAMA_BASE_URL",
+                                                               "OLLAMA_KEEP_ALIVE",
+                                                               "OLLAMA_LIVE_MODEL",
+                                                               "OLLAMA_TIMEOUT_MS",
+                                                               "PIPER_DATA_DIR",
+                                                               "PIPER_PYTHON",
+                                                               "PIPER_TIMEOUT_MS",
+                                                               "PIPER_VOICE"
+                                                           ]
+                                              }
+                },
+    "system":  {
+                   "os":  "Microsoft Windows 10 Pro",
+                   "os_version":  "10.0.19045",
+                   "architecture":  "AMD64",
+                   "powershell":  "5.1.19041.6456",
+                   "cpu":  [
+                               "AMD Ryzen 5 5600 6-Core Processor              "
+                           ],
+                   "memory_bytes":  34267652096,
+                   "gpu":  [
+                               {
+                                   "name":  "NVIDIA GeForce GTX 1070",
+                                   "driver_version":  "32.0.15.8228",
+                                   "adapter_ram_bytes":  4293918720
+                               }
+                           ],
+                   "drives":  [
+                                  {
+                                      "root":  "A:\\",
+                                      "free_bytes":  374318833664,
+                                      "used_bytes":  7522368606208
+                                  },
+                                  {
+                                      "root":  "B:\\",
+                                      "free_bytes":  209516785664,
+                                      "used_bytes":  290573221888
+                                  },
+                                  {
+                                      "root":  "C:\\",
+                                      "free_bytes":  9518571520,
+                                      "used_bytes":  489507119104
+                                  },
+                                  {
+                                      "root":  "D:\\",
+                                      "free_bytes":  0,
+                                      "used_bytes":  0
+                                  },
+                                  {
+                                      "root":  "E:\\",
+                                      "free_bytes":  0,
+                                      "used_bytes":  0
+                                  },
+                                  {
+                                      "root":  "F:\\",
+                                      "free_bytes":  1099870687232,
+                                      "used_bytes":  900526055424
+                                  },
+                                  {
+                                      "root":  "G:\\",
+                                      "free_bytes":  9126408192,
+                                      "used_bytes":  470974595072
+                                  },
+                                  {
+                                      "root":  "H:\\",
+                                      "free_bytes":  385012801536,
+                                      "used_bytes":  615189237760
+                                  }
+                              ]
+               },
+    "tools":  {
+                  "node":  {
+                               "found":  true,
+                               "path":  "C:\\Program Files\\nodejs\\node.exe",
+                               "version":  "v24.18.0"
+                           },
+                  "npm":  {
+                              "found":  true,
+                              "path":  "C:\\Program Files\\nodejs\\npm.cmd",
+                              "version":  "11.16.0"
+                          },
+                  "git":  {
+                              "found":  true,
+                              "path":  "C:\\Program Files\\Git\\cmd\\git.exe",
+                              "version":  "git version 2.49.0.windows.1"
+                          },
+                  "python":  {
+                                 "found":  true,
+                                 "path":  "C:\\Users\\louie_000\\AppData\\Local\\Programs\\Python\\Python310\\python.exe",
+                                 "version":  "Python 3.10.11"
+                             },
+                  "python_launcher":  {
+                                          "found":  true,
+                                          "path":  "C:\\WINDOWS\\py.exe",
+                                          "version":  "Python 3.13.2"
+                                      },
+                  "ffmpeg":  {
+                                 "found":  false,
+                                 "path":  null,
+                                 "version":  null
+                             },
+                  "ffprobe":  {
+                                  "found":  false,
+                                  "path":  null,
+                                  "version":  null
+                              },
+                  "obs":  {
+                              "found":  true,
+                              "path":  "C:\\Program Files\\obs-studio\\bin\\64bit\\obs64.exe",
+                              "version":  "32.0.1"
+                          },
+                  "ollama":  {
+                                 "found":  true,
+                                 "path":  "C:\\Users\\louie_000\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
+                                 "version":  "Warning: could not connect to a running Ollama instance"
+                             }
+              },
+    "python_installations":  [
+                                 {
+                                     "path":  "C:\\Users\\louie_000\\AppData\\Local\\Programs\\Python\\Python310\\python.exe",
+                                     "version":  "Python 3.10.11",
+                                     "piper_tts_installed":  false
+                                 },
+                                 {
+                                     "path":  "C:\\Users\\louie_000\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+                                     "version":  "Python 3.13.2",
+                                     "piper_tts_installed":  false
+                                 },
+                                 {
+                                     "path":  "C:\\Users\\louie_000\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe",
+                                     "version":  "Python 3.13.2",
+                                     "piper_tts_installed":  false
+                                 }
+                             ],
+    "piper":  {
+                  "voices":  [
+
+                             ],
+                  "searched_voice_roots":  [
+                                               "C:\\Users\\louie_000\\Documents\\Codex\\2026-07-28\\runtime\\piper-voices",
+                                               "C:\\Users\\louie_000\\Documents\\Codex\\2026-07-28\\companion\\runtime\\piper-voices",
+                                               "C:\\Users\\louie_000\\AppData\\Local\\LivingLaboratory\\piper\\voices"
+                                           ]
+              },
+    "ollama":  {
+                   "api_responding":  false,
+                   "model_directory":  {
+                                           "path":  "B:\\LivingLaboratory\\AI\\OllamaModels",
+                                           "exists":  true,
+                                           "free_bytes":  209516785664
+                                       },
+                   "installed_models":  [
+
+                                        ],
+                   "process_output":  [
+                                          null
+                                      ]
+               },
+    "obs":  {
+                "process_running":  false,
+                "websocket":  {
+                                  "config_found":  true,
+                                  "config_path":  "C:\\Users\\louie_000\\AppData\\Roaming\\obs-studio\\plugin_config\\obs-websocket\\config.json",
+                                  "server_enabled":  false,
+                                  "port":  4455,
+                                  "authentication_enabled":  true,
+                                  "password_present":  true
+                              }
+            },
+    "local_ports":  {
+                        "companion_8765":  false,
+                        "ollama_11434":  false,
+                        "obs_websocket_4455":  false
+                    },
+    "recommended_locations":  {
+                                  "piper_environment":  "C:\\Users\\louie_000\\AppData\\Local\\LivingLaboratory\\piper\\.venv",
+                                  "piper_voices":  "C:\\Users\\louie_000\\AppData\\Local\\LivingLaboratory\\piper\\voices",
+                                  "fallback_sessions":  "C:\\Users\\louie_000\\Videos\\Living Laboratory\\Documentary Sessions",
+                                  "note":  "Choose a large, fast non-system drive for sessions and Ollama models when available; confirm from drive free-space data before changing anything."
+                              }
+}
