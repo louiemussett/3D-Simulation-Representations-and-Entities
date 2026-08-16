@@ -1,10 +1,9 @@
 import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { HexWorld } from "./hex-world.js";
 import { cooperativeYield } from "./cooperative-yield.js";
 import { adjacentLakeMouthCell, riverDescription } from "./river-system.js";
 import { authoritativeHash, authoritativeSnapshot, DevelopmentProfiler } from "./diagnostics.js";
-import { ACTION_PRESENTATION, clearFrameMotion, completeActionArrival, completedVisibleVelocity, createActionState, createRetargetedVisualMove, migrateActionState, setAction, setBlockedAction } from "./action-state.js";
+import { ACTION_PRESENTATION, clearFrameMotion, completeActionArrival as completeActionArrivalState, completedVisibleVelocity, continuousPresentationDuration, createActionState, createRetargetedVisualMove, migrateActionState, setAction as setActionState, setBlockedAction as setBlockedActionState } from "./action-state.js";
 import { alarmObservation, captureDecisionTrace, evidenceCaption, evidenceRef, memoryEvidence, selectDecisionEvidence, tracePrimaryEvidence } from "./decision-trace.js";
 import { adjustCandidatesWithPredictions, createPredictiveDecisionImpact, migratePredictiveCognition, runPredictiveCognition } from "./predictive-cognition.js";
 import { PREDICTION_ABSTENTIONS, PREDICTION_AUTHORITIES, PREDICTION_FRAMEWORKS } from "./prediction-contract.js";
@@ -28,7 +27,8 @@ import { deferredJsonStringify, WorkerJsonSerializer } from "./deferred-serializ
 import { MultiEntitySpatialIndex } from "./spatial-index.js";
 import { visitNearbyCells } from "./cell-visitation.js";
 import { CorpseRenderCache } from "./corpse-visual-cache.js";
-import { assignDecisionOrder, rebuildOccupancy, runStableAnimalPhases, StableLivingList } from "./simulation-phases.js";
+import { assignDecisionOrder, rebuildOccupancy, StableLivingList } from "./simulation-phases.js";
+import { runSimulationAnimalPhases } from "./simulation/simulation-controller.js";
 import { chunkKeyAt, chunkKeysInRange, DEFAULT_LANDSCAPE_CHUNK_SIZE, LandscapeDirtyState, ReusablePositionBuffer, VEGETATION_BATCH_CHUNKS, vegetationBatchKey, vegetationLod } from "./landscape-chunks.js";
 import { MinimapInvalidation, PresentationBudgetAllocator, presentationPartVisibility, resolvePresentationTier, shouldRunBoundedUpdate } from "./presentation-budget.js";
 import { EcologicalAccounting, worldStocks } from "./ecological-accounting.js";
@@ -43,7 +43,20 @@ import { createGameplayCameraState, updateGameplayCamera } from "./gameplay-came
 import { cameraRelativeMovement, EmbodiedInput } from "./embodied-movement.js";
 import { advanceEcologicalClock, advanceMinuteClock, ecologicalClockParts, ecologicalHoursPerInteractionTick, ecologicalMinutesPerInteractionTick, formatEcologicalClock, migrateEcologicalClock, migrateMinuteClock, MINUTES_PER_DAY, MINUTES_PER_HOUR, seasonForAbsoluteDay, wallMinutesForEcologicalDays } from "./simulation-clock.js";
 import { createGoalPlan, migrateGoalPlan, reproductionReadiness } from "./goal-planning.js";
-import { commitmentPopulationAudit, commitmentStyle, createCommitmentRankingReuse, evaluateRiskReward, expressedCommitmentProfile, forecastSocialCommitment, migrateCommitment, observeCommitment, recordProtocolOutcome, seedStartingCommitment, selectWithCommitment, transmitProtocol } from "./commitment-system.js";
+import { commitmentPopulationAudit, commitmentStyle, createCommitmentRankingReuse, evaluateRiskReward, expressedCommitmentProfile, forecastSocialCommitment, migrateCommitment, observeCommitment, reconcileCommitmentExecution, recordProtocolOutcome, seedStartingCommitment, selectWithCommitment, transmitProtocol } from "./commitment-system.js";
+import { appendCommitmentEvent, createCommitmentEvent } from "./commitment-events.js";
+import { activeParallelObligations, migrateParallelObligations, upsertParallelObligation } from "./parallel-obligations.js";
+import { storeNeedStates } from "./need-state-engine.js";
+import { satisfierOptionsForNeed } from "./satisfier-generation.js";
+import { retainResourceTarget } from "./resource-commitment.js";
+import { safetyExecutionCompatible, safetyMethodCandidate } from "./safety-planner.js";
+import { careMethodCandidate } from "./care-planner.js";
+import { applyThreatAssessment, assessThreatEvidence } from "./perception/threat-assessment.js";
+import { updatePredatorIntentObservations } from "./perception/predator-intent-observer.js";
+import { createWorldSnapshot } from "./persistence/world-codec.js";
+import { readJsonList, writeJsonList } from "./persistence/settings-store.js";
+import { detectRuntimeCapabilities } from "./bootstrap/runtime-capabilities.js";
+import { createBrowserRenderRuntime, OBSERVER_MIN_DISTANCE } from "./bootstrap/render-runtime.js";
 import { initialBodyTemperature, migrateTemperatureState, terrainThermalEffect, thermalDrive, updateBodyTemperature, updateThermalExposure } from "./thermoregulation.js";
 import { observableBodyCues, visibleInjuryCue } from "./observable-body-cues.js";
 import { activeEmittedSignal, decisionTraceVisible, FACIAL_EXPRESSION_LEGEND, facialExpressionSymbol, visibleBodyCondition, visibleExpression } from "./visual-language.js";
@@ -67,6 +80,10 @@ import { advanceSurfaceNestCare, surfaceNestHatchCount } from "./surface-nest.js
 import { reproductiveIntegrityAudit } from "./reproductive-audit.js";
 import { animalEyePosition, attachedAnimalEyePosition, constrainedVisualEyeYaw } from "./animal-face-geometry.js";
 import { visibleEyeGazeOffset, visibleIrisScale, visiblePupilScale } from "./visual-eye-dynamics.js";
+import { dynamicInteractionPose } from "./dynamic-interaction-animation.js";
+import { deerDynamicPose } from "./deer-dynamic-animation.js";
+import { visualAnatomyProfile } from "./anatomy/visual-anatomy-registry.js";
+import "./anatomy/anatomy-profile-validation.js";
 import { environmentalMotionClutter } from "./visual-clutter.js";
 import { recordDecisionAndMotorLatency, recordPerceptionLatency } from "./perception-latency.js";
 import { adaptFemaleMatePreferences, createMaleMatingEpisode, inferredLibido, maleMatingStrategy, maleSocialStrategyNetwork, migrateSocialState, observableMateCompatibility, rateFemaleCandidate, relationshipKind, rememberFemaleMateOutcome, rememberMaleFemaleRating, rememberSocialEvent, shareFemaleMateObservation, shareHighRatedFemale, socialEncounterKind } from "./social-relationships.js";
@@ -77,11 +94,12 @@ import { visionFov } from "./vision-model.js";
 import { FOUNDER_VISUAL_BASELINE } from "./perception-baselines.js";
 import { buildGroundVisionSector } from "./vision-overlay.js";
 import { PerformanceBenchmark } from "./performance-benchmark.js";
+import { CommitmentIntegrityBenchmark } from "./commitment-integrity-benchmark.js";
 import { feedingAppetite } from "./feeding-appetite.js";
 import { FOG_STATE, fogKnowledgeState, withinLocalFogReveal } from "./knowledge-fog.js";
 import { buildNavMesh, buildNavMeshAsync } from "./navmesh.js";
 import { findNavPath } from "./navmesh-pathfinding.js";
-import { bodySupportedByNavmesh, createLocomotionState, createMovementRequest, equivalentMovementRequest, LOCOMOTION_PROFILES, realtimeLocomotionHours, runLocomotionMinute } from "./locomotion-system.js";
+import { bodySupportedByNavmesh, createLocomotionState, createMovementRequest, LOCOMOTION_PROFILES, movementRetargetDecision, realtimeLocomotionHours, runLocomotionMinute } from "./locomotion-system.js";
 import { nearestSafeUnstuckDestination } from "./entity-unstuck.js";
 import { assessWorldBoundary, DEFAULT_EDGE_MARGIN, DEFAULT_RECOVERY_BUFFER, worldBoundaryClearance } from "./world-boundary.js";
 import { bodyRadius, collisionRadiusFor, interactionRadius, physicalContact } from "./interaction-spacing.js";
@@ -91,11 +109,11 @@ import { createEnvironmentInterface } from "./environment-interface.js";
 import { createVisionInterface } from "./vision-interface.js";
 import { AirborneScentField, castingDestination, deterministicIntermittency, localWindVector, updateScentField } from "./scent-model.js";
 import { buildEvidenceHypotheses, selectTrackingRoute, traceToSensoryEvidence } from "./evidence-fusion.js";
-import { updateOrienting } from "./orienting-system.js";
-import { chooseStalkingAction, estimatePredatorExposure, preyTargetingEstimate, stalkingReroutePoint } from "./reciprocal-attention.js";
+import { setAuthoritativeBodyHeading, updateOrienting } from "./orienting-system.js";
+import { chooseStalkingAction, estimatePredatorExposure, stalkingReroutePoint } from "./reciprocal-attention.js";
 import { advanceSurfaceMoisture, applyVegetationDisturbance, migrateSurfaceState, movementEvidence, substrateContact } from "./surface-evidence.js";
 import { PerceptionResultCache, perceptionPoseSignature } from "./perception-cache.js";
-import { environmentSenseCadence, routineEnvironmentScanDue } from "./population-performance.js";
+import { environmentSenseCadence, frameSchedulingRate, fullPerceptionCadence, initialActivationCadence, initialPopulationActivationDue, largePopulationVisualStride, routineEnvironmentScanDue, routineFullPerceptionDue } from "./population-performance.js";
 import { describeGroup, dissolveSingletonGroups, groupDisplayName, updateGroupIdentity } from "./group-naming.js";
 import { buildLargeOrganizations, organizationProfile, updateTerritoryClaims } from "./population-organization.js";
 import { closePredatorScent, closePreyContact, collectiveThreatPoint } from "./group-threat-response.js";
@@ -115,22 +133,32 @@ import { carcassFeedingLook, smoothFeedingLook } from "./carcass-feeding-present
 import { ageEntityMemory, migrateEntityMemory, rememberEntityEpisode, rememberedOpportunity, rememberedThreat } from "./entity-memory.js";
 import { ageStrategicMemory, bestStrategicArea, groupRecoveryPressure, migrateStrategicMemory, mostDangerousArea, observeEntityArea, rememberGroupEvent } from "./strategic-memory.js";
 import { assessHerbivoreDefence } from "./herbivore-defence.js";
-import { inferPredatorIntent, predatorIntentResponseThresholds, shouldRecomputePredatorIntent } from "./predator-intent-inference.js";
+import { advanceRutContest, deerPredatorResponse, rutEligible } from "./deer-conflict.js";
+import { assignContextualGroupRoles } from "./group-roles.js";
+import { arbitrateSurvivalNeeds } from "./survival-need-arbitration.js";
+import { evaluateVocalCadence, isWolfVocalModel, releaseVocalEpisode, socialCueCompatibility, wolfPackHowlWindow } from "./vocal-cadence.js";
+import { predatorIntentResponseThresholds } from "./predator-intent-inference.js";
+import { createPreyHypothesis } from "./perception/prey-hypothesis.js";
+import { createThreatHypothesis } from "./perception/threat-hypothesis.js";
+import { migrateObserverEvidenceState } from "./perception/evidence-migration.js";
+import { planEscapeFromThreat } from "./behaviour/escape-planner.js";
+import { planInterceptionRegion } from "./behaviour/interception-planner.js";
 import { coatLifeProgress, developmentalFeedingProfile } from "./developmental-nutrition.js";
 import { documentationPreviewQuality, graphicsPreset, normalizeGraphicsSettings } from "./graphics-settings.js";
 import * as documentaryNarration from "./documentary-narration.js";
 import { vegetationPresentationState, VegetationPresentationInvalidator } from "./vegetation-presentation.js";
 import { HABITAT_DENSITY_BANDS, applyHabitatProfile, habitatColourRgb, habitatProfile, habitatSummary } from "./habitat-system.js";
 import { AdaptiveResolutionController } from "./adaptive-resolution.js";
-import { BENCHMARK_POPULATIONS, populationBenchmarkSetup, populationSweepReport } from "./population-benchmark.js";
+import { BENCHMARK_POPULATIONS, populationBenchmarkSetup, populationSweepReport, validatePopulationBenchmarkStage } from "./population-benchmark.js";
 import { actionSymbol, BADGED_BEHAVIOURS, completeSymbolLegendSections, composeLegendExample, dominantWorldCue, emittedSymbol, LEGEND_COMPOSER_MEANINGS, PUBLIC_SIGNAL_AVAILABILITY, PUBLIC_SIGNAL_CONTRACT_LEGEND, PUBLIC_SIGNAL_LEGEND_SECTIONS, RARE_SYMBOL_KEY_SECTIONS, reproductivelyMature, resolveSymbolPresentation, signalAllowed, SYMBOL_KEY_SECTIONS, thoughtSymbol } from "./symbol-registry.js";
 import { physiologySymbolSvg } from "./physiology-symbols.js";
 import { abandonDependent, assessGroupMembership, beginGroupDeparture, canJoinGroup, caregiverConflict, dependentMistreatment, migrateGroupDisposition, recordGroupConflict } from "./group-dynamics.js";
 import { closeKinForMating, descendantDepth, generationLabel, kinshipBetween, livingAncestorCandidates, migrateKinship, registerBirthKinship, storeLineage } from "./kinship.js";
 import { unifiedSocialGraph } from "./social-graph.js";
 import { drinkingContactState, waterContactPoint } from "./water-contact.js";
-import { HYDRATION_ACQUISITION_TARGET, NEED_DEPENDENCY_PLAN_SCHEMA, hydrationAcquisitionState, immediateThreatPrecedesWater, migrateNeedDependencyPlan, retainGoalPlanCommitment, shorelineContactKey, ShorelineReservationBook, shouldRetainWaterTarget, stabilizeNeedDependencyPlan, suspendNeedDependencyPlan, waterTargetKey } from "./water-commitment.js";
+import { HYDRATION_ACQUISITION_TARGET, NEED_DEPENDENCY_PLAN_SCHEMA, hydrationAcquisitionState, immediateThreatPrecedesWater, migrateNeedDependencyPlan, resourceTargetKey, retainGoalPlanCommitment, shorelineContactKey, ShorelineReservationBook, shouldRetainWaterTarget, stabilizeNeedDependencyPlan, suspendNeedDependencyPlan, waterTargetKey } from "./water-commitment.js";
 import { assessPersonalSpace, learnProximityRelationship, migratePersonalSpace, personalSpaceRadius } from "./personal-space.js";
+import { dominantPressureChannel, loadPersonalSpaceOverlaySettings, normalizePersonalSpaceOverlaySettings, savePersonalSpaceOverlaySettings } from "./personal-space-overlay-settings.js";
 import { semanticIconLayout } from "./semantic-icon-layout.js";
 import { confirmResourceMemory, failResourceMemory, migrateResourceAcquisition, recordResourceContact, resourceAcquisitionTotals, resourceMemoryEligible, resourceSearchRadius } from "./resource-acquisition.js";
 import { applyOffspringTraitArchitecture, offspringTraitArchitecture } from "./trait-variation.js";
@@ -145,7 +173,8 @@ import { CompactTraceField, signalEmissionRecord, supportedSignalModalities } fr
 import { createSensoryPerspective, sensorDefinitionsFor, sensoryTranslationLabel, SENSORY_PERSPECTIVE_MODES } from "./sensory-perspective.js";
 import { sensorDefinitions, sensorWorldAnchor, visualHeadYawRadians, visualSensorYawRadians } from "./sensor-anatomy.js";
 import { causalWhyDiagnostic, gazeControlDiagnostic, perceptionLatencyDiagnostic, perceptionResearchReadiness, sensorAnatomyDiagnostic, temporalMotionDiagnostic, truthPerceptionTraceInspection } from "./perception-laboratory.js";
-import { biologicalHistoryDeposits, boneHistoryDeposit, carcassFragmentHistoryDeposit, environmentalHistorySummary, HISTORY_TRACE_KINDS } from "./environmental-history.js";
+import { biologicalHistoryDeposits, boneHistoryDeposit, carcassFragmentHistoryDeposit, environmentalHistorySummary, HISTORY_TRACE_KINDS, shedAntlerHistoryDeposit } from "./environmental-history.js";
+import { advanceAntlerDevelopment, antlerRenderProfile, migrateAntlerDevelopment } from "./antler-development.js";
 import { ProceduralAudioRenderer } from "./procedural-audio.js";
 import { loadAudioSettings, saveAudioSettings, soundLanguageDefinition } from "./audio-settings.js";
 import { encodeWeatherFieldTexture, localizedWeatherPresentation, precipitationFromAtmosphere, weatherFieldRefreshDue, weatherFieldRefreshMarker, weatherSystemActivity } from "./localized-weather.js";
@@ -197,6 +226,7 @@ function recordNutrientIntake(animal, nutrients) {
 }
 
 const TEST_MODE = new URLSearchParams(window.location.search).get("test") === "1";
+const runtimeCapabilities = detectRuntimeCapabilities(window);
 let WORLD = TEST_MODE ? 48 : 90;
 let HALF = Math.floor(WORLD / 2);
 const DEFAULT_ECOLOGY_PRESET = "updated-originals";
@@ -242,6 +272,18 @@ ui.overlaySelectionRing = document.querySelector("#overlay-selection-ring");
 ui.overlayMotionTrails = document.querySelector("#overlay-motion-trails");
 ui.overlayTerritories = document.querySelector("#overlay-territories");
 ui.overlayEnvironmentalHistory = document.querySelector("#overlay-environmental-history");
+const personalSpaceOverlayUi = {
+  relationshipMode: document.querySelector("#personal-space-relationship-mode"), scope: document.querySelector("#personal-space-scope"),
+  maximumEntities: document.querySelector("#personal-space-maximum-entities"), maximumEntitiesValue: document.querySelector("#personal-space-maximum-entities-value"),
+  opacity: document.querySelector("#personal-space-opacity"), opacityValue: document.querySelector("#personal-space-opacity-value"),
+  preferredBand: document.querySelector("#personal-space-preferred-band"), minimumBoundary: document.querySelector("#personal-space-minimum-boundary"), maximumBoundary: document.querySelector("#personal-space-maximum-boundary"),
+  releaseThreshold: document.querySelector("#personal-space-release-threshold"), directionArrows: document.querySelector("#personal-space-direction-arrows"),
+  attractionPressure: document.querySelector("#personal-space-attraction-pressure"), avoidancePressure: document.querySelector("#personal-space-avoidance-pressure"), threatPressure: document.querySelector("#personal-space-threat-pressure"),
+  affiliationCarePressure: document.querySelector("#personal-space-affiliation-care-pressure"), courtshipPressure: document.querySelector("#personal-space-courtship-pressure"), currentBand: document.querySelector("#personal-space-current-band"),
+  uncertainty: document.querySelector("#personal-space-uncertainty"), truthVsPerceived: document.querySelector("#personal-space-truth-vs-perceived"), relationshipLabels: document.querySelector("#personal-space-relationship-labels"),
+  legacyFallback: document.querySelector("#personal-space-legacy-fallback"), laboratoryDetails: document.querySelector("#personal-space-laboratory-details"), status: document.querySelector("#personal-space-overlay-status"),
+};
+let personalSpaceOverlaySettings = loadPersonalSpaceOverlaySettings(localStorage);
 ui.perceptionDiagnostics = document.querySelector("#selected-perception-diagnostics");
 ui.audioEnabled = document.querySelector("#audio-enabled");
 ui.audioVolume = document.querySelector("#audio-volume");
@@ -287,7 +329,15 @@ ui.benchmarkStart = document.querySelector("#benchmark-start");
 ui.benchmarkCopy = document.querySelector("#benchmark-copy");
 ui.benchmarkStatus = document.querySelector("#benchmark-status");
 ui.benchmarkLive = document.querySelector("#benchmark-live");
+ui.commitmentBenchmarkScope = document.querySelector("#commitment-benchmark-scope");
+ui.commitmentBenchmarkDuration = document.querySelector("#commitment-benchmark-duration");
+ui.commitmentBenchmarkStart = document.querySelector("#commitment-benchmark-start");
+ui.commitmentBenchmarkCopy = document.querySelector("#commitment-benchmark-copy");
+ui.commitmentBenchmarkStatus = document.querySelector("#commitment-benchmark-status");
+ui.commitmentBenchmarkLive = document.querySelector("#commitment-benchmark-live");
+ui.commitmentBenchmarkReport = document.querySelector("#commitment-benchmark-report");
 ui.graphicsOpen = document.querySelector("#graphics-open"); ui.graphicsPanel = document.querySelector("#graphics-panel"); ui.graphicsClose = document.querySelector("#graphics-close"); ui.graphicsPreset = document.querySelector("#graphics-preset"); ui.graphicsResolution = document.querySelector("#graphics-resolution"); ui.graphicsVegetation = document.querySelector("#graphics-vegetation"); ui.graphicsAnimals = document.querySelector("#graphics-animals"); ui.graphicsLargeMapPerformance = document.querySelector("#graphics-large-map-performance"); ui.graphicsObserverZoom = document.querySelector("#graphics-observer-zoom"); ui.graphicsObserverHaze = document.querySelector("#graphics-observer-haze"); ui.graphicsFrameCap = document.querySelector("#graphics-frame-cap"); ui.graphicsEffects = document.querySelector("#graphics-effects"); ui.graphicsShadows = document.querySelector("#graphics-shadows"); ui.graphicsAdaptiveResolution = document.querySelector("#graphics-adaptive-resolution"); ui.graphicsAdaptiveMin = document.querySelector("#graphics-adaptive-min"); ui.graphicsAdaptiveMax = document.querySelector("#graphics-adaptive-max"); ui.graphicsSummary = document.querySelector("#graphics-summary");
+ui.graphicsDynamicEyes = document.querySelector("#graphics-dynamic-eyes"); ui.graphicsDynamicPupils = document.querySelector("#graphics-dynamic-pupils"); ui.graphicsIndependentEars = document.querySelector("#graphics-independent-ears"); ui.graphicsSmallSensoryAnimations = document.querySelector("#graphics-small-sensory-animations"); ui.graphicsMinorAnimalFeatures = document.querySelector("#graphics-minor-animal-features");
 ui.weatherCloudQuality = document.querySelector("#weather-cloud-quality"); ui.weatherParticleDensity = document.querySelector("#weather-particle-density"); ui.weatherLocalPrecipitation = document.querySelector("#weather-local-precipitation"); ui.weatherDistantShafts = document.querySelector("#weather-distant-shafts"); ui.weatherCloudShadows = document.querySelector("#weather-cloud-shadows"); ui.weatherWetGround = document.querySelector("#weather-wet-ground"); ui.weatherSplashes = document.querySelector("#weather-splashes"); ui.weatherLightning = document.querySelector("#weather-lightning"); ui.weatherHaze = document.querySelector("#weather-haze"); ui.weatherScientificOverlay = document.querySelector("#weather-scientific-overlay"); ui.weatherOverlayLayer = document.querySelector("#weather-overlay-layer"); ui.weatherFieldLegend = document.querySelector("#weather-field-legend"); ui.weatherFieldTitle = document.querySelector("#weather-field-title"); ui.weatherFieldStops = document.querySelector("#weather-field-stops"); ui.weatherFieldStatus = document.querySelector("#weather-field-status");
 ui.graphicsIconQuality = document.querySelector("#graphics-icon-quality");
 ui.graphicsUnstuckEntity = document.querySelector("#graphics-unstuck-entity"); ui.entityUnstuckStatus = document.querySelector("#entity-unstuck-status");
@@ -358,46 +408,13 @@ const plantTypes = { grass: { nutrition: 1, growth: 0.055, max: 1 }, shrub: { nu
 const seasons = ["Spring", "Summer", "Autumn", "Winter"];
 const seasonMods = { Spring: { growth: 1.45, temp: 14, rain: 0.42 }, Summer: { growth: 1.08, temp: 24, rain: 0.25 }, Autumn: { growth: 0.82, temp: 11, rain: 0.38 }, Winter: { growth: 0.22, temp: 1, rain: 0.22 } };
 
-// v2 intentionally retires pre-adaptive custom values so this release starts
-// from the known Balanced baseline. New changes continue to persist normally.
-const GRAPHICS_KEY = "rss-living-laboratory-graphics-v3";
+// v4 installs the authored 60-FPS presentation baseline once. Preferences
+// changed after this migration continue to persist normally under the v4 key.
+const GRAPHICS_KEY = "rss-living-laboratory-graphics-v4";
 let graphicsSettings = (() => { try { return normalizeGraphicsSettings(JSON.parse(localStorage.getItem(GRAPHICS_KEY) || "{}")); } catch { return graphicsPreset("balanced"); } })();
 const adaptiveResolution = new AdaptiveResolutionController();
 let effectiveRenderScale = adaptiveResolution.reset(graphicsSettings.adaptiveResolution ? graphicsSettings.adaptiveMaxScale : graphicsSettings.renderScale, graphicsSettings.adaptiveMinScale);
-const renderer = new THREE.WebGLRenderer({ antialias: !TEST_MODE });
-renderer.setPixelRatio(TEST_MODE ? 1 : Math.min(2, window.devicePixelRatio * effectiveRenderScale));
-renderer.setSize(ui.viewport.clientWidth, ui.viewport.clientHeight);
-renderer.setClearColor(0x18201c);
-ui.viewport.appendChild(renderer.domElement);
-
-const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x18201c, 330, 900);
-const camera = new THREE.PerspectiveCamera(46, ui.viewport.clientWidth / ui.viewport.clientHeight, 0.1, 1200);
-camera.position.set(175, 230, 190);
-const controls = new OrbitControls(camera, renderer.domElement);
-const OBSERVER_MIN_DISTANCE = .55;
-controls.enableDamping = true;
-controls.zoomToCursor = true;
-controls.enablePan = true;
-controls.enableRotate = true;
-controls.screenSpacePanning = true;
-controls.target.set(0, 0, 0);
-controls.maxPolarAngle = Math.PI * 0.49;
-controls.minDistance = OBSERVER_MIN_DISTANCE;
-controls.maxDistance = 520;
-controls.zoomSpeed = 1.25;
-controls.panSpeed = .9;
-controls.rotateSpeed = .75;
-const skyLight = new THREE.HemisphereLight(0xf4fff2, 0x263029, 2.2); scene.add(skyLight);
-const sun = new THREE.DirectionalLight(0xffffff, 2.4);
-sun.position.set(12, 18, 10);
-scene.add(sun);
-
-const groups = { terrain: new THREE.Group(), plants: new THREE.Group(), water: new THREE.Group(), weather: new THREE.Group(), animals: new THREE.Group(), intent: new THREE.Group(), selection: new THREE.Group(), fog: new THREE.Group(), overlays: new THREE.Group(), scent: new THREE.Group(), corpses: new THREE.Group() };
-for (const name of ["terrain", "plants", "water", "corpses"]) groups[name].userData.resourceOwnership = RESOURCE_OWNERSHIP.chunk;
-for (const name of ["fog", "overlays", "scent", "weather"]) groups[name].userData.resourceOwnership = RESOURCE_OWNERSHIP.temporary;
-for (const name of ["animals", "intent", "selection"]) groups[name].userData.resourceOwnership = RESOURCE_OWNERSHIP.entity;
-Object.values(groups).forEach((g) => scene.add(g));
+const { renderer, scene, camera, controls, skyLight, sun, groups } = createBrowserRenderRuntime({ viewport: ui.viewport, testMode: TEST_MODE, renderScale: effectiveRenderScale, devicePixelRatio: window.devicePixelRatio });
 
 const MAX_LOCAL_PRECIPITATION = 1600, MAX_WEATHER_SHAFTS = 56, MAX_WEATHER_SPLASHES = 220;
 const rainStreakPositions = new Float32Array(MAX_LOCAL_PRECIPITATION * 2 * 3), rainStreakGeometry = new THREE.BufferGeometry(); rainStreakGeometry.setAttribute("position", new THREE.BufferAttribute(rainStreakPositions, 3).setUsage(THREE.DynamicDrawUsage)); rainStreakGeometry.setDrawRange(0, 0);
@@ -435,6 +452,8 @@ mats.animalEyeRim = new THREE.MeshBasicMaterial({ color: 0x32251d });
 mats.animalPupil = new THREE.MeshBasicMaterial({ color: 0x09070a });
 mats.animalEyeGlint = new THREE.MeshBasicMaterial({ color: 0xf4eee1 });
 mats.animalInnerEar = new THREE.MeshLambertMaterial({ color: 0x80554e, side: THREE.DoubleSide });
+mats.deerAntler = new THREE.MeshLambertMaterial({ color: 0x76543a });
+mats.deerAntlerVelvet = new THREE.MeshLambertMaterial({ color: 0x66584f });
 mats.trunk = new THREE.MeshLambertMaterial({ color: 0x5a3a22 });
 function createCartoonEyeballMaterial({ iris, irisRadius, pupilWidth, pupilHeight }) {
   return new THREE.ShaderMaterial({
@@ -466,6 +485,17 @@ function createCartoonEyeballMaterial({ iris, irisRadius, pupilWidth, pupilHeigh
 mats.deerCartoonEye = createCartoonEyeballMaterial({ iris: 0xb47a2b, irisRadius: .43, pupilWidth: .2, pupilHeight: .2 });
 mats.wolfCartoonEye = createCartoonEyeballMaterial({ iris: 0xd5a43d, irisRadius: .39, pupilWidth: .18, pupilHeight: .18 });
 mats.genericCartoonEye = createCartoonEyeballMaterial({ iris: 0xb78a2c, irisRadius: .4, pupilWidth: .18, pupilHeight: .2 });
+const speciesCartoonEyeMaterials = new Map();
+function cartoonEyeMaterialFor(speciesId) {
+  const profile = visualAnatomyProfile(speciesId)?.eye;
+  if (!profile) return mats.genericCartoonEye;
+  if (!speciesCartoonEyeMaterials.has(speciesId)) {
+    const material = createCartoonEyeballMaterial({ iris: profile.iris.colour, irisRadius: profile.iris.radius, pupilWidth: profile.pupil.width, pupilHeight: profile.pupil.height });
+    markResource(material, RESOURCE_OWNERSHIP.shared);
+    speciesCartoonEyeMaterials.set(speciesId, material);
+  }
+  return speciesCartoonEyeMaterials.get(speciesId);
+}
 // A leafless crown is deliberately a different material from a living canopy:
 // it remains useful cover, but is visibly not a dense sight-blocking tree.
 mats.bareTree = new THREE.MeshLambertMaterial({ color: 0x76523a });
@@ -565,8 +595,84 @@ const animalEarShape = new THREE.Shape();
 animalEarShape.moveTo(0, .18); animalEarShape.quadraticCurveTo(-.11, .08, -.095, -.13); animalEarShape.quadraticCurveTo(0, -.17, .095, -.13); animalEarShape.quadraticCurveTo(.11, .08, 0, .18);
 geos.animalEar = new THREE.ExtrudeGeometry(animalEarShape, { depth: .035, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: .012, bevelThickness: .008, curveSegments: 5 });
 geos.animalEar.center();
+function createCuppedLeafEarGeometry(columns = 12, rows = 18) {
+  const positions = [], indices = [];
+  const rowStride = columns + 1, surfaceVertexCount = (rows + 1) * rowStride;
+  for (let row = 0; row <= rows; row += 1) {
+    const v = row / rows;
+    // Muscular narrow root, broad middle and softly pointed distal tip.
+    const width = .05 + Math.pow(Math.sin(Math.PI * v), .72) * .43 * (1 - v * .18);
+    for (let column = 0; column <= columns; column += 1) {
+      const u = column / columns * 2 - 1;
+      const rim = Math.sin(Math.PI * v);
+      const cup = .16 * (1 - u * u) * Math.pow(rim, .8);
+      const backwardSweep = -.035 * v * v;
+      positions.push(u * width, v, cup + backwardSweep + .035);
+    }
+  }
+  // A separate rounded back gives the ear real volume. A double-sided sheet
+  // still vanishes edge-on; this rear surface and the boundary walls do not.
+  for (let row = 0; row <= rows; row += 1) {
+    const v = row / rows;
+    const width = .05 + Math.pow(Math.sin(Math.PI * v), .72) * .43 * (1 - v * .18);
+    for (let column = 0; column <= columns; column += 1) {
+      const u = column / columns * 2 - 1;
+      const rim = Math.sin(Math.PI * v);
+      const roundedBack = -.07 - .025 * (1 - u * u) * rim;
+      positions.push(u * width, v, roundedBack - .035 * v * v);
+    }
+  }
+  for (let row = 0; row < rows; row += 1) for (let column = 0; column < columns; column += 1) {
+    const a = row * rowStride + column, b = a + 1, c = a + rowStride, d = c + 1;
+    indices.push(a, b, c, b, d, c);
+    const backA = surfaceVertexCount + a, backB = surfaceVertexCount + b, backC = surfaceVertexCount + c, backD = surfaceVertexCount + d;
+    indices.push(backA, backC, backB, backB, backC, backD);
+  }
+  const joinEdge = (frontA, frontB) => {
+    const backA = surfaceVertexCount + frontA, backB = surfaceVertexCount + frontB;
+    indices.push(frontA, backA, frontB, frontB, backA, backB);
+  };
+  for (let row = 0; row < rows; row += 1) {
+    joinEdge(row * rowStride, (row + 1) * rowStride);
+    joinEdge((row + 1) * rowStride + columns, row * rowStride + columns);
+  }
+  for (let column = 0; column < columns; column += 1) {
+    joinEdge(column + 1, column);
+    joinEdge(rows * rowStride + column, rows * rowStride + column + 1);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices); geometry.computeVertexNormals(); geometry.computeBoundingBox(); geometry.computeBoundingSphere();
+  return geometry;
+}
+function createCuppedLeafInnerGeometry(columns = 12, rows = 18) {
+  const positions = [], indices = [];
+  for (let row = 0; row <= rows; row += 1) {
+    const v = row / rows, insetV = .08 + v * .82;
+    const width = (.05 + Math.pow(Math.sin(Math.PI * insetV), .72) * .43 * (1 - insetV * .18)) * .72;
+    for (let column = 0; column <= columns; column += 1) {
+      const u = column / columns * 2 - 1, rim = Math.sin(Math.PI * insetV);
+      positions.push(u * width, insetV, .16 * (1 - u * u) * Math.pow(rim, .8) - .035 * insetV * insetV + .04);
+    }
+  }
+  for (let row = 0; row < rows; row += 1) for (let column = 0; column < columns; column += 1) {
+    const a = row * (columns + 1) + column, b = a + 1, c = a + columns + 1, d = c + 1;
+    indices.push(a, b, c, b, d, c);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices); geometry.computeVertexNormals(); geometry.computeBoundingBox(); geometry.computeBoundingSphere();
+  return geometry;
+}
+// A deer-only tapered cup. Its root remains at y=0 so visible rotations occur
+// around the skull attachment instead of making the ear orbit or detach.
+geos.deerEar = createCuppedLeafEarGeometry();
+geos.deerEarInner = createCuppedLeafInnerGeometry();
 const wolfEarShape = new THREE.Shape(); wolfEarShape.moveTo(0, .2); wolfEarShape.lineTo(-.105, -.14); wolfEarShape.quadraticCurveTo(0, -.18, .105, -.14); wolfEarShape.closePath();
 geos.wolfEar = new THREE.ExtrudeGeometry(wolfEarShape, { depth: .045, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: .01, bevelThickness: .008, curveSegments: 4 }); geos.wolfEar.center();
+// Unit-length tapered beam used to assemble rounded stag antlers.
+geos.deerAntlerSegment = new THREE.CylinderGeometry(.62, 1, 1, 8, 2, false);
+geos.deerAntlerPedicle = new THREE.CylinderGeometry(.72, 1, 1, 10, 2, false);
 geos.animalBlock = new THREE.BoxGeometry(.7, .58, .76, 2, 2, 2);
 geos.animalWedge = new THREE.ConeGeometry(.42, .78, 5);
 geos.animalCoil = new THREE.TorusGeometry(.3, .14, 10, 24);
@@ -1752,9 +1858,12 @@ function showcaseChannel(channel) { if (movieState.active) return movieChannelEn
 let last = 0;
 let accumulator = 0;
 let completedTicksLastFrame = 0;
+let populationVisualFrame = 0;
 let lastTickPresentationAt = Number.NaN;
 let pendingTickPresentation = false;
 let pendingTickUi = false;
+const pendingTickPresentationSnapshotIds = [];
+const pendingTickPresentationSnapshotSet = new Set();
 let fogCacheKey = "";
 let fogPositionBuffer = null;
 let fogPositionAttribute = null;
@@ -1792,7 +1901,10 @@ const corpseRenderCache = new CorpseRenderCache(disposeCorpseVisual);
 const resourceCounters = { animalRootsCreated: 0, animalRootsRemoved: 0, ownedResourcesDisposed: 0 };
 const spatialQueryCounters = { corpseQueries: 0, corpseCandidates: 0 };
 const perceptionCacheCounters = { hits: 0, misses: 0 };
-const populationSchedulingCounters = { environmentScans: 0, deferredEnvironmentScans: 0 };
+const populationSchedulingCounters = { environmentScans: 0, deferredEnvironmentScans: 0, fullPerceptionScans: 0, deferredFullPerceptionScans: 0 };
+const neighbourQueryCounters = { hits: 0, misses: 0 };
+const tickAnimalNeighbourQueries = new Map();
+let entityIndexRevision = 0;
 let activePopulationForScheduling = 0;
 let tickPerceptionElapsed = 0;
 let diagnosticBatch = false;
@@ -1814,8 +1926,17 @@ const tickLocomotionBefore = [];
 const perf = { frames: 0, ticks: 0, last: performance.now(), fps: 0, ticksPerSecond: 0 };
 const profiler = new DevelopmentProfiler({ enabled: new URLSearchParams(window.location.search).get("profile") === "1" });
 const laboratoryBenchmark = new PerformanceBenchmark(660);
+const commitmentIntegrityBenchmark = new CommitmentIntegrityBenchmark();
 let benchmarkProfilerWasEnabled = profiler.enabled;
 let populationBenchmarkSweep = null;
+let highHexBenchmarkProgress = { phase: "idle", startedAt: 0, elapsedMs: 0, detail: null };
+const highHexTraceKeys = new Set();
+function traceHighHexTickPhase(phase, processed = 0) {
+  if (highHexBenchmarkProgress.phase !== "frame-sampling") return;
+  highHexBenchmarkProgress.detail = { ...highHexBenchmarkProgress.detail, tick: sim?.tick || 0, tickPhase: phase, processed };
+  const traceKey = `${sim?.tick || 0}:${phase}:${processed || 0}`;
+  if (TEST_MODE && !highHexTraceKeys.has(traceKey) && (processed === 0 || processed % 10 === 0)) { highHexTraceKeys.add(traceKey); console.debug(`[high-hex] tick ${sim?.tick || 0} ${phase}${processed ? ` ${processed}` : ""}`); }
+}
 const ecologicalAccounting = new EcologicalAccounting({ enabled: new URLSearchParams(window.location.search).get("research") === "1" });
 const presentationBudgets = new PresentationBudgetAllocator();
 const minimapInvalidation = new MinimapInvalidation();
@@ -1842,6 +1963,12 @@ let minimapDisplayMode = MINIMAP_MODES.has(savedMinimapMode) ? savedMinimapMode 
 if (ui.minimapMode) ui.minimapMode.value = minimapDisplayMode;
 let lastAutosaveTick = -Infinity;
 let sim = null;
+// Decisions are reconsidered each ecological tick, but an equivalent action is
+// one continuing episode. Keep the simulation clock out of the presentation
+// module while supplying it consistently for every species here.
+function setAction(animal, key, options = {}) { return setActionState(animal, key, { ...options, tick: options.tick ?? sim?.tick ?? 0 }); }
+function setBlockedAction(animal, reason, options = {}) { return setBlockedActionState(animal, reason, { ...options, tick: options.tick ?? sim?.tick ?? 0 }); }
+function completeActionArrival(animal, key, options = {}) { return completeActionArrivalState(animal, key, { ...options, tick: options.tick ?? sim?.tick ?? 0 }); }
 const shorelineReservations = new ShorelineReservationBook({ ttlTicks: 12 });
 let audioSettings = loadAudioSettings();
 const acousticRenderer = new ProceduralAudioRenderer({ maximumVoices: audioSettings.maximumVoices, settings: audioSettings });
@@ -1941,6 +2068,7 @@ function rebuildTickGroupMembers(animals = sim?.animals || []) {
     if (!members) tickGroupMembers.set(animal.groupId, members = []);
     members.push(animal);
   }
+  for (const members of tickGroupMembers.values()) assignContextualGroupRoles(members, { goal: groupGoal(members), tick: sim?.tick || 0 });
 }
 function groupMembersFor(animal) { return animal?.groupId ? tickGroupMembers.get(animal.groupId) || [] : []; }
 let navigationMesh = null;
@@ -2093,10 +2221,17 @@ function profilerResources({ force = false } = {}) {
     corpseCandidatesLastTick: spatialQueryCounters.corpseCandidates,
     cellVisionCacheHits: perceptionCacheCounters.hits,
     cellVisionCacheMisses: perceptionCacheCounters.misses,
+    neighbourQueryCacheHits: neighbourQueryCounters.hits,
+    neighbourQueryCacheMisses: neighbourQueryCounters.misses,
     cellVisionCacheEntries,
     environmentSenseCadence: environmentSenseCadence(activePopulationForScheduling),
     environmentScansLastTick: populationSchedulingCounters.environmentScans,
     deferredEnvironmentScansLastTick: populationSchedulingCounters.deferredEnvironmentScans,
+    fullPerceptionCadence: fullPerceptionCadence(activePopulationForScheduling),
+    initialActivationCadence: initialActivationCadence(activePopulationForScheduling),
+    largePopulationVisualStride: largePopulationVisualStride(activePopulationForScheduling, { selected: Boolean(selectedId), performanceMode: graphicsSettings.largeMapPerformanceMode }),
+    fullPerceptionScansLastTick: populationSchedulingCounters.fullPerceptionScans,
+    deferredFullPerceptionScansLastTick: populationSchedulingCounters.deferredFullPerceptionScans,
     adaptiveRenderScale: effectiveRenderScale,
     adaptiveResolutionEnabled: graphicsSettings.adaptiveResolution,
     uiTextureCacheEntries: presentationResources.textureEntries,
@@ -2163,25 +2298,29 @@ function liveBenchmarkText(profile) {
 function startPopulationBenchmarkStage(now = performance.now()) {
   const sweep = populationBenchmarkSweep, population = BENCHMARK_POPULATIONS[sweep.stageIndex], setup = populationBenchmarkSetup(sweep.baseSetup, population);
   loadSeedWorld(sweep.seed, setup);
+  const actualPopulation = sim.animals.filter((animal) => animal.alive).length;
+  const validation = validatePopulationBenchmarkStage(population, actualPopulation, sim.worldSetup);
+  sweep.stageValidations.push(validation);
+  if (!validation.valid) return finishPopulationBenchmark(false, validation);
   effectiveRenderScale = adaptiveResolution.reset(graphicsSettings.adaptiveResolution ? graphicsSettings.adaptiveMaxScale : graphicsSettings.renderScale, graphicsSettings.adaptiveMinScale); renderer.setPixelRatio(TEST_MODE ? 1 : Math.min(2, window.devicePixelRatio * effectiveRenderScale)); renderer.setSize(ui.viewport.clientWidth, ui.viewport.clientHeight, false);
   sweep.generationalBaseline = captureGenerationalAudit(sim, { observationMinutes: observationSessionMinutes() });
-  profiler.clear(); profiler.setEnabled(true); laboratoryBenchmark.start(now, sweep.durationMs, { ...benchmarkMetadata(), sweepStage: sweep.stageIndex + 1, sweepStages: BENCHMARK_POPULATIONS.length });
-  ui.benchmarkStatus.textContent = `Stage ${sweep.stageIndex + 1}/${BENCHMARK_POPULATIONS.length}: benchmarking ${population} entities.`;
+  profiler.clear(); profiler.setEnabled(true); laboratoryBenchmark.start(now, sweep.durationMs, { ...benchmarkMetadata(), requestedPopulation: population, populationValidation: validation, sweepStage: sweep.stageIndex + 1, sweepStages: BENCHMARK_POPULATIONS.length });
+  ui.benchmarkStatus.textContent = `Stage ${sweep.stageIndex + 1}/${BENCHMARK_POPULATIONS.length}: verified ${actualPopulation}/${population} entities; benchmarking.`;
 }
-function finishPopulationBenchmark(stopped = false) {
+function finishPopulationBenchmark(stopped = false, failure = null) {
   const sweep = populationBenchmarkSweep;
   if (!sweep) return;
-  if (laboratoryBenchmark.samples.length) {
+  if (!failure && laboratoryBenchmark.samples.length) {
     const stageReport = laboratoryBenchmark.report(), finalAudit = captureGenerationalAudit(sim, { observationMinutes: observationSessionMinutes() });
     stageReport.generationalAudit = compareGenerationalAudit(sweep.generationalBaseline, finalAudit);
     sweep.reports.push(stageReport);
   }
-  if (!stopped && sweep.stageIndex + 1 < BENCHMARK_POPULATIONS.length) { sweep.stageIndex += 1; return startPopulationBenchmarkStage(); }
-  const report = populationSweepReport(sweep.reports, { startedAt: sweep.startedAt, completedAt: new Date().toISOString(), seed: sweep.seed, durationPerPopulationMs: sweep.durationMs, requestedPopulations: [...BENCHMARK_POPULATIONS], graphicsSettings: { ...graphicsSettings }, hardware: sweep.hardware, stoppedEarly: stopped });
+  if (!failure && !stopped && sweep.stageIndex + 1 < BENCHMARK_POPULATIONS.length) { sweep.stageIndex += 1; return startPopulationBenchmarkStage(); }
+  const report = populationSweepReport(sweep.reports, { startedAt: sweep.startedAt, completedAt: new Date().toISOString(), seed: sweep.seed, durationPerPopulationMs: sweep.durationMs, requestedPopulations: [...BENCHMARK_POPULATIONS], graphicsSettings: { ...graphicsSettings }, hardware: sweep.hardware, stoppedEarly: stopped, failure, stageValidations: sweep.stageValidations });
   populationBenchmarkSweep = null; profiler.setEnabled(benchmarkProfilerWasEnabled);
   activateSnapshot(sweep.originalSnapshot, "Restored world after population benchmark"); running = sweep.originalRunning; selectedId = sweep.selectedId; selectedGroupId = sweep.selectedGroupId; entityLocked = sweep.entityLocked; camera.position.fromArray(sweep.cameraPosition); controls.target.fromArray(sweep.cameraTarget);
   ui.playPause.textContent = ui.hudPlay.textContent = running ? "Pause" : "Play"; ui.runState.textContent = running ? "Running" : "Paused"; ui.benchmarkStart.textContent = "Start population sweep"; ui.benchmarkCopy.disabled = false;
-  ui.benchmarkStatus.textContent = `${stopped ? "Stopped" : "Completed"}: ${report.stages.length}/${BENCHMARK_POPULATIONS.length} population stages and ${report.stages.reduce((sum, stage) => sum + stage.windows, 0)} diagnostic windows.`;
+  ui.benchmarkStatus.textContent = failure ? failure.message : `${stopped ? "Stopped" : "Completed"}: ${report.stages.length}/${BENCHMARK_POPULATIONS.length} verified population stages and ${report.stages.reduce((sum, stage) => sum + stage.windows, 0)} diagnostic windows.`;
   ui.benchmarkReport.value = JSON.stringify(report, null, 2);
   const comparison = document.querySelector("#benchmark-comparison"); if (comparison) comparison.innerHTML = `<table class="benchmark-comparison"><thead><tr><th>Entities</th><th>FPS avg</th><th>FPS min</th><th>Ticks/s</th><th>Tick ms</th><th>Perception ms</th></tr></thead><tbody>${report.stages.map((stage) => `<tr><td>${stage.population}</td><td>${(stage.fps.average || 0).toFixed(1)}</td><td>${(stage.fps.minimum || 0).toFixed(0)}</td><td>${(stage.ticksPerSecond.average || 0).toFixed(1)}</td><td>${(stage.timings["tick.total"]?.averageMs || 0).toFixed(2)}</td><td>${(stage.timings["tick.perception"]?.averageMs || 0).toFixed(2)}</td></tr>`).join("")}</tbody></table>`;
   renderAll(); updateUI();
@@ -2190,7 +2329,7 @@ function toggleLaboratoryBenchmark() {
   if (populationBenchmarkSweep) { laboratoryBenchmark.stop(); return finishPopulationBenchmark(true); }
   const minutes = clamp(Math.floor(Number(ui.benchmarkDuration.value) || 5), 1, 10);
   benchmarkProfilerWasEnabled = profiler.enabled;
-  populationBenchmarkSweep = { stageIndex: 0, durationMs: minutes * 60000, reports: [], seed: sim.seed, baseSetup: { ...sim.worldSetup }, startedAt: new Date().toISOString(), hardware: benchmarkHardwareMetadata(), originalSnapshot: snapshotWorld(), originalRunning: running, selectedId, selectedGroupId, entityLocked, cameraPosition: camera.position.toArray(), cameraTarget: controls.target.toArray() };
+  populationBenchmarkSweep = { stageIndex: 0, durationMs: minutes * 60000, reports: [], stageValidations: [], seed: sim.seed, baseSetup: { ...sim.worldSetup, speciesCounts: { ...sim.worldSetup.speciesCounts } }, startedAt: new Date().toISOString(), hardware: benchmarkHardwareMetadata(), originalSnapshot: snapshotWorld(), originalRunning: running, selectedId, selectedGroupId, entityLocked, cameraPosition: camera.position.toArray(), cameraTarget: controls.target.toArray() };
   ui.benchmarkStart.textContent = "Stop and create partial report"; ui.benchmarkCopy.disabled = true; ui.benchmarkReport.value = "";
   startPopulationBenchmarkStage();
 }
@@ -2216,18 +2355,26 @@ window.rssDiagnostics = Object.freeze({
     return { loaded, seed: sim.seed, cells: sim.hexWorld.cells.length, hash: authoritativeHash(sim), loadingVisible: !ui.worldGenerationProgress.hidden, resources: profilerResources() };
   },
   worldGenerationState: () => ({ active: worldGenerationInProgress, stage: worldGenerationStage, phase: ui.worldGenerationPhase?.textContent || null, detail: ui.worldGenerationDetail?.textContent || null, percent: Number(ui.worldGenerationBar?.value || 0) }),
+  highHexBenchmarkState: () => ({ ...highHexBenchmarkProgress, elapsedMs: highHexBenchmarkProgress.startedAt ? performance.now() - highHexBenchmarkProgress.startedAt : highHexBenchmarkProgress.elapsedMs }),
   weatherFieldState: () => {
     if (!sim.weatherField?.values?.length) refreshWeatherField();
     const intensities = (sim.weatherField?.values || []).map(value => localizedWeatherPresentation(value).precipitationIntensity);
     const raining = intensities.filter(value => value > 0);
     return { cells: intensities.length, dryCells: intensities.length - raining.length, rainingCells: raining.length, minimum: intensities.length ? Math.min(...intensities) : 0, maximum: intensities.length ? Math.max(...intensities) : 0 };
   },
-  highHexBenchmark: async (hexDetail = 5000, { runningState = false, performanceMode = false, frameSamples = 90 } = {}) => {
+  highHexBenchmark: async (hexDetail = 5000, { runningState = false, performanceMode = false, frameSamples = 90, population = null, includeAuthoritativeHash = true } = {}) => {
     const detail = clamp(Math.round(Number(hexDetail) || 5000), 5000, 40000), priorMode = graphicsSettings.largeMapPerformanceMode;
+    const benchmarkStarted = performance.now();
+    highHexTraceKeys.clear();
+    highHexBenchmarkProgress = { phase: "world-generation", startedAt: benchmarkStarted, elapsedMs: 0, detail: { hexDetail: detail, population } };
     graphicsSettings.largeMapPerformanceMode = Boolean(performanceMode);
-    const setup = { ...worldSetup, size: 300, span: 4, customSpan: 300, hexDetail: detail }, constructionStarted = performance.now();
-    const loaded = await loadSeedWorldAsync(1337, setup); if (!loaded) return { cancelled: true, hexDetail: detail };
+    const baseSetup = { ...worldSetup, size: 300, span: 4, customSpan: 300, hexDetail: detail };
+    const setup = population == null ? baseSetup : populationBenchmarkSetup(baseSetup, Math.max(2, Math.floor(Number(population) || 2)));
+    const constructionStarted = performance.now();
+    const loaded = await loadSeedWorldAsync(1337, setup); if (!loaded) { highHexBenchmarkProgress = { phase: "cancelled", startedAt: 0, elapsedMs: performance.now() - benchmarkStarted, detail: null }; return { cancelled: true, hexDetail: detail }; }
     const completeLoadMs = performance.now() - constructionStarted;
+    lastEntityPanelVisibilityRefresh = performance.now(); entityPanelVisibilityRefreshPending = false;
+    highHexBenchmarkProgress = { phase: "route-sampling", startedAt: benchmarkStarted, elapsedMs: completeLoadMs, detail: { cells: sim.hexWorld.cells.length, population: sim.animals.filter(animal => animal.alive).length } };
     running = Boolean(runningState); ui.runState.textContent = running ? "Running" : "Paused";
     const polygons = [...navigationMesh.polygons.values()], routeDurations = [];
     for (let index = 0; index < 12 && polygons.length > 1; index += 1) {
@@ -2235,13 +2382,16 @@ window.rssDiagnostics = Object.freeze({
       findNavPath(navigationMesh, from.center, to.center); routeDurations.push(performance.now() - started);
     }
     const dailyStarted = performance.now(); beginWaterCycle(); const dailyUpdateMs = performance.now() - dailyStarted, frameDurations = [];
+    highHexBenchmarkProgress = { phase: "frame-sampling", startedAt: benchmarkStarted, elapsedMs: performance.now() - benchmarkStarted, detail: { requestedFrames: Math.max(1, Math.min(240, frameSamples)), sampledFrames: 0 } };
     let previous = performance.now();
-    for (let index = 0; index < Math.max(1, Math.min(240, frameSamples)); index += 1) await new Promise(resolve => requestAnimationFrame(now => { frameDurations.push(now - previous); previous = now; resolve(); }));
-    const p95 = values => [...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(values.length * .95))] || 0, resources = profilerResources(), result = {
-      hexDetail: detail, cells: sim.hexWorld.cells.length, constructionMs: lastWorldGenerationMetrics.terrainMs, completeLoadMs, dailyUpdateMs, routeP95Ms: p95(routeDurations), frameP95Ms: p95(frameDurations), authoritativeHash: authoritativeHash(sim), vegetationTasksRemaining: vegetationRebuildQueue.size,
+    for (let index = 0; index < Math.max(1, Math.min(240, frameSamples)); index += 1) await new Promise(resolve => requestAnimationFrame(now => { frameDurations.push(now - previous); previous = now; highHexBenchmarkProgress.detail.sampledFrames = index + 1; resolve(); }));
+    highHexBenchmarkProgress = { phase: "finalizing", startedAt: benchmarkStarted, elapsedMs: performance.now() - benchmarkStarted, detail: { includeAuthoritativeHash } };
+    const p95 = values => [...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(values.length * .95))] || 0, averageFrameMs = frameDurations.reduce((sum, value) => sum + value, 0) / Math.max(1, frameDurations.length), resources = profilerResources(), result = {
+      hexDetail: detail, cells: sim.hexWorld.cells.length, population: sim.animals.filter(animal => animal.alive).length, constructionMs: lastWorldGenerationMetrics.terrainMs, completeLoadMs, dailyUpdateMs, routeP95Ms: p95(routeDurations), frameAverageMs: averageFrameMs, averageFps: averageFrameMs > 0 ? 1000 / averageFrameMs : 0, frameP95Ms: p95(frameDurations), authoritativeHash: includeAuthoritativeHash ? authoritativeHash(sim) : null, vegetationTasksRemaining: vegetationRebuildQueue.size,
       heapBytes: performance.memory?.usedJSHeapSize || null, renderer: { geometries: resources["renderer.info.memory.geometries"], textures: resources["renderer.info.memory.textures"], calls: resources["renderer.info.render.calls"], triangles: resources["renderer.info.render.triangles"] }
     };
     graphicsSettings.largeMapPerformanceMode = priorMode;
+    highHexBenchmarkProgress = { phase: "complete", startedAt: 0, elapsedMs: performance.now() - benchmarkStarted, detail: { averageFps: result.averageFps, population: result.population, cells: result.cells } };
     return result;
   },
   presentationBudgets: () => ({ ...presentationBudgets.budgets }),
@@ -2693,6 +2843,7 @@ function configureLaboratoryLayout() {
   const priorityCard = ui.priorityList?.closest("section"); if (priorityCard) priorityCard.hidden = false;
   const overlaySection = ui.overlayBiomass?.closest("section");
   if (overlaySection) {
+    const personalSpaceOptions = document.querySelector("#personal-space-overlay-settings");
     const overlayGroup = ({ title, description, controls, open = false }) => {
       const details = document.createElement("details"); details.className = "laboratory-disclosure laboratory-overlay-group"; details.open = open;
       const summary = document.createElement("summary"); summary.textContent = title;
@@ -2701,7 +2852,9 @@ function configureLaboratoryLayout() {
       for (const [property, labelText] of controls) { const label = laboratoryOverlayLabel(ui[property], labelText); if (label) grid.append(label); }
       details.append(summary, hint, grid); return details;
     };
-    overlaySection.id = "laboratory-overlay-controls"; overlaySection.hidden = false; overlaySection.replaceChildren(...LABORATORY_OVERLAY_GROUPS.map(overlayGroup));
+    const overlayGroups = LABORATORY_OVERLAY_GROUPS.map(overlayGroup);
+    if (personalSpaceOptions && overlayGroups[0]) overlayGroups[0].append(personalSpaceOptions);
+    overlaySection.id = "laboratory-overlay-controls"; overlaySection.hidden = false; overlaySection.replaceChildren(...overlayGroups);
   }
   const rssCard = ui.rssTrace?.closest("section");
   const diagnostics = document.createElement("details"); diagnostics.className = "laboratory-disclosure"; const diagnosticsSummary = document.createElement("summary"); diagnosticsSummary.textContent = "Experimental RSS instrumentation"; diagnostics.append(diagnosticsSummary);
@@ -2825,7 +2978,7 @@ function configureLaboratoryTabs({ controls, selectedCard, priorityCard, diagnos
   panels.society.append(visualLanguage, society, societyEcology);
   const predictive = document.createElement("section"); predictive.id = "predictive-systems-workspace"; predictive.className = "predictive-workspace"; predictive.innerHTML = `<div id="predictive-mini-summary" data-predictive-surface="mini"></div><div class="predictive-main-detail" data-predictive-surface="main"><section class="predictive-controls predictive-observer-banner"><p id="predictive-mode-explanation" class="predictive-callout"></p></section><div id="predictive-animal-detail"></div><div id="predictive-system-overview"></div><div id="predictive-cinema-detail"></div><div id="predictive-contract-reference"></div></div>`; panels.predictive.append(predictive);
   const acoustics = document.createElement("section"); acoustics.id = "acoustic-laboratory-workspace"; acoustics.className = "acoustic-laboratory-workspace"; panels.acoustics.append(acoustics);
-  move(document.querySelector("#laboratory-benchmark"), "diagnostics"); move(diagnostics, "diagnostics");
+  move(document.querySelector("#laboratory-benchmark"), "diagnostics"); move(document.querySelector("#commitment-benchmark"), "diagnostics"); move(diagnostics, "diagnostics");
   const performance = document.querySelector("#performance"); if (performance) { performance.hidden = false; move(performance, "diagnostics"); }
   const saveDisclosure = [...inspector.querySelectorAll("details.laboratory-disclosure")].find((d) => d.querySelector("#save"));
   const savedCard = ui.favouriteList?.closest("section"), eventSection = ui.events?.closest("section");
@@ -2998,6 +3151,54 @@ function ecologyList(values = [], empty = "none recorded") {
   return values.length ? values.map(value => escapeHtml(String(value).replaceAll("-", " "))).join(" · ") : empty;
 }
 
+function commitmentBenchmarkSummary(report) {
+  const anomalyRows = Object.entries(report.anomalies || {}).sort((left, right) => right[1] - left[1]);
+  const eventRows = Object.entries(report.counts || {}).filter(([kind]) => !kind.startsWith("anomaly:")).sort((left, right) => right[1] - left[1]);
+  const coverageRows = Object.entries(report.coverageByNeed || {}).map(([need, row]) => { const denominator = Math.max(1, row.observations); return `${need}: satisfier ${Math.round(row.satisfier / denominator * 100)}%, method ${Math.round(row.method / denominator * 100)}%, target ${Math.round(row.target / denominator * 100)}%, completion ${Math.round(row.completionCondition / denominator * 100)}%`; });
+  return [
+    `${report.animalsObserved} organisms · ${report.observedTicks}/${report.requestedTicks} decision ticks · ${report.switchDelta} recorded priority switches`,
+    `Events: ${eventRows.map(([kind, count]) => `${kind} ${count}`).join(" · ") || "none yet"}`,
+    `Likely defects: ${anomalyRows.map(([kind, count]) => `${kind.replaceAll("-", " ")} ${count}`).join(" · ") || "none detected"}`,
+    `Planning coverage:\n${coverageRows.join("\n") || "no observations yet"}`,
+  ].join("\n");
+}
+
+function finishCommitmentIntegrityBenchmark(stopped = false) {
+  commitmentIntegrityBenchmark.running = false;
+  const report = commitmentIntegrityBenchmark.report({ completedAt: new Date().toISOString(), finalTick: sim.tick, finalAuthoritativeHash: ecologyAuthoritativeHash() });
+  ui.commitmentBenchmarkStart.textContent = "Start investigation";
+  ui.commitmentBenchmarkCopy.disabled = false;
+  ui.commitmentBenchmarkStatus.textContent = `${stopped ? "Stopped" : "Completed"}: ${report.animalsObserved} organisms observed for ${report.observedTicks} decision ticks; ${Object.values(report.anomalies).reduce((sum, value) => sum + value, 0)} likely defects flagged.`;
+  ui.commitmentBenchmarkLive.textContent = commitmentBenchmarkSummary(report);
+  ui.commitmentBenchmarkReport.value = JSON.stringify(report, null, 2);
+}
+
+function toggleCommitmentIntegrityBenchmark() {
+  if (commitmentIntegrityBenchmark.running) return finishCommitmentIntegrityBenchmark(true);
+  const scope = ui.commitmentBenchmarkScope.value, targetTicks = Number(ui.commitmentBenchmarkDuration.value) || 100;
+  if (scope === "selected" && !selectedAnimal()) { ui.commitmentBenchmarkStatus.textContent = "Select a living organism before starting a selected-organism investigation."; return; }
+  commitmentIntegrityBenchmark.start({
+    tick: sim.tick, targetTicks, scope, selectedId: scope === "selected" ? selectedAnimal().id : null,
+    metadata: {
+      startedAt: new Date().toISOString(), seed: sim.seed, initialTick: sim.tick, initialAuthoritativeHash: ecologyAuthoritativeHash(),
+      worldSetup: { ...sim.worldSetup, speciesCounts: { ...sim.worldSetup.speciesCounts } }, requestedTicksPerSecond: requestedTicksPerSecond(),
+      browser: { userAgent: navigator.userAgent, platform: navigator.userAgentData?.platform || navigator.platform || null },
+      settings: { graphics: { ...graphicsSettings }, observationMinutes: observationSessionMinutes() }
+    }
+  });
+  ui.commitmentBenchmarkStart.textContent = "Stop and create partial report";
+  ui.commitmentBenchmarkCopy.disabled = true; ui.commitmentBenchmarkReport.value = "";
+  ui.commitmentBenchmarkStatus.textContent = `Running for ${targetTicks} decision ticks${scope === "selected" ? ` on ${selectedAnimal().id}` : " across all living organisms"}.`;
+}
+
+function sampleCommitmentIntegrityBenchmark() {
+  if (!commitmentIntegrityBenchmark.running) return;
+  const complete = commitmentIntegrityBenchmark.sample(sim.animals, sim.tick), report = commitmentIntegrityBenchmark.report();
+  ui.commitmentBenchmarkLive.textContent = commitmentBenchmarkSummary(report);
+  ui.commitmentBenchmarkStatus.textContent = `${report.observedTicks}/${report.requestedTicks} decision ticks · ${report.animalsObserved} organisms · ${Object.values(report.anomalies).reduce((sum, value) => sum + value, 0)} likely defects.`;
+  if (complete) finishCommitmentIntegrityBenchmark(false);
+}
+
 function renderAcousticLaboratory(a = selectedAnimal()) {
   const root = document.querySelector("#acoustic-laboratory-workspace"); if (!root || !sim) return;
   const observedEventId = a?.acousticObservations?.at(-1)?.eventId, event = sim.soundEvents?.find(item => item.eventId === observedEventId) || sim.soundEvents?.find(item => item.sourceId === a?.id && item.soundClass === "vocalisation") || sim.soundEvents?.find(item => item.soundClass === "vocalisation") || sim.soundEvents?.[0];
@@ -3054,15 +3255,11 @@ function renderEcologyLaboratory(a = selectedAnimal(), corpse = selectedCorpse()
 
 function renderOntologyWorkspaces(a) {
   const matrixRoot = document.querySelector("#need-state-matrix"), methodRoot = document.querySelector("#satisfier-comparison"), protocolRoot = document.querySelector("#protocol-library"), societyRoot = document.querySelector("#society-workspace");
-  const integrity = ontologyIntegrity(), context = a ? commitmentPlanningContext(a) : {}, states = a ? needStateSnapshot(a, context) : {};
-  if (matrixRoot) matrixRoot.innerHTML = `<details class="laboratory-disclosure" open><summary>Concurrent need states${a ? ` · ${escapeHtml(a.id)}` : ""}</summary><p class="hint">Every need remains active in the background. Pressure combines current deprivation with biological importance; only one result becomes the current committed priority.</p>${!a ? `<p class="need-plan-empty">Select a living organism to inspect its need matrix.</p>` : `<div class="need-matrix-grid">${BEHAVIOUR_ONTOLOGY.needs.map((need) => { const state = states[need.id]; return `<article style="--need-pressure:${Math.round(state.pressure * 100)}%"><header><strong>${escapeHtml(need.label)}</strong><span>${Math.round(state.pressure * 100)} pressure</span></header><dl><div><dt>Condition</dt><dd>${Math.round(state.amount * 100)}%</dd></div><div><dt>Urgency</dt><dd>${Math.round(state.urgency * 100)}</dd></div><div><dt>Importance</dt><dd>${Math.round(state.importance * 100)}</dd></div><div><dt>Evidence confidence</dt><dd>${Math.round(state.confidence * 100)}%</dd></div></dl></article>`; }).join("")}</div>`}<p class="ontology-integrity ${integrity.valid ? "is-valid" : "is-invalid"}">Registry ${integrity.valid ? "valid" : "invalid"} · ${integrity.needCount} needs · ${integrity.satisfierCount} satisfiers · ${integrity.methodCount} methods${integrity.errors.length ? ` · ${escapeHtml(integrity.errors.join("; "))}` : ""}</p></details>`;
+  const integrity = ontologyIntegrity(), context = a ? commitmentPlanningContext(a) : {}, states = a ? storeNeedStates(a, context, sim.tick) : {};
+  if (matrixRoot) matrixRoot.innerHTML = `<details class="laboratory-disclosure" open><summary>Concurrent need states${a ? ` · ${escapeHtml(a.id)}` : ""}</summary><p class="hint">Every need remains active in the background. Pressure combines current deprivation with biological importance; only one result becomes the current committed priority.</p>${!a ? `<p class="need-plan-empty">Select a living organism to inspect its need matrix.</p>` : `<div class="need-matrix-grid">${[...BEHAVIOUR_ONTOLOGY.needs.map(need => ({ id: need.id, label: need.label })), { id: "recovery", label: "Maintain recovery and health" }].map((need) => { const state = states[need.id]; if (!state) return ""; return `<article style="--need-pressure:${Math.round(state.pressure * 100)}%"><header><strong>${escapeHtml(need.label)}</strong><span>${Math.round(state.pressure * 100)} pressure</span></header><dl><div><dt>Condition</dt><dd>${Math.round(state.amount * 100)}%</dd></div><div><dt>Urgency</dt><dd>${Math.round(state.urgency)} / 100</dd></div><div><dt>Trend</dt><dd>${Number(state.trend || 0).toFixed(2)}</dd></div><div><dt>Time to failure</dt><dd>${Number.isFinite(state.predictedFailureHours) ? formatEta(state.predictedFailureHours) : "not predicted"}</dd></div><div><dt>Evidence confidence</dt><dd>${Math.round(state.confidence * 100)}%</dd></div></dl></article>`; }).join("")}</div>`}<p class="ontology-integrity ${integrity.valid ? "is-valid" : "is-invalid"}">Registry ${integrity.valid ? "valid" : "invalid"} · ${integrity.needCount} needs · ${integrity.satisfierCount} satisfiers · ${integrity.methodCount} methods${integrity.errors.length ? ` · ${escapeHtml(integrity.errors.join("; "))}` : ""}</p></details>`;
   if (methodRoot) {
     const priority = a ? (a.needDependencyPlan?.needId || (a.needDependencyPlan?.need === "water" ? "hydration" : a.needDependencyPlan?.need === "food" ? "nutrition" : null) || "safety") : null;
-    const rows = priority ? BEHAVIOUR_ONTOLOGY.satisfiers.filter((entry) => entry.supports.includes(priority)).map((entry) => {
-      const effects = Object.fromEntries(entry.supports.map((id) => [id, id === priority ? .8 : .35])); for (const id of entry.impairs) effects[id] = -.35;
-      const method = entry.methods[0], active = a?.needDependencyPlan?.satisfierId === entry.id;
-      return { entry, method, active, classification: entry.defaultClass || classifySatisfierEffects(effects), confidence: active ? a.commitmentState?.confidence ?? .5 : .45, viable: method.prerequisites.every((requirement) => !/adequate-hydration/.test(requirement) || (a?.hydration || 0) >= 72) };
-    }) : [];
+    const rows = priority ? satisfierOptionsForNeed(priority).map((option) => { const entry = SATISFIER_DEFINITIONS[option.satisfierId], method = option.methods[0], active = a?.commitmentState?.episode?.satisfierId === entry.id || a?.needDependencyPlan?.satisfierId === entry.id; return { entry, method, active, classification: entry.defaultClass || classifySatisfierEffects(option.expectedEffects), confidence: active ? a.commitmentState?.confidence ?? option.confidence : option.confidence, viable: option.available && method.prerequisites.every((requirement) => !/adequate-hydration/.test(requirement) || (a?.hydration || 0) >= 72) }; }) : [];
     methodRoot.innerHTML = `<details class="laboratory-disclosure" open><summary>Satisfier comparison</summary><p class="hint">A satisfier can support several needs and impair others. Classification is derived from those expected effects.</p>${!a ? `<p class="need-plan-empty">Select an organism to compare methods for its active need.</p>` : `<div class="table-scroll"><table class="method-table"><thead><tr><th>Satisfier</th><th>Concrete method</th><th>Supports</th><th>Impairs</th><th>Class</th><th>Confidence</th><th>Result</th></tr></thead><tbody>${rows.map(({ entry, method, active, classification, confidence, viable }) => `<tr class="${active ? "is-selected" : ""}"><td>${escapeHtml(entry.label)}</td><td>${escapeHtml(method.label)}</td><td>${entry.supports.map(escapeHtml).join(" · ")}</td><td>${entry.impairs.length ? entry.impairs.map(escapeHtml).join(" · ") : "none"}</td><td>${escapeHtml(classification)}</td><td>${Math.round(confidence * 100)}%</td><td>${active ? "selected" : viable ? "alternative" : "blocked"}</td></tr>`).join("") || `<tr><td colspan="7">No registered satisfier supports this need.</td></tr>`}</tbody></table></div>`}</details>`;
   }
   if (protocolRoot) {
@@ -3071,7 +3268,8 @@ function renderOntologyWorkspaces(a) {
   }
   if (societyRoot) {
     const members = a?.groupId ? sim.animals.filter((member) => member.alive && member.groupId === a.groupId) : [], socialProtocols = a ? Object.values(a.learnedProtocols || {}).filter((protocol) => protocol.source === "social") : [];
-    societyRoot.innerHTML = `<details class="laboratory-disclosure" open><summary>Social organisation${a ? ` · ${escapeHtml(a.id)}` : ""}</summary>${!a ? `<p class="need-plan-empty">Select an organism to inspect its relationships and collective context.</p>` : `<div class="society-summary-grid"><article><h3>Ordinary group</h3><p>${a.groupId ? `${escapeHtml(groupDisplayName(sim.groupIdentities, a.groupId))} · ${members.length} members · goal ${escapeHtml(a.groupGoal || "unresolved")}` : "Not currently grouped"}</p></article><article><h3>Leadership</h3><p>${a.groupLeaderId ? `${escapeHtml(a.groupLeaderId)}${a.groupLeaderId === a.id ? " · selected animal leads" : ""}` : "No current leader"}</p></article><article><h3>Socially learned protocols</h3><p>${socialProtocols.length} retained${socialProtocols.length ? ` · from ${[...new Set(socialProtocols.map((row) => row.teacherId).filter(Boolean))].map(escapeHtml).join(", ") || "unrecorded teachers"}` : ""}</p></article><article><h3>Meta-group context</h3><p>${escapeHtml(a.metaGroupId || "No coherent meta-group currently assigned")}</p></article></div>${a.sex === "M" ? maleSocialStrategyNetworkHtml(a) : femaleSocialNetworkHtml(a)}<h3>Relationships and care network</h3><div class="table-scroll"><table class="method-table"><thead><tr><th>Entity</th><th>Relation</th><th>Affinity</th><th>Trust / memory</th></tr></thead><tbody>${Object.values(a.socialMemory || {}).slice(0, 30).map((memory) => `<tr><td>${escapeHtml(memory.partnerId || memory.targetId || "unknown")}</td><td>${escapeHtml(memory.kind || memory.lastEvent || "familiar")}</td><td>${Number(memory.affinity || 0).toFixed(2)}</td><td>${escapeHtml(memory.trust != null ? Number(memory.trust).toFixed(2) : memory.confidence != null ? `${Math.round(memory.confidence * 100)}% confidence` : "retained")}</td></tr>`).join("") || `<tr><td colspan="4">No retained social relationships.</td></tr>`}</tbody></table></div>`}</details>`;
+    const roles = a?.groupRoleState, defence = a?.deerDefenceAssessment, contest = a?.rutContest;
+    societyRoot.innerHTML = `<details class="laboratory-disclosure" open><summary>Social organisation${a ? ` · ${escapeHtml(a.id)}` : ""}</summary>${!a ? `<p class="need-plan-empty">Select an organism to inspect its relationships and collective context.</p>` : `<div class="society-summary-grid"><article><h3>Ordinary group</h3><p>${a.groupId ? `${escapeHtml(groupDisplayName(sim.groupIdentities, a.groupId))} · ${members.length} members · goal ${escapeHtml(a.groupGoal || "unresolved")}` : "Not currently grouped"}</p></article><article><h3>Leadership</h3><p>${a.groupLeaderId ? `${escapeHtml(a.groupLeaderId)}${a.groupLeaderId === a.id ? " · selected animal leads" : ""}` : "No current leader"}</p></article><article><h3>Current contextual role</h3><p>${roles ? `${escapeHtml(roles.primary)}${roles.secondary?.length ? ` · ${roles.secondary.map(escapeHtml).join(", ")}` : ""}<br>${escapeHtml(roles.reason)}` : "No role assigned outside a current group context"}</p></article><article><h3>Socially learned protocols</h3><p>${socialProtocols.length} retained${socialProtocols.length ? ` · from ${[...new Set(socialProtocols.map((row) => row.teacherId).filter(Boolean))].map(escapeHtml).join(", ") || "unrecorded teachers"}` : ""}</p></article><article><h3>Meta-group context</h3><p>${escapeHtml(a.metaGroupId || "No coherent meta-group currently assigned")}</p></article></div>${defence ? `<h3>Predator response assessment</h3><dl><div><dt>Selected response</dt><dd>${escapeHtml(defence.action)}</dd></div><div><dt>Reason</dt><dd>${escapeHtml(defence.reason)}</dd></div><div><dt>Escape options</dt><dd>${defence.escapeOptions}</dd></div><div><dt>Conflict purpose</dt><dd>${escapeHtml(defence.conflictPurpose)}</dd></div><div><dt>Weapon if forced</dt><dd>${escapeHtml(defence.weapon || "none — escape selected")}</dd></div></dl>` : ""}${contest ? `<h3>Seasonal rut contest</h3><dl><div><dt>Purpose</dt><dd>mating status, not predation</dd></div><div><dt>Rival</dt><dd>${escapeHtml(contest.rivalId)}</dd></div><div><dt>Phase</dt><dd>${escapeHtml(contest.phase)}</dd></div><div><dt>Outcome</dt><dd>${escapeHtml(contest.outcome || "unresolved")}</dd></div></dl>` : ""}${a.sex === "M" ? maleSocialStrategyNetworkHtml(a) : femaleSocialNetworkHtml(a)}<h3>Relationships and care network</h3><div class="table-scroll"><table class="method-table"><thead><tr><th>Entity</th><th>Relation</th><th>Affinity</th><th>Trust / memory</th></tr></thead><tbody>${Object.values(a.socialMemory || {}).slice(0, 30).map((memory) => `<tr><td>${escapeHtml(memory.partnerId || memory.targetId || "unknown")}</td><td>${escapeHtml(memory.kind || memory.lastEvent || "familiar")}</td><td>${Number(memory.affinity || 0).toFixed(2)}</td><td>${escapeHtml(memory.trust != null ? Number(memory.trust).toFixed(2) : memory.confidence != null ? `${Math.round(memory.confidence * 100)}% confidence` : "retained")}</td></tr>`).join("") || `<tr><td colspan="4">No retained social relationships.</td></tr>`}</tbody></table></div>`}</details>`;
   }
 }
 
@@ -3110,6 +3308,7 @@ function renderPlanAuditViews(a) {
 
 function commitmentLaboratoryHtml(a, graph = null) {
   migrateGoalPlan(a, sim.tick); const state = migrateCommitment(a, sim.tick), profile = expressedCommitmentProfile(a), social = state.socialForecast || forecastSocialCommitment(a, { drive: state.priority || a.drive || "uncommitted" }, commitmentPlanningContext(a));
+  const episode = state.episode || {}, obligations = activeParallelObligations(a), recentEvents = (a.commitmentEvents || []).slice(-8).reverse();
   const plan = a.goalPlan, protocol = state.protocolKey ? a.learnedProtocols?.[state.protocolKey] : null, pct = (value) => `${Math.round((value || 0) * 100)}%`;
   const immediate = goalLabel(plan.immediateConcern || plan.shortTerm), supporting = goalLabel(plan.supportingGoal || plan.mediumTerm), strategy = goalLabel(plan.lifeStrategy || plan.longTerm);
   const prerequisite = graph?.phase || a.needDependencyPlan?.phase || "none active", next = graph?.resumeCondition || a.actionState?.intendedOutcome || a.currentAction || "reconsider available methods";
@@ -3118,8 +3317,9 @@ function commitmentLaboratoryHtml(a, graph = null) {
   const activePlan = migrateNeedDependencyPlan(a.needDependencyPlan, { tick: sim.tick }), priorities = a.priorities || [], waterPriority = priorities.find(item => item.drive === "water"), fleePriority = priorities.find(item => /flee|predator|fear|safety|defend/.test(item.drive));
   const waterUrgency = activePlan?.need === "water" ? Number(activePlan.forecast?.urgency ?? waterNeedPlan(a).urgency) : waterNeedPlan(a).urgency, minimumRemaining = Math.max(0, Number(state.minimumReviewTick || sim.tick) - sim.tick), reservation = shorelineReservations.reservationFor(a.id);
   const whyNotFlee = a.actionState?.key === "flee" ? "Fleeing was selected." : !fleePriority ? "Fleeing was absent because no current evidence produced a viable flee candidate." : waterPriority && waterPriority.score >= fleePriority.score ? `Fleeing ranked below water (${fleePriority.score} versus ${waterPriority.score}); inspect threat evidence and route risk.` : `Fleeing was available at ${fleePriority.score}, but ${escapeHtml(state.priority || a.drive || "another commitment")} was selected; inspect commitment retention and constraints.`;
-  const waterDiagnostics = `<section><h3>Water target and safety arbitration</h3><dl><div><dt>Need urgency</dt><dd>${waterUrgency.toFixed(0)} / 100</dd></div><div><dt>Water candidate score</dt><dd>${waterPriority?.score ?? "not currently eligible"}</dd></div><div><dt>Safety candidate score</dt><dd>${fleePriority?.score ?? "no current candidate"}</dd></div><div><dt>Commitment ID</dt><dd>${escapeHtml(state.commitmentId || "not assigned")}</dd></div><div><dt>Minimum hold remaining</dt><dd>${minimumRemaining} ticks</dd></div><div><dt>Plan ID</dt><dd>${escapeHtml(activePlan?.planId || "none")}</dd></div><div><dt>Stable target</dt><dd>${escapeHtml(activePlan?.targetKey || "unresolved")}</dd></div><div><dt>Shoreline reservation</dt><dd>${escapeHtml(reservation?.key || "none")}</dd></div><div><dt>Phase / phase age</dt><dd>${escapeHtml(activePlan?.phase || "none")} · ${activePlan ? Math.max(0, sim.tick - Number(activePlan.phaseStartedTick || activePlan.tick || sim.tick)) : 0} ticks</dd></div><div><dt>Target switches</dt><dd>${activePlan?.targetSwitches || 0}</dd></div><div><dt>Route status</dt><dd>${escapeHtml(a.routeState?.replanReason || "no replan recorded")}</dd></div><div><dt>Retention / suspension</dt><dd>${escapeHtml(activePlan?.suspended ? activePlan.suspensionReason || "suspended" : activePlan?.resumeReason || activePlan?.targetDecision || state.lastRetentionReason || "active")}</dd></div><div><dt>Why not flee?</dt><dd>${whyNotFlee}</dd></div></dl></section>`;
-  return `<div class="commitment-diagnostic"><section><h3>Why this matters</h3><dl><div><dt>Immediate concern</dt><dd>${escapeHtml(immediate)}</dd></div><div><dt>Supporting goal</dt><dd>${escapeHtml(supporting)}</dd></div><div><dt>Life strategy</dt><dd>${escapeHtml(strategy)}</dd></div></dl></section><section><h3>Current commitment</h3><dl><div><dt>Priority</dt><dd>${escapeHtml(state.priority || plan.currentPriority?.key || a.drive || "not selected")}</dd></div><div><dt>Current prerequisite</dt><dd>${escapeHtml(prerequisite)}</dd></div><div><dt>Next planned step</dt><dd>${escapeHtml(next)}</dd></div><div><dt>Completion condition</dt><dd>${escapeHtml(completion)}</dd></div></dl></section>${waterDiagnostics}<section><h3>Commitment</h3><dl><div><dt>State</dt><dd>${escapeHtml(state.status)}</dd></div><div><dt>Style</dt><dd>${escapeHtml(commitmentStyle(a))}</dd></div><div><dt>Commitment age</dt><dd>${formatEta(ageHours)}</dd></div><div><dt>Progress</dt><dd>${pct(state.progress)}</dd></div><div><dt>Plan confidence</dt><dd>${pct(state.confidence)}</dd></div><div><dt>Reconsiderations / switches</dt><dd>${state.reconsiderations} / ${state.switches}</dd></div><div><dt>Switch condition</dt><dd>credible failure evidence, unsafe reserves, urgent danger, or a substantially safer method</dd></div></dl><details><summary>Behavioural architecture</summary><dl><div><dt>Decisiveness</dt><dd>${pct(profile.decisiveness)}</dd></div><div><dt>Perseverance</dt><dd>${pct(profile.perseverance)}</dd></div><div><dt>Commitment stability</dt><dd>${pct(profile.commitmentStability)}</dd></div><div><dt>Flexibility</dt><dd>${pct(profile.flexibility)}</dd></div><div><dt>Evidence threshold</dt><dd>${pct(profile.evidenceThreshold)}</dd></div><div><dt>Social susceptibility</dt><dd>${pct(profile.socialSusceptibility)}</dd></div><div><dt>Confidence</dt><dd>${pct(profile.confidence)}</dd></div></dl></details></section><section><h3>Social context</h3><dl><div><dt>Private preference</dt><dd>${escapeHtml(state.priority || "undecided")}</dd></div><div><dt>Public intention</dt><dd>${escapeHtml(state.publicIntention || "not communicated")}</dd></div><div><dt>Group response</dt><dd>${social.conflicts ? `${social.supporters} supporters; possible disagreement with ${escapeHtml(a.groupGoal || "group plan")}` : a.groupId ? "no current goal conflict" : "not grouped"}</dd></div><div><dt>Anticipated rejection</dt><dd>${pct(social.rejectionRisk)}</dd></div><div><dt>Anticipated exclusion</dt><dd>${pct(social.exclusionRisk)}</dd></div><div><dt>Reputation risk</dt><dd>${pct(social.reputationRisk)}</dd></div><div><dt>Protocol</dt><dd>${escapeHtml(state.protocolKey || "not learned")}</dd></div><div><dt>Protocol record</dt><dd>${protocol ? `${protocol.successes} successes · ${protocol.failures} failures · ${pct(protocol.confidence)} confidence${protocol.teacherId ? ` · learned from ${escapeHtml(protocol.teacherId)}` : ""}` : "no completed attempts"}</dd></div></dl></section></div>`;
+  const waterDiagnostics = `<section><h3>Water target and safety arbitration</h3><dl><div><dt>Need urgency</dt><dd>${waterUrgency.toFixed(0)} / 100</dd></div><div><dt>Water candidate score</dt><dd>${waterPriority?.score ?? "not currently eligible"}</dd></div><div><dt>Water precedence</dt><dd>${escapeHtml(waterPriority?.precedenceClass || "not eligible")}</dd></div><div><dt>Safety candidate score</dt><dd>${fleePriority?.score ?? "no current candidate"}</dd></div><div><dt>Safety precedence</dt><dd>${escapeHtml(fleePriority?.precedenceClass || "not eligible")}</dd></div><div><dt>Survival triage</dt><dd>${escapeHtml(a.survivalTriage ? `${a.survivalTriage.selectedNeed} · ${a.survivalTriage.reason}` : "not active")}</dd></div><div><dt>Commitment ID</dt><dd>${escapeHtml(state.commitmentId || "not assigned")}</dd></div><div><dt>Minimum hold remaining</dt><dd>${minimumRemaining} ticks</dd></div><div><dt>Plan ID</dt><dd>${escapeHtml(activePlan?.planId || "none")}</dd></div><div><dt>Stable target</dt><dd>${escapeHtml(episode.targetKey || activePlan?.targetKey || "unresolved")}</dd></div><div><dt>Shoreline reservation</dt><dd>${escapeHtml(reservation?.key || "none")}</dd></div><div><dt>Phase / phase age</dt><dd>${escapeHtml(episode.phase || activePlan?.phase || "none")} · ${activePlan ? Math.max(0, sim.tick - Number(activePlan.phaseStartedTick || activePlan.tick || sim.tick)) : 0} ticks</dd></div><div><dt>Target switches</dt><dd>${episode.targetChangeCount ?? activePlan?.targetSwitches ?? 0}</dd></div><div><dt>Route ownership</dt><dd>${escapeHtml(a.movementRequest?.commitmentId || "unowned")} · ${escapeHtml(a.routeState?.routeId || "no route")}</dd></div><div><dt>Route status</dt><dd>${escapeHtml(a.routeState?.replanReason || "no replan recorded")}</dd></div><div><dt>Retention / suspension</dt><dd>${escapeHtml(activePlan?.suspended ? activePlan.suspensionReason || "suspended" : activePlan?.resumeReason || activePlan?.targetDecision || state.lastRetentionReason || "active")}</dd></div><div><dt>Why not flee?</dt><dd>${whyNotFlee}</dd></div></dl></section>`;
+  const episodeDiagnostics = `<section><h3>Authoritative behavioural episode</h3><dl><div><dt>Need</dt><dd>${escapeHtml(episode.needId || "unresolved")}</dd></div><div><dt>Satisfier</dt><dd>${escapeHtml(episode.satisfierId || "unresolved")}</dd></div><div><dt>Method</dt><dd>${escapeHtml(episode.methodId || "unresolved")}</dd></div><div><dt>Target kind / identity</dt><dd>${escapeHtml(episode.targetRef?.targetKind || "none")} · ${escapeHtml(episode.targetKey || "target-free")}</dd></div><div><dt>Precedence</dt><dd>${escapeHtml(episode.precedenceClass || "ordinary")}</dd></div><div><dt>Candidate score</dt><dd>${Number(episode.candidateScore || 0).toFixed(1)}</dd></div><div><dt>Completion</dt><dd>${escapeHtml(episode.completionCondition || "not recorded")}</dd></div><div><dt>Parallel obligations</dt><dd>${obligations.length ? obligations.map(item => `${escapeHtml(item.kind)} → ${escapeHtml(item.targetKey || "target-free")}`).join("<br>") : "none"}</dd></div></dl>${recentEvents.length ? `<details><summary>Recent commitment events</summary><ul>${recentEvents.map(event => `<li>${escapeHtml(event.kind)} · ${escapeHtml(event.reason)}</li>`).join("")}</ul></details>` : ""}</section>`;
+  return `<div class="commitment-diagnostic"><section><h3>Why this matters</h3><dl><div><dt>Immediate concern</dt><dd>${escapeHtml(immediate)}</dd></div><div><dt>Supporting goal</dt><dd>${escapeHtml(supporting)}</dd></div><div><dt>Life strategy</dt><dd>${escapeHtml(strategy)}</dd></div></dl></section><section><h3>Current commitment</h3><dl><div><dt>Priority</dt><dd>${escapeHtml(state.priority || plan.currentPriority?.key || a.drive || "not selected")}</dd></div><div><dt>Current prerequisite</dt><dd>${escapeHtml(prerequisite)}</dd></div><div><dt>Next planned step</dt><dd>${escapeHtml(next)}</dd></div><div><dt>Completion condition</dt><dd>${escapeHtml(episode.completionCondition || completion)}</dd></div></dl></section>${episodeDiagnostics}${waterDiagnostics}<section><h3>Commitment</h3><dl><div><dt>State</dt><dd>${escapeHtml(state.status)}</dd></div><div><dt>Style</dt><dd>${escapeHtml(commitmentStyle(a))}</dd></div><div><dt>Commitment age</dt><dd>${formatEta(ageHours)}</dd></div><div><dt>Progress</dt><dd>${pct(state.progress)}</dd></div><div><dt>Plan confidence</dt><dd>${pct(state.confidence)}</dd></div><div><dt>Reconsiderations / switches</dt><dd>${state.reconsiderations} / ${state.switches}</dd></div><div><dt>Switch condition</dt><dd>credible failure evidence, unsafe reserves, urgent danger, or a substantially safer method</dd></div></dl><details><summary>Behavioural architecture</summary><dl><div><dt>Decisiveness</dt><dd>${pct(profile.decisiveness)}</dd></div><div><dt>Perseverance</dt><dd>${pct(profile.perseverance)}</dd></div><div><dt>Commitment stability</dt><dd>${pct(profile.commitmentStability)}</dd></div><div><dt>Flexibility</dt><dd>${pct(profile.flexibility)}</dd></div><div><dt>Evidence threshold</dt><dd>${pct(profile.evidenceThreshold)}</dd></div><div><dt>Social susceptibility</dt><dd>${pct(profile.socialSusceptibility)}</dd></div><div><dt>Confidence</dt><dd>${pct(profile.confidence)}</dd></div></dl></details></section><section><h3>Social context</h3><dl><div><dt>Private preference</dt><dd>${escapeHtml(state.priority || "undecided")}</dd></div><div><dt>Public intention</dt><dd>${escapeHtml(state.publicIntention || "not communicated")}</dd></div><div><dt>Group response</dt><dd>${social.conflicts ? `${social.supporters} supporters; possible disagreement with ${escapeHtml(a.groupGoal || "group plan")}` : a.groupId ? "no current goal conflict" : "not grouped"}</dd></div><div><dt>Anticipated rejection</dt><dd>${pct(social.rejectionRisk)}</dd></div><div><dt>Anticipated exclusion</dt><dd>${pct(social.exclusionRisk)}</dd></div><div><dt>Reputation risk</dt><dd>${pct(social.reputationRisk)}</dd></div><div><dt>Protocol</dt><dd>${escapeHtml(state.protocolKey || "not learned")}</dd></div><div><dt>Protocol record</dt><dd>${protocol ? `${protocol.successes} successes · ${protocol.failures} failures · ${pct(protocol.confidence)} confidence${protocol.teacherId ? ` · learned from ${escapeHtml(protocol.teacherId)}` : ""}` : "no completed attempts"}</dd></div></dl></section></div>`;
 }
 
 function riskRewardLaboratoryHtml(a, graph = null) {
@@ -3728,6 +3928,11 @@ ui.newWorldOpen.addEventListener("click", () => { ui.newWorldPanel.hidden = fals
 ui.newWorldClose.addEventListener("click", () => { closeNewWorldPanel(); if (returnToGameMenuAfterModal) showGameMenu(); else document.body.classList.remove("menu-modal-open"); returnToGameMenuAfterModal = false; }); ui.newWorldCancel.addEventListener("click", () => { closeNewWorldPanel(); if (returnToGameMenuAfterModal) showGameMenu(); else document.body.classList.remove("menu-modal-open"); returnToGameMenuAfterModal = false; });
 ui.newWorldGenerate.addEventListener("click", async () => { const seedDate = requestedNewWorldSeedDate(); if (!seedDate) return; const request = selectedEmbodimentRequest(), setup = selectedWorldSetup(), capabilities = difficultyProfile(request.difficulty); if (request.experience === "embodied") { const result = validateEmbodiedSetup({ role: request.role, ...request.setupRequest }, setup, capabilities, species); if (!result.valid) { ui.embodimentReview.textContent = result.errors.join(" "); ui.embodimentReview.classList.add("has-warning"); return; } } pendingEmbodiment = request; closeNewWorldPanel(); const loaded = await loadSeedWorldAsync(seedDate.seed, setup, request, { targetDay: seedDate.day }); returnToGameMenuAfterModal = false; if (loaded) enterGame(); });
 function syncGraphicsControls() {
+  if (ui.graphicsDynamicEyes) ui.graphicsDynamicEyes.checked = graphicsSettings.dynamicAnimalEyes;
+  if (ui.graphicsDynamicPupils) ui.graphicsDynamicPupils.checked = graphicsSettings.dynamicAnimalPupils;
+  if (ui.graphicsIndependentEars) ui.graphicsIndependentEars.checked = graphicsSettings.independentAnimalEars;
+  if (ui.graphicsSmallSensoryAnimations) ui.graphicsSmallSensoryAnimations.checked = graphicsSettings.smallSensoryAnimations;
+  if (ui.graphicsMinorAnimalFeatures) ui.graphicsMinorAnimalFeatures.checked = graphicsSettings.minorAnimalFeatures;
   ui.graphicsPreset.value = graphicsSettings.preset; ui.graphicsIconQuality.value = String(graphicsSettings.iconTextureQuality); ui.graphicsResolution.value = String(graphicsSettings.renderScale); ui.graphicsVegetation.value = String(graphicsSettings.vegetationStride); ui.graphicsAnimals.value = String(graphicsSettings.animalDetail); ui.graphicsEntityPublicPanel.value = String(graphicsSettings.entityPublicPanelScale); ui.graphicsEntitySelectedPanel.value = String(graphicsSettings.entitySelectedPanelScale); ui.graphicsEntityPanelText.value = String(graphicsSettings.entityPanelTextScale); ui.interfaceScale.value = String(graphicsSettings.interfaceScale); ui.fontScale.value = String(graphicsSettings.fontScale); ui.fontSmallScale.value = String(graphicsSettings.smallTextScale); ui.fontBodyScale.value = String(graphicsSettings.bodyTextScale); ui.fontControlScale.value = String(graphicsSettings.controlTextScale); ui.fontHeadingScale.value = String(graphicsSettings.headingTextScale); ui.fontTitleScale.value = String(graphicsSettings.titleTextScale); ui.graphicsFrameCap.value = String(graphicsSettings.frameCap); ui.graphicsEffects.checked = graphicsSettings.effects; ui.graphicsShadows.checked = graphicsSettings.contactShadows; ui.graphicsAdaptiveResolution.checked = graphicsSettings.adaptiveResolution; ui.graphicsAdaptiveMin.value = String(graphicsSettings.adaptiveMinScale); ui.graphicsAdaptiveMax.value = String(graphicsSettings.adaptiveMaxScale);
   if (ui.weatherCloudQuality) ui.weatherCloudQuality.value = graphicsSettings.weatherCloudQuality;
   if (ui.weatherParticleDensity) ui.weatherParticleDensity.value = String(graphicsSettings.weatherParticleDensity);
@@ -3862,7 +4067,7 @@ function applyGraphicsSettings(next, rebuild = true) {
   applyObserverCameraEnvelope();
   syncGraphicsControls(); applyInterfacePresentation(); if (rebuild) { renderAll(); updateUI(); applyInterfacePresentation(); }
 }
-function readWeatherVisualControls() { return { weatherCloudQuality: ui.weatherCloudQuality?.value || graphicsSettings.weatherCloudQuality, weatherParticleDensity: Number(ui.weatherParticleDensity?.value || graphicsSettings.weatherParticleDensity), weatherLocalPrecipitation: ui.weatherLocalPrecipitation?.checked !== false, weatherDistantShafts: ui.weatherDistantShafts?.checked !== false, weatherCloudShadows: ui.weatherCloudShadows?.checked !== false, weatherWetGround: ui.weatherWetGround?.checked !== false, weatherSplashes: ui.weatherSplashes?.checked !== false, weatherLightning: ui.weatherLightning?.checked !== false, weatherHaze: ui.weatherHaze?.checked !== false, weatherScientificOverlay: ui.weatherScientificOverlay?.checked === true, weatherOverlayLayer: ui.weatherOverlayLayer?.value || graphicsSettings.weatherOverlayLayer }; }
+function readWeatherVisualControls() { return { dynamicAnimalEyes: ui.graphicsDynamicEyes?.checked !== false, dynamicAnimalPupils: ui.graphicsDynamicPupils?.checked !== false, independentAnimalEars: ui.graphicsIndependentEars?.checked !== false, smallSensoryAnimations: ui.graphicsSmallSensoryAnimations?.checked !== false, minorAnimalFeatures: ui.graphicsMinorAnimalFeatures?.checked !== false, weatherCloudQuality: ui.weatherCloudQuality?.value || graphicsSettings.weatherCloudQuality, weatherParticleDensity: Number(ui.weatherParticleDensity?.value || graphicsSettings.weatherParticleDensity), weatherLocalPrecipitation: ui.weatherLocalPrecipitation?.checked !== false, weatherDistantShafts: ui.weatherDistantShafts?.checked !== false, weatherCloudShadows: ui.weatherCloudShadows?.checked !== false, weatherWetGround: ui.weatherWetGround?.checked !== false, weatherSplashes: ui.weatherSplashes?.checked !== false, weatherLightning: ui.weatherLightning?.checked !== false, weatherHaze: ui.weatherHaze?.checked !== false, weatherScientificOverlay: ui.weatherScientificOverlay?.checked === true, weatherOverlayLayer: ui.weatherOverlayLayer?.value || graphicsSettings.weatherOverlayLayer }; }
 function readCustomGraphicsControls() { const modules = ui.graphicsEntityPanelModules || {}, entityAttachedPanelsVisible = ui.graphicsEntityPublicPanelsVisible?.checked === true, entityPublicPanelsVisible = entityAttachedPanelsVisible, entitySelectedPresentationVisible = entityAttachedPanelsVisible; return { preset: "custom", ...readWeatherVisualControls(), largeMapPerformanceMode: ui.graphicsLargeMapPerformance?.checked === true, observerZoomLevel: ui.graphicsObserverZoom?.value || graphicsSettings.observerZoomLevel, observerHazeMode: ui.graphicsObserverHaze?.value || graphicsSettings.observerHazeMode, iconTextureQuality: Number(ui.graphicsIconQuality.value), renderScale: Number(ui.graphicsResolution.value), adaptiveMinScale: Number(ui.graphicsAdaptiveMin.value), adaptiveMaxScale: Number(ui.graphicsAdaptiveMax.value), vegetationStride: Number(ui.graphicsVegetation.value), animalDetail: Number(ui.graphicsAnimals.value), entityPanelsVisible: entityAttachedPanelsVisible, entityAttachedPanelsVisible, entityPublicPanelsVisible, entitySelectedPresentationVisible, entityPublicPanelScale: Number(ui.graphicsEntityPublicPanel.value), entitySelectedPanelScale: Number(ui.graphicsEntitySelectedPanel.value), entityPanelTextScale: Number(ui.graphicsEntityPanelText.value), entityBubbleScale: Number(ui.graphicsEntityBubbleScale?.value || 1), entityPanelIdentityVisible: modules.identity?.checked !== false, entityPanelExpressionVisible: modules.expression?.checked !== false, entityPanelPublicCueVisible: modules["public-cue"]?.checked !== false, entityPanelHealthVisible: modules.health?.checked !== false, entityPanelConcernVisible: graphicsSettings.entityPanelConcernVisible, entityPanelForecastEffectVisible: graphicsSettings.entityPanelForecastEffectVisible, entityPanelMetabolicVisible: graphicsSettings.entityPanelMetabolicVisible, entityPanelPerformanceVisible: graphicsSettings.entityPanelPerformanceVisible, entityPanelThoughtVisible: modules.thought?.checked !== false, entityPanelForecastVisible: modules.forecast?.checked !== false, entityExpressionScale: graphicsSettings.entityExpressionScale, entityIdentityScale: graphicsSettings.entityIdentityScale, entityIconScale: graphicsSettings.entityIconScale, thoughtScale: graphicsSettings.thoughtScale, predictionScale: graphicsSettings.predictionScale, diagnosticScale: graphicsSettings.diagnosticScale, diagnosticTextScale: graphicsSettings.diagnosticTextScale, interfaceScale: Number(ui.interfaceScale.value), fontScale: Number(ui.fontScale.value), smallTextScale: Number(ui.fontSmallScale.value), bodyTextScale: Number(ui.fontBodyScale.value), controlTextScale: Number(ui.fontControlScale.value), headingTextScale: Number(ui.fontHeadingScale.value), titleTextScale: Number(ui.fontTitleScale.value), frameCap: Number(ui.graphicsFrameCap.value), effects: ui.graphicsEffects.checked, contactShadows: ui.graphicsShadows.checked, adaptiveResolution: ui.graphicsAdaptiveResolution.checked }; }
 ui.graphicsOpen.addEventListener("click", () => { ui.graphicsPanel.hidden = false; ui.realityPanel.hidden = true; ui.newWorldPanel.hidden = true; syncGraphicsControls(); void discoverMenuBackgrounds(); });
 ui.graphicsClose.addEventListener("click", () => { ui.graphicsPanel.hidden = true; if (returnToGameMenuAfterModal) showGameMenu(); else document.body.classList.remove("menu-modal-open"); returnToGameMenuAfterModal = false; });
@@ -3870,6 +4075,7 @@ const currentTypographySettings = () => ({ entityPanelTextScale: graphicsSetting
 const currentObserverPresentationSettings = () => ({ largeMapPerformanceMode: graphicsSettings.largeMapPerformanceMode, observerZoomLevel: graphicsSettings.observerZoomLevel, observerHazeMode: graphicsSettings.observerHazeMode });
 ui.graphicsPreset.addEventListener("change", () => { if (ui.graphicsPreset.value !== "custom") applyGraphicsSettings({ ...graphicsPreset(ui.graphicsPreset.value), ...currentTypographySettings(), ...currentObserverPresentationSettings() }); });
 for (const control of Object.values(ui.graphicsEntityPanelModules || {})) control?.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
+for (const control of [ui.graphicsDynamicEyes, ui.graphicsDynamicPupils, ui.graphicsIndependentEars, ui.graphicsSmallSensoryAnimations, ui.graphicsMinorAnimalFeatures].filter(Boolean)) control.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
 for (const control of [ui.graphicsIconQuality, ui.graphicsResolution, ui.graphicsVegetation, ui.graphicsAnimals, ui.graphicsLargeMapPerformance, ui.graphicsObserverZoom, ui.graphicsObserverHaze, ui.graphicsEntityPublicPanelsVisible, ui.graphicsEntityPublicPanel, ui.graphicsEntitySelectedPanel, ui.graphicsEntityPanelText, ui.graphicsEntityBubbleScale, ui.interfaceScale, ui.fontScale, ui.fontSmallScale, ui.fontBodyScale, ui.fontControlScale, ui.fontHeadingScale, ui.fontTitleScale, ui.graphicsFrameCap, ui.graphicsEffects, ui.graphicsShadows, ui.graphicsAdaptiveResolution, ui.graphicsAdaptiveMin, ui.graphicsAdaptiveMax, ui.weatherCloudQuality, ui.weatherParticleDensity, ui.weatherLocalPrecipitation, ui.weatherDistantShafts, ui.weatherCloudShadows, ui.weatherWetGround, ui.weatherSplashes, ui.weatherLightning, ui.weatherHaze, ui.weatherScientificOverlay, ui.weatherOverlayLayer].filter(Boolean)) control.addEventListener("change", () => applyGraphicsSettings(readCustomGraphicsControls()));
 ui.fontScalesReset?.addEventListener("click", () => applyGraphicsSettings({ ...graphicsSettings, preset: "custom", fontScale: 1, smallTextScale: 1, bodyTextScale: 1, controlTextScale: 1, headingTextScale: 1, titleTextScale: 1 }));
 syncGraphicsControls(); applyInterfacePresentation();
@@ -4329,6 +4535,12 @@ ui.benchmarkCopy.addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(text); ui.benchmarkStatus.textContent = "Benchmark report copied."; }
   catch { ui.benchmarkReport.focus(); ui.benchmarkReport.select(); ui.benchmarkStatus.textContent = "Report selected—use Ctrl+C to copy it."; }
 });
+ui.commitmentBenchmarkStart?.addEventListener("click", toggleCommitmentIntegrityBenchmark);
+ui.commitmentBenchmarkCopy?.addEventListener("click", async () => {
+  const text = ui.commitmentBenchmarkReport.value; if (!text) return;
+  try { await navigator.clipboard.writeText(text); ui.commitmentBenchmarkStatus.textContent = "Commitment investigation report copied."; }
+  catch { ui.commitmentBenchmarkReport.focus(); ui.commitmentBenchmarkReport.select(); ui.commitmentBenchmarkStatus.textContent = "Report selected—use Ctrl+C to copy it."; }
+});
 ui.hudLock.addEventListener("click", toggleCameraLock);
 ui.hudFavourite.addEventListener("click", () => ui.favouriteEntity.click());
 ui.observerTabs.forEach((tab, tabIndex) => { tab.addEventListener("click", () => { observerDetailTab = tab.dataset.observerTab; ui.observerTabs.forEach((item) => { const active = item === tab; item.classList.toggle("is-active", active); item.setAttribute("aria-selected", String(active)); }); updateUI(); }); tab.addEventListener("keydown", (event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" ? 0 : event.key === "End" ? ui.observerTabs.length - 1 : (tabIndex + (event.key === "ArrowRight" ? 1 : -1) + ui.observerTabs.length) % ui.observerTabs.length; ui.observerTabs[next].focus(); ui.observerTabs[next].click(); }); });
@@ -4636,6 +4848,27 @@ ui.eventLimit?.addEventListener("change", updateUI);
 ui.benchmarkDuration?.addEventListener("change", () => { if (!populationBenchmarkSweep) ui.benchmarkStatus.textContent = `Ready · full sweep duration ${Number(ui.benchmarkDuration.value) * BENCHMARK_POPULATIONS.length} minutes.`; });
 try { if (ui.overlayEntityNames) ui.overlayEntityNames.checked = localStorage.getItem("rss-laboratory-entity-names-v1") === "true"; } catch {}
 ui.overlayEntityNames?.addEventListener("change", () => { try { localStorage.setItem("rss-laboratory-entity-names-v1", String(ui.overlayEntityNames.checked)); } catch {} });
+function syncPersonalSpaceOverlayControls() {
+  if (ui.overlayPersonalSpace) ui.overlayPersonalSpace.checked = personalSpaceOverlaySettings.enabled;
+  for (const key of ["relationshipMode", "scope", "maximumEntities", "opacity"]) if (personalSpaceOverlayUi[key]) personalSpaceOverlayUi[key].value = String(personalSpaceOverlaySettings[key]);
+  for (const key of ["preferredBand", "minimumBoundary", "maximumBoundary", "releaseThreshold", "directionArrows", "attractionPressure", "avoidancePressure", "threatPressure", "affiliationCarePressure", "courtshipPressure", "currentBand", "uncertainty", "truthVsPerceived", "relationshipLabels", "legacyFallback", "laboratoryDetails"]) if (personalSpaceOverlayUi[key]) personalSpaceOverlayUi[key].checked = personalSpaceOverlaySettings[key];
+  if (personalSpaceOverlayUi.maximumEntitiesValue) personalSpaceOverlayUi.maximumEntitiesValue.textContent = String(personalSpaceOverlaySettings.maximumEntities);
+  if (personalSpaceOverlayUi.opacityValue) personalSpaceOverlayUi.opacityValue.textContent = `${personalSpaceOverlaySettings.opacity}%`;
+}
+function readPersonalSpaceOverlayControls() {
+  personalSpaceOverlaySettings = savePersonalSpaceOverlaySettings(localStorage, normalizePersonalSpaceOverlaySettings({
+    enabled: Boolean(ui.overlayPersonalSpace?.checked),
+    relationshipMode: personalSpaceOverlayUi.relationshipMode?.value, scope: personalSpaceOverlayUi.scope?.value,
+    maximumEntities: personalSpaceOverlayUi.maximumEntities?.value, opacity: personalSpaceOverlayUi.opacity?.value,
+    ...Object.fromEntries(["preferredBand", "minimumBoundary", "maximumBoundary", "releaseThreshold", "directionArrows", "attractionPressure", "avoidancePressure", "threatPressure", "affiliationCarePressure", "courtshipPressure", "currentBand", "uncertainty", "truthVsPerceived", "relationshipLabels", "legacyFallback", "laboratoryDetails"].map(key => [key, Boolean(personalSpaceOverlayUi[key]?.checked)])),
+  }));
+  syncPersonalSpaceOverlayControls(); renderAll(); updateUI();
+}
+syncPersonalSpaceOverlayControls();
+for (const control of Object.values(personalSpaceOverlayUi).filter(element => element?.matches?.("input, select"))) control.addEventListener(control.type === "range" ? "input" : "change", readPersonalSpaceOverlayControls);
+ui.overlayPersonalSpace?.addEventListener("change", () => {
+  personalSpaceOverlaySettings = savePersonalSpaceOverlaySettings(localStorage, { ...personalSpaceOverlaySettings, enabled: ui.overlayPersonalSpace.checked });
+});
 [ui.overlayVision, ui.overlayPersonalSpace, ui.overlayPredatorIntent, ui.overlayKnowledgeFog, ui.overlaySmell, ui.overlaySound, ui.overlayCalls, ui.overlayMemory, ui.overlayEnvironmentalHistory, ui.overlaySelectionRing, ui.overlayNavigationCues, ui.overlayMotionTrails, ui.overlayEntityFocus, ui.overlayEntitySymbols, ui.overlayEntityNames, ui.overlayHealthBars, ui.overlayEnduranceBar, ui.overlayCompositionBar, ui.overlayAnalysisStage, ui.overlayOrganismOnly, ui.overlayBiomass, ui.overlayWater, ui.overlayPheromone, ui.overlayTerritories].forEach((el) => el?.addEventListener("change", () => { renderAll(); updateUI(); }));
 function syncAudioControls() {
   const setValue = (control, value) => { if (control) control.value = String(value); };
@@ -4960,7 +5193,8 @@ function updateLocalizedWeatherPresentation(now) {
   syncWeatherFieldLegend(localWeather, local); lastWeatherPresentationAt = now;
 }
 function loop(now) {
-  const minimumFrameInterval = graphicsSettings.frameCap ? 1000 / graphicsSettings.frameCap : 0;
+  const scheduledFrameRate = frameSchedulingRate(graphicsSettings.frameCap, activePopulationForScheduling);
+  const minimumFrameInterval = scheduledFrameRate ? 1000 / scheduledFrameRate : 0;
   if (minimumFrameInterval && now - lastGraphicsFrame < minimumFrameInterval - .5) return;
   lastGraphicsFrame = now;
   const frameStarted = profiler.enabled ? performance.now() : 0;
@@ -4981,14 +5215,20 @@ function loop(now) {
     accumulator = result.accumulator;
     completedTicksLastFrame = result.completed;
   }
+  traceHighHexTickPhase("frame-showcase");
   advanceShowcaseDirector(delta);
   // A simulation tick can be substantial. Do not add the complete scene and
   // Laboratory DOM refresh to that same frame; distribute them over the next
   // two animation frames while continuous controls and camera remain live.
   if (!completedTicksLastFrame) {
-    if (pendingTickPresentation) { pendingTickPresentation = false; renderAll(); }
-    else if (pendingTickUi) { pendingTickUi = false; updateUI(false, now); }
+    if (pendingTickPresentation) { pendingTickPresentation = false; refreshTickPresentation(); }
+    else if (pendingTickUi) {
+      pendingTickUi = false;
+      const suppressUnobservedLaboratory = graphicsSettings.largeMapPerformanceMode && activePopulationForScheduling >= 80 && !selectedAnimal() && !selectedCorpse() && !selectedGroupId;
+      if (!suppressUnobservedLaboratory) updateUI(false, now);
+    }
   }
+  traceHighHexTickPhase("frame-camera");
   profiler.measure("controls/camera", () => {
     const embodiedCameraActive = advanceEmbodiedGameplay(delta, now);
     const movieCameraActive = !embodiedCameraActive && advanceMovieCamera(delta, now);
@@ -5003,7 +5243,9 @@ function loop(now) {
     }
   });
   applyObserverCameraEnvelope({ cinema: movieState.active });
+  traceHighHexTickPhase("frame-acoustic");
   updateAcousticPresentation(now);
+  traceHighHexTickPhase("frame-weather");
   updateLocalizedWeatherPresentation(now);
   // A full camera-driven refresh can create or re-admit animal roots with
   // their UI hidden by default. Perform it before the per-frame projection so
@@ -5018,21 +5260,32 @@ function loop(now) {
       refreshCinemaShotOverlays();
       cinemaPresentationRefreshStage = 0;
     }
-  } else if (entityPanelVisibilityRefreshPending && now - lastEntityPanelVisibilityRefresh >= 120) {
+  } else {
+    const admissionRefreshInterval = graphicsSettings.largeMapPerformanceMode && activePopulationForScheduling >= 80 ? 5000 : 120;
+    if (entityPanelVisibilityRefreshPending && highHexBenchmarkProgress.phase !== "frame-sampling" && now - lastEntityPanelVisibilityRefresh >= admissionRefreshInterval) {
     entityPanelVisibilityRefreshPending = false;
     lastEntityPanelVisibilityRefresh = now;
     refreshCameraAdmission();
+    }
   }
   // Project ownership panels only after the camera has accepted this frame's
   // orbit/pan/tilt. Camera motion can therefore admit or remove a panel from
   // the viewport without borrowing any of the ground-distance LOD state.
-  profiler.measure("frame presentation update", () => syncAnimalVisuals(now, animalMotionTimeMs));
+  traceHighHexTickPhase("frame-animal-visuals");
+  processPendingTickPresentationSnapshots();
+  const visualStride = largePopulationVisualStride(activePopulationForScheduling, { performanceMode: graphicsSettings.largeMapPerformanceMode });
+  const refreshAnimalVisuals = populationVisualFrame++ % visualStride === 0;
+  if (refreshAnimalVisuals) profiler.measure("frame presentation update", () => syncAnimalVisuals(now, animalMotionTimeMs));
+  else profiler.measure("frame animal interpolation", () => syncAnimalMotionRoots(now, animalMotionTimeMs));
+  traceHighHexTickPhase("frame-selection");
   updateSelectionIndicator(now);
   const adjustedScale = adaptiveResolution.observe(delta, now, { ceiling: graphicsSettings.adaptiveResolution ? graphicsSettings.adaptiveMaxScale : graphicsSettings.renderScale, minimum: graphicsSettings.adaptiveMinScale, targetFps: graphicsSettings.frameCap || 60, enabled: graphicsSettings.adaptiveResolution && !TEST_MODE });
   if (adjustedScale !== null && adjustedScale !== effectiveRenderScale) { effectiveRenderScale = adjustedScale; renderer.setPixelRatio(Math.min(2, window.devicePixelRatio * effectiveRenderScale)); renderer.setSize(ui.viewport.clientWidth, ui.viewport.clientHeight, false); syncGraphicsControls(); }
   // setSize clears the drawing buffer. Apply adaptive changes before this
   // frame's render so a resized canvas is never presented as a blank flash.
+  traceHighHexTickPhase("frame-render");
   profiler.measure("Three.js render", () => renderer.render(scene, camera));
+  traceHighHexTickPhase("frame-complete");
   monitorMovieRenderedFrame(delta, now);
   perf.frames += 1;
   if (now - perf.last >= 1000) {
@@ -5040,7 +5293,7 @@ function loop(now) {
     perf.fps = Math.round(perf.frames * 1000 / elapsed);
     perf.ticksPerSecond = Math.round(perf.ticks * 1000 / elapsed);
     perf.frames = 0; perf.ticks = 0; perf.last = now;
-    const alive = sim.animals.filter((animal) => animal.alive).length, requested = requestedTicksPerSecond(), cadence = environmentSenseCadence(activePopulationForScheduling), summary = `${perf.fps} FPS · actual/requested ${perf.ticksPerSecond}/${requested} minute ticks/s · visible organisms ${renderedAnimalCount} / ${alive} · environment sensing 1/${cadence} · terrain detail ${terrainDetailStride()}×`;
+    const alive = sim.animals.filter((animal) => animal.alive).length, requested = requestedTicksPerSecond(), cadence = environmentSenseCadence(activePopulationForScheduling), perceptionCadence = fullPerceptionCadence(activePopulationForScheduling), summary = `${perf.fps} FPS · actual/requested ${perf.ticksPerSecond}/${requested} minute ticks/s · visible organisms ${renderedAnimalCount} / ${alive} · full perception 1/${perceptionCadence} (${populationSchedulingCounters.fullPerceptionScans} refreshed) · environment sensing 1/${cadence} · terrain detail ${terrainDetailStride()}×`;
     if (ui.hudPerformance) ui.hudPerformance.textContent = summary;
     if (ui.performance) ui.performance.textContent = summary;
     sampleLaboratoryBenchmark(now);
@@ -5430,6 +5683,7 @@ function makeAnimal(id, speciesId, sex, pos, rng, age = 0, motherId = null, acou
   const cycleOffset = rng() * Math.max(1, s.reproduction.cycleDays || (s.reproduction.strategy === "annual-monoestrous" ? 21 : 1));
   const created = migrateKinship(migrateBodyComposition(migrateExertionState({ id, speciesId, sex, x: pos.x, z: pos.z, fx: pos.x, fz: pos.z, orientation: rng() * Math.PI * 2, stationaryTicks: 0, age, lifeStage, sizeTrait, bodyCondition, bodyMass: s.adultMass * body * sizeTrait * bodyCondition, aggression, scentSkill, waterSkill, foodSkill, mateSkill, careAffinity, libido: socialDefaults.libido, health: 100, healthCap: 100, energy: (86 + rng() * 18) * initialEnergyScale, energyCapacityScale: initialEnergyScale, hydration: 96 + rng() * 4, hydrationCapacityMultiplier: HYDRATION_CAPACITY_MULTIPLIER, stomach: initialStomach, seedLoad: [], fatigue: 0, fear: 0, injuries: [], lifeHistory: { observedHours: age * 24, weightedBurdenHours: age * 12, fearHours: 0, fleeingHours: 0, injuryHours: 0, extremeExertionHours: 0, thermalStressHours: 0, deprivationHours: 0, injuriesSustained: 0, emergencyExertions: 0 }, bodyTemperature: initialBodyTemperature(speciesId), tempStress: 0, thermalStatus: "comfortable", thermalSources: {}, capabilities: {}, sensoryBuffer: [], receivedSignals: [], heardEvents: [], acousticObservations: [], mapReveals: [], threatAssessment: null, decisionTrace: null, goalPlan: { shortTerm: null, mediumTerm: null, longTerm: null }, predation: createPredationState(0), socialSignal: null, signalCooldownUntil: 0, groupAlert: null, alive: true, pregnant: null, pregnancyHormones: null, courtship: null, mating: null, birthEvent: null, acceptedUntil: 0, lactation: 0, postpartum: 0, cycleOffset, reproductiveState: { cycleOffsetDays: cycleOffset, annualWindowOffsetDays: Math.floor(cycleOffset), broodsByYear: {}, environment: { samples: [], qualifyingStreak: 0, nonqualifyingStreak: 0, gateOpen: ["none", "calendar"].includes(s.reproduction.environmentTrigger), lastSampleDay: 0 } }, matePreferences: socialDefaults.matePreferences, mateHistory: [], socialMemory: {}, mediumTermMemory: [], entityKnowledge: {}, motherId, fatherId: null, parentIds: motherId ? [motherId] : [], ancestorDepths: motherId ? { [motherId]: 1 } : {}, dependentUntil: motherId ? s.dependency : 0, offspringIds: [], offspringMemory: {}, memories: [], longMemory: [], explored: {}, mapMemory: {}, relationships: [], actionState: createActionState("orient", { label: "orienting" }), currentAction: "orienting", actionTarget: null, drive: "explore", timeline: [`born day ${Math.max(1, Math.floor(age))}`] })));
   created.acousticIdentity = createIndividualAcousticTraits(created, acousticSeed);
+  migrateAntlerDevelopment(created, acousticSeed);
   return created;
 }
 
@@ -5459,7 +5713,7 @@ function tickWorldMinute() {
       presentationStarts.set(animal.id, { ...visual, authoritativeX: animal.fx ?? animal.x, authoritativeZ: animal.fz ?? animal.z, authoritativeDistanceTravelled: animal.locomotion?.distanceTravelled || 0 });
     }
   }
-  spatialQueryCounters.corpseQueries = 0; spatialQueryCounters.corpseCandidates = 0; perceptionCacheCounters.hits = 0; perceptionCacheCounters.misses = 0; populationSchedulingCounters.environmentScans = 0; populationSchedulingCounters.deferredEnvironmentScans = 0;
+  spatialQueryCounters.corpseQueries = 0; spatialQueryCounters.corpseCandidates = 0; perceptionCacheCounters.hits = 0; perceptionCacheCounters.misses = 0; neighbourQueryCounters.hits = 0; neighbourQueryCounters.misses = 0; populationSchedulingCounters.environmentScans = 0; populationSchedulingCounters.deferredEnvironmentScans = 0; populationSchedulingCounters.fullPerceptionScans = 0; populationSchedulingCounters.deferredFullPerceptionScans = 0;
   const tickStocksBefore = ecologicalAccounting.enabled ? (ecologicalStockSnapshot || worldStocks(sim)) : null;
   ecologicalAccounting.beginTick(sim.tick, tickStocksBefore);
   const healthBefore = ecologicalAccounting.enabled ? new Map(sim.animals.filter((animal) => animal.alive).map((animal) => [animal.id, animal.health])) : null;
@@ -5468,6 +5722,10 @@ function tickWorldMinute() {
   const currentEcologicalHour = Math.floor(ecologicalAdvance.minute / MINUTES_PER_HOUR);
   const ecologicalHoursCrossed = Math.max(0, currentEcologicalHour - previousEcologicalHour);
   const hourBoundary = ecologicalHoursCrossed > 0;
+  if (hourBoundary) {
+    const calendar = seasonForAbsoluteDay(sim.day, worldSetup.startSeason);
+    for (const animal of sim.animals) if (animal.alive) advanceAntlerDevelopment(animal, { calendar: { ...calendar, absoluteDay: sim.day }, worldSeed: sim.seed, elapsedHours: ecologicalHoursCrossed });
+  }
   profiler.measure("weather/hydrology", () => {
     for (let hour = 0; hour < ecologicalHoursCrossed; hour += 1) updateWeather(previousEcologicalHour + hour + 1);
     if (ecologicalAdvance.dayBoundary) beginWaterCycle();
@@ -5482,21 +5740,30 @@ function tickWorldMinute() {
   sim.nextDecisionOrder = assignDecisionOrder(sim.animals, sim.nextDecisionOrder);
   tickPerceptionElapsed = 0;
   tickBeforeStates.length = sim.animals.length;
-  runStableAnimalPhases({
+  let outwardSignalAnimals = 0, sensedAnimals = 0, actedAnimals = 0, postActionAnimals = 0;
+  traceHighHexTickPhase("pre-sense");
+  runSimulationAnimalPhases({
     animals: sim.animals,
     livingList: stableLivingList,
+    systems: {
     preSense: (animal) => { tickBeforeStates[animal.decisionOrder] = prepareAnimalForSensing(animal); },
-    prepareOutwardSignals: refreshOutwardSignal,
+    prepareOutwardSignals: (animal) => { outwardSignalAnimals += 1; if (outwardSignalAnimals === 1) traceHighHexTickPhase("outward-signals"); refreshOutwardSignal(animal); },
     buildSnapshot: (ordered) => {
+      traceHighHexTickPhase("snapshot");
       activePopulationForScheduling = ordered.length;
       sim.occupied = rebuildOccupancy(sim.animals, key); buildEntityIndex(); rebuildTickGroupMembers(ordered); thermalNeighbourCounts.clear();
-      for (const animal of ordered) thermalNeighbourCounts.set(animal.id, nearbyAnimals(animal, 1.8).filter((other) => other.alive && other.id !== animal.id && dist(animal, other) <= 1.8).length);
+      for (const animal of ordered) {
+        let count = 0;
+        for (const other of nearbyAnimals(animal, 1.8)) if (other.alive && other.id !== animal.id) count += 1;
+        thermalNeighbourCounts.set(animal.id, count);
+      }
     },
-    sense: senseAnimalProfiled,
-    interpretSignals: (animals) => { for (const animal of animals) if (animal.alive) refreshOutwardSignal(animal); updateGroupAlerts(); },
-    act: (animal) => animal.id === sim.embodiment?.inhabitedAnimalId && sim.embodiment?.experience === "embodied" ? applyEmbodiedDecision(animal, tickBeforeStates[animal.decisionOrder]) : applyAnimalDecision(animal, tickBeforeStates[animal.decisionOrder]),
-    postAction: (animal) => { applyAnimalPostAction(animal); if (animal.id === sim.embodiment?.inhabitedAnimalId) applyCreativeProtection(animal, tickBeforeStates[animal.decisionOrder], allowedCreativeOverrides(embodimentCapabilities(), sim.embodiment.creative)); },
+    sense: (animal) => { sensedAnimals += 1; traceHighHexTickPhase("sense", sensedAnimals); senseAnimalProfiled(animal); },
+    interpretSignals: (animals) => { traceHighHexTickPhase("interpret-signals"); for (const animal of animals) if (animal.alive) refreshOutwardSignal(animal); updateGroupAlerts(); },
+    act: (animal) => { actedAnimals += 1; traceHighHexTickPhase("act", actedAnimals); return animal.id === sim.embodiment?.inhabitedAnimalId && sim.embodiment?.experience === "embodied" ? applyEmbodiedDecision(animal, tickBeforeStates[animal.decisionOrder]) : applyAnimalDecision(animal, tickBeforeStates[animal.decisionOrder]); },
+    postAction: (animal) => { postActionAnimals += 1; traceHighHexTickPhase("post-action", postActionAnimals); applyAnimalPostAction(animal); if (animal.id === sim.embodiment?.inhabitedAnimalId) applyCreativeProtection(animal, tickBeforeStates[animal.decisionOrder], allowedCreativeOverrides(embodimentCapabilities(), sim.embodiment.creative)); },
     afterActions: (ordered) => {
+      traceHighHexTickPhase("locomotion");
       tickLocomotionBefore.length = ordered.length;
       for (const animal of ordered) {
         const index = animal.decisionOrder, state = tickLocomotionBefore[index] || (tickLocomotionBefore[index] = {});
@@ -5530,11 +5797,19 @@ function tickWorldMinute() {
         if (intent) { resolvePredatorContactAttack(animal, intent); animal.locomotion.completedContactIntent = null; }
       }
       buildEntityIndex();
+      traceHighHexTickPhase("animal-phases-complete");
+    }
     }
   });
+  traceHighHexTickPhase("commitment-benchmark");
+  sampleCommitmentIntegrityBenchmark();
+  traceHighHexTickPhase("sound-events");
   refreshWorldSoundEvents();
+  traceHighHexTickPhase("environmental-history");
   if (ecologicalHoursCrossed > 0) queueEnvironmentalHistoryDeposits(previousEcologicalHour + 1, currentEcologicalHour);
+  traceHighHexTickPhase("trace-deposition");
   depositWorldTraces();
+  traceHighHexTickPhase("perception-accounting");
   profiler.record("tick.perception", tickPerceptionElapsed);
   if (!diagnosticBatch) beginAnimalPresentation(presentationStarts, performance.now());
   if (ecologicalAdvance.dayBoundary) updateSocialGroups();
@@ -5543,6 +5818,7 @@ function tickWorldMinute() {
   // animation frame. Building the same complete set here doubled that work in
   // the already expensive simulation-tick frame.
   const tickStocksAfter = ecologicalAccounting.enabled ? worldStocks(sim) : null;
+  traceHighHexTickPhase("ecological-accounting");
   ecologicalStockSnapshot = tickStocksAfter;
   for (const animal of sim.animals) if (healthBefore?.has(animal.id)) {
     const delta = (animal.health || 0) - healthBefore.get(animal.id);
@@ -5551,6 +5827,7 @@ function tickWorldMinute() {
   // Stock deltas are retained beside explicitly attributed flows so missing
   // accounting hooks are visible without changing simulation truth.
   ecologicalAccounting.endTick(tickStocksAfter);
+  traceHighHexTickPhase("presentation-scheduling");
   // At slow speeds the display updates every simulation step, so organisms never
   // appear to teleport. Faster modes still throttle heavy overlay/UI rebuilds.
   const displayNow = performance.now();
@@ -5558,8 +5835,12 @@ function tickWorldMinute() {
   // Keep a resumable browser snapshot without making every display update write
   // a large 304×304 world to storage.
   if (!diagnosticBatch && !populationBenchmarkSweep && sim.tick - lastAutosaveTick >= 120 * MINUTES_PER_HOUR) { lastAutosaveTick = sim.tick; saveProgress(true); }
+  traceHighHexTickPhase("embodiment-lifecycle");
   updateEmbodimentLifecycle(sim);
-  if (profiler.enabled) profiler.record("tick.total", performance.now() - tickStarted);
+  const tickTotalMs = performance.now() - tickStarted;
+  if (profiler.enabled) profiler.record("tick.total", tickTotalMs);
+  if (TEST_MODE && highHexBenchmarkProgress.phase === "frame-sampling") console.debug(`[high-hex] tick ${sim.tick} duration ${tickTotalMs.toFixed(2)}ms perception ${tickPerceptionElapsed.toFixed(2)}ms`);
+  traceHighHexTickPhase("tick-complete");
 }
 
 function updateWeather(ecologicalHour = Math.floor((sim.ecologicalMinute || 0) / MINUTES_PER_HOUR)) {
@@ -6042,9 +6323,36 @@ function animalSensoryAttention(a) {
   return sensoryAttention({ stationaryTicks: a.stationaryTicks || 0, headStillTicks: a.headStillTicks || 0, feeding: FEEDING_ACTIONS.has(a.actionState?.key) && !a.feedingHeadRaised });
 }
 
+function immediatePerceptionRefreshRequired(a) {
+  for (const other of nearbyAnimals(a, 8)) {
+    if (!other.alive || other.id === a.id) continue;
+    if (speciesCanHunt(other) && preyCompatible(other, a)) return true;
+    if (other.speciesId === a.speciesId && activeEmittedSignal(other, sim.tick)?.signalKind === "alarm") return true;
+  }
+  return false;
+}
+function retainDeferredPerception(a) {
+  const retained = [];
+  for (const contact of a.sensoryBuffer || []) {
+    const age = Number(contact.age || 0) + 1, confidence = clamp(Number(contact.confidence ?? 0.5) * .92, 0, 1);
+    if (age <= 8 && confidence > .08) retained.push({ ...contact, age, confidence, deferredObservation: true });
+  }
+  a.sensoryBuffer = retained;
+  a.mapReveals = (a.mapReveals || []).filter(reveal => reveal.until > sim.tick);
+  a.acousticObservations = (a.acousticObservations || []).slice(-16);
+  updatePredatorIntentInference(a, attentionFilter(a, retained, retained.filter(contact => contact.channel === "sight")));
+  updateThreatAssessment(a, retained);
+}
 function senseAnimalProfiled(a) {
   const perceptionStarted = profiler.enabled ? performance.now() : 0;
-  profiler.measure("animal perception", () => sense(a));
+  const fullScan = routineFullPerceptionDue(a, sim.tick, activePopulationForScheduling, { selected: a.id === selectedId, immediateThreat: immediatePerceptionRefreshRequired(a) });
+  if (fullScan) {
+    populationSchedulingCounters.fullPerceptionScans += 1;
+    profiler.measure("animal perception", () => sense(a));
+  } else {
+    populationSchedulingCounters.deferredFullPerceptionScans += 1;
+    retainDeferredPerception(a);
+  }
   updateOrienting(a, a.sensoryBuffer || [], sim.tick);
   const threatConfidence = a.threatAssessment?.overallConfidence || 0;
   let nearestThreat = null, nearestThreatDistance = Infinity;
@@ -6053,17 +6361,28 @@ function senseAnimalProfiled(a) {
   const stressTrigger = assessStressTrigger(a, { confidence: threatConfidence, distance: nearestThreat ? nearestThreatDistance : 12, targetingLikelihood: a.predatorIntentEstimate?.selfTargetLikelihood ?? .5 }, { detectionRange: awarenessRange(a), groupSupport: groupSupportCount / 6, protectingOffspring: (a.offspringIds || []).some(id => animalById(id)?.alive) });
   if (stressTrigger.activate) activateStressResponse(a, { ...stressTrigger, triggerId: nearestThreat?.targetId || nearestThreat?.id, triggerKind: "perceived-threat" }, sim.tick);
   const recovery = migrateRecoveryState(a); if (recovery.depth !== "none") { const familiarAlarm = (a.receivedSignals || []).at(-1)?.signalKind === "alarm", intensity = Math.max(threatConfidence, familiarAlarm ? .72 : 0); if (intensity > 0) interruptRecovery(a, { kind: familiarAlarm ? "familiar-alarm" : "threat-stimulus", modality: familiarAlarm ? "hearing" : nearestThreat?.channel || "vision", intensity, proximity: nearestThreat ? clamp(1 - (nearestThreat.distance || 0) / Math.max(1, awarenessRange(a)), 0, 1) : .8, familiarAlarm }, sim.tick); }
-  updateSocialMemoryFromSenses(a);
-  a.predictiveCycle = runPredictiveCognition(a, { tick: sim.tick, profile: "ADAPTIVE", automatic: true });
-  const visibleMateCues = []; for (const contact of a.sensoryBuffer || []) if (contact.channel === "sight" && contact.type === "conspecific") visibleMateCues.push(contact.bodyCues || {});
-  adaptFemaleMatePreferences(a, visibleMateCues, { resourceScarcity: clamp((55 - a.stomach) / 55, 0, 1), danger: a.threatAssessment?.overallConfidence || a.fear / 100 });
+  if (fullScan) {
+    updateSocialMemoryFromSenses(a);
+    a.predictiveCycle = runPredictiveCognition(a, { tick: sim.tick, profile: "ADAPTIVE", automatic: true });
+    const visibleMateCues = []; for (const contact of a.sensoryBuffer || []) if (contact.channel === "sight" && contact.type === "conspecific") visibleMateCues.push(contact.bodyCues || {});
+    adaptFemaleMatePreferences(a, visibleMateCues, { resourceScarcity: clamp((55 - a.stomach) / 55, 0, 1), danger: a.threatAssessment?.overallConfidence || a.fear / 100 });
+    a.lastFullPerceptionTick = sim.tick;
+  }
   if (profiler.enabled) tickPerceptionElapsed += performance.now() - perceptionStarted;
 }
 
 function applyAnimalDecision(a, before) {
   const recovery = migrateRecoveryState(a);
   if (recovery.waking) profiler.measure("decision/action", () => setAction(a, sim.tick < (recovery.wakeUntil || 0) ? "wake" : "orient-after-waking", { label: `waking after detecting ${recovery.wakeReason || "a disturbance"}`, intendedOutcome: "orient and identify the stimulus before responding" }));
-  else profiler.measure("decision/action", () => chooseAndAct(a));
+  else {
+    const urgentActivation = (a.threatAssessment?.overallConfidence || 0) >= .25
+      || (a.lastHit?.tick ?? -Infinity) >= sim.tick - 2
+      || a.lifeStage === "dependent"
+      || ["flee", "defend", "attack", "chase", "stalk"].includes(a.actionState?.key);
+    const activationDue = initialPopulationActivationDue(a, sim.tick, activePopulationForScheduling, { urgent: urgentActivation, selected: a.id === selectedId });
+    if (activationDue) { delete a.initialActivationDeferred; profiler.measure("decision/action", () => chooseAndAct(a)); }
+    else a.initialActivationDeferred = { untilTick: initialActivationCadence(activePopulationForScheduling), cohort: (a.decisionOrder || 0) % initialActivationCadence(activePopulationForScheduling), reason: "large-population initial planning is staggered" };
+  }
   const latency = recordDecisionAndMotorLatency(a, sim.tick, a.actionState?.key || "unknown");
   const changedAction = before.actionKey !== (a.actionState?.key || "idle"), changedRequest = before.movementRequestId !== (a.movementRequest?.id || null);
   if (latency && a.movementRequest && (changedAction || changedRequest) && !(a.movementRequest.motorDelayHours > 0)) {
@@ -6336,7 +6655,8 @@ function sense(a) {
   const hearingRange = hearingRangeFor(a);
   const observerWeather = regionalWeatherAt(a), observerWeatherPresentation = localizedWeatherPresentation(observerWeather);
   const receiverCell = cellAt(a.x, a.z);
-  const observationObserver = { id: a.id, speciesId: a.speciesId, x: a.x, z: a.z, orientation: a.orientation || 0, headYaw: a.headYaw || 0, tick: sim.tick, fatigue: a.fatigue || 0, thermalPerformance: a.thermalPerformance ?? 1, illumination: observerWeatherPresentation.solarIllumination, temporalAttention: attention.vision, environmentalMotionClutter: environmentalMotionClutter({ wind: observerWeather.wind, rain: observerWeather.rain, grass: receiverCell?.grassHeight || 0, shrubs: receiverCell?.shrubland ? 1 : 0, canopy: receiverCell?.woodland ? .8 : 0 }) };
+  a.motionTracks ||= {};
+  const observationObserver = { id: a.id, speciesId: a.speciesId, worldSeed: sim.seed, motionTracks: a.motionTracks, x: a.x, z: a.z, orientation: a.orientation || 0, headYaw: a.headYaw || 0, tick: sim.tick, fatigue: a.fatigue || 0, thermalPerformance: a.thermalPerformance ?? 1, illumination: observerWeatherPresentation.solarIllumination, temporalAttention: attention.vision, environmentalMotionClutter: environmentalMotionClutter({ wind: observerWeather.wind, rain: observerWeather.rain, grass: receiverCell?.grassHeight || 0, shrubs: receiverCell?.shrubland ? 1 : 0, canopy: receiverCell?.woodland ? .8 : 0 }) };
   const ambientTemperature = observerWeather.temp;
   for (const other of nearbyAnimals(a, Math.max(visionRange, hearingRange) + 1)) {
     if (!other.alive || other.id === a.id) continue;
@@ -6519,6 +6839,25 @@ function waitUpNeed(a) {
   a.groupLagTicks = leaderMoving && gap > limit && struggling ? (a.groupLagTicks || 0) + 1 : Math.max(0, (a.groupLagTicks || 0) - 1);
   return a.groupLagTicks >= 2 ? { leader, gap, urgency: clamp(38 + (gap - limit) * 13 + Math.max(0, a.fatigue - 45) * .6, 42, 88) } : null;
 }
+function wolfPackHowlCandidate(a) {
+  if (!isWolfVocalModel(a) || !a.groupId) return null;
+  const members = sim.animals.filter(member => member.alive && member.groupId === a.groupId && isWolfVocalModel(member));
+  if (members.length < 2) return null;
+  const leader = members.find(member => member.id === a.groupLeaderId) || members[0];
+  const window = wolfPackHowlWindow(sim.ecologicalMinute, sim.season);
+  const activeHunt = members.some(member => ["stalk", "chase", "track-scent", "attack", "evaluate-prey"].includes(member.actionState?.key));
+  const immediateDanger = members.some(member => (member.threatAssessment?.overallConfidence || 0) >= .6 || member.fear >= 72);
+  if (!window || activeHunt || immediateDanger) return null;
+  leader.wolfPackHowlSchedule ||= { schemaVersion: 1, lastWindowId: null, session: null };
+  const schedule = leader.wolfPackHowlSchedule, windowId = `${a.groupId}:${window.sessionId}`;
+  if (leader.id === a.id && schedule.lastWindowId !== windowId) {
+    schedule.lastWindowId = windowId;
+    schedule.session = { id: windowId, since: sim.tick, until: sim.tick + 8 };
+  }
+  const session = schedule.session;
+  if (!session || session.until <= sim.tick || session.id !== windowId || dist(a, leader) > 8) return null;
+  return { kind: "contact", urgency: 32, x: leader.x, z: leader.z, packHowlSession: true, sessionId: session.id, howlRole: a.id === leader.id ? "initiator" : "chorus", leaderId: leader.id };
+}
 function socialStatusCandidate(a) {
   const threat = (a.threatAssessment?.overallConfidence || 0) * 100;
   const caregiverVisible = (a.sensoryBuffer || []).some((m) => m.channel === "sight" && (m.targetId === a.motherId || (a.caregiverIds || []).includes(m.targetId)));
@@ -6538,30 +6877,28 @@ function socialStatusCandidate(a) {
   const lag = waitUpNeed(a);
   if (lag) return { kind: "wait-up", urgency: Math.round(lag.urgency), x: a.x, z: a.z, leaderId: lag.leader.id, gap: lag.gap };
   if (lostCallEligible(a)) return { kind: "lost", urgency: 35, x: a.x, z: a.z };
+  const packHowl = wolfPackHowlCandidate(a);
+  if (packHowl) return packHowl;
   if (reproductivelyMature(a) && (a.courtship || a.mating || (a.courtshipUntil || 0) > sim.tick || a.drive === "reproduction")) return { kind: "courtship", urgency: 28, x: a.x, z: a.z };
   return null;
 }
 function shouldStartCall(a, signal) {
-  if (sim.tick < (a.vocalCooldownUntil || 0)) return false;
-  // Adults normally communicate through posture and expression. Young animals
-  // call much more readily when they need a caregiver; alarms remain rare,
-  // brief emergency calls rather than an always-on beacon.
-  if (a.lifeStage === "dependent" && signal.kind === "care") return true;
-  if (signal.kind === "attacked") return rand() < (a.lifeStage === "dependent" ? 0.92 : 0.62);
-  if (signal.kind === "threat" || signal.kind === "alarm") return signal.urgency > 72 && rand() < (a.lifeStage === "dependent" ? 0.8 : 0.34);
-  if (signal.kind === "injury" || signal.kind === "distress") return a.lifeStage === "dependent" ? rand() < 0.55 : rand() < 0.12;
-  if (signal.kind === "heat" || signal.kind === "cold") return signal.urgency > 72 && rand() < (a.lifeStage === "dependent" ? .5 : .1);
-  if (signal.kind === "water") return signal.sharesLocation && signal.urgency > 58 && rand() < (a.groupId ? .34 : .16);
-  if (signal.kind === "wait-up") return true;
-  if (signal.kind === "lost") return lostCallEligible(a) && rand() < 0.45;
-  if (signal.kind === "courtship") return mature(a) && rand() < 0.08;
-  return false;
+  const admission = evaluateVocalCadence(a, signal, { tick: sim.tick, roll: rand() });
+  a.lastVocalCadenceDecision = { tick: sim.tick, kind: signal.kind, ...admission };
+  return admission;
+}
+function admitContextualVocalCall(a, signal) {
+  const admission = shouldStartCall(a, signal);
+  if (!admission.allow) return false;
+  a.vocalUntil = sim.tick + admission.vocalTicks;
+  a.vocalCooldownUntil = sim.tick + admission.cooldownTicks;
+  return true;
 }
 function refreshOutwardSignal(a) {
   let active = a.socialSignal; if (active?.playerInitiated) { if ((active.playerCalloutUntilMs || 0) > performance.now()) return; a.socialSignal = active = null; }
   const next = socialStatusCandidate(a);
   if (next && !signalAllowed(a, next.kind, next)) return;
-  if (!next) { if (active?.until <= sim.tick) a.socialSignal = null; return; }
+  if (!next) { releaseVocalEpisode(a, sim.tick); if (active?.until <= sim.tick) a.socialSignal = null; return; }
   const changed = !active || active.kind !== next.kind || next.urgency > active.urgency + 15;
   if (changed || active.until <= sim.tick) {
     a.socialSignal = { ...next, sourceId: a.id, since: sim.tick, until: sim.tick + (["threat", "attacked", "care", "wait-up"].includes(next.kind) ? 16 : 11) };
@@ -6569,33 +6906,11 @@ function refreshOutwardSignal(a) {
       a.signalCooldownUntil = sim.tick + 12;
       addEvent(`${a.id}: ${socialSignalLabel(next.kind, a, a.socialSignal)}`);
     }
-    if (shouldStartCall(a, next)) {
-      a.vocalUntil = sim.tick + (a.lifeStage === "dependent" || next.kind === "wait-up" ? 3 : 1);
-      a.vocalCooldownUntil = sim.tick + (next.kind === "wait-up" ? 8 : a.lifeStage === "dependent" ? 6 : 12);
-    }
+    admitContextualVocalCall(a, next);
   } else a.socialSignal = { ...active, ...next, until: Math.max(active.until, sim.tick + 5) };
 }
 function updateThreatAssessment(a, contacts) {
-  if (!isHerbivore(a)) { a.threatAssessment = null; return; }
-  const contributors = [];
-  let sightCount = 0, soundCount = 0, smellCount = 0, unknownCount = 0, sightScore = 0, soundScore = 0, smellScore = 0, unknownScore = 0, identityThreat = 0, confidenceComplement = 1;
-  for (const item of contacts) {
-    const predatorEvidence = item.type === "predator" || item.signalKind === "alarm" || item.signalKind === "threat";
-    if (predatorEvidence) {
-      contributors.push(item); confidenceComplement *= 1 - item.confidence;
-      identityThreat = Math.max(identityThreat, rememberedThreat(a, item.targetId) * 35);
-      if (item.channel === "sight" || item.channel === "visual-signal") { sightCount += 1; sightScore += item.confidence * 52 * (.75 + .25 * Number(item.motionConfidence ?? 1)); }
-      if (item.channel === "hearing") { soundCount += 1; soundScore += item.confidence * 31; }
-      if (item.channel === "smell") { smellCount += 1; smellScore += item.confidence * (item.targetId ? 68 : 20); }
-    } else if (item.type === "unknownSound" && item.channel === "hearing" && item.confidence > .28) {
-      contributors.push(item); confidenceComplement *= 1 - item.confidence; unknownCount += 1; unknownScore += item.confidence * 12;
-    }
-  }
-  const inferredIntent = Math.max(0, ...(a.predatorIntentEstimates || []).map((estimate) => estimate.selfTargetLikelihood * estimate.confidence));
-  const score = clamp(sightScore + soundScore + smellScore + unknownScore + identityThreat + inferredIntent * 34, 0, 100);
-  const parts = []; if (sightCount) parts.push(`${sightCount} predator sighting${sightCount > 1 ? "s" : ""}`); if (soundCount) parts.push(`${soundCount} alarm call${soundCount > 1 ? "s" : ""}`); if (smellCount) parts.push("predator scent"); if (!parts.length && unknownCount) parts.push("unknown large-animal sound");
-  a.threatAssessment = { overallConfidence: score / 100, evidenceConfidence: 1 - confidenceComplement, contributors, explanation: parts.length ? parts.join(" + ") : "no predator evidence" };
-  if (score > 0) a.fear = clamp(a.fear + Math.max(3, score * 0.5) + vulnerability(a) * 8, 0, 100);
+  applyThreatAssessment(a, assessThreatEvidence(a, contacts, { herbivore: isHerbivore(a), rememberedThreat }), vulnerability);
 }
 function animalCall(a) { const stalking = speciesCanHunt(a) && ["stalk", "chase", "track-scent"].includes(a.actionState?.key); const signal = a.socialSignal; if (!stalking && (a.vocalUntil || 0) > sim.tick && signal && signal.until > sim.tick && supportedAcousticCall(a, signal.kind)) return { noun: ["threat", "alarm"].includes(signal.kind) ? "predator" : signal.kind, x: signal.x, z: signal.z, signalKind: signal.kind, urgency: signal.urgency, since: signal.since, enforceSchedule: true, behaviouralTrigger: signal.kind, ...(signal.inferredTargetId ? { inferredTargetId: signal.inferredTargetId, predatorId: signal.predatorId } : {}) }; return null; }
 function audibleActivity(a) { return Boolean(animalCall(a)) || (a.movementNoise || 0) > 0.045; }
@@ -6650,6 +6965,8 @@ function queueEnvironmentalHistoryDeposits(firstHour, finalHour) {
     const cell = cellAt(animal.x, animal.z); if (!cell) continue;
     animal.pendingTraceEvidence ||= [];
     animal.pendingTraceEvidence.push(...biologicalHistoryDeposits(animal, cell, hour));
+    const shedAntler = hour === finalHour ? shedAntlerHistoryDeposit(animal, cell, hour) : null;
+    if (shedAntler) { animal.pendingTraceEvidence.push(shedAntler); animal.antlers.justShed = false; }
   }
   for (const corpse of sim.corpses) {
     const cell = cellAt(corpse.x, corpse.z), record = cell ? boneHistoryDeposit(corpse, cell, finalHour) : null, fragment = cell ? carcassFragmentHistoryDeposit(corpse, cell, finalHour) : null;
@@ -6677,33 +6994,7 @@ function attentionFilter(a, contacts, sight = null) {
 }
 
 function updatePredatorIntentInference(a, attendedContacts) {
-  if (!isHerbivore(a)) { a.predatorIntentEstimates = []; a.predatorIntentEstimate = null; a.reciprocalAttention = null; return; }
-  const previousById = new Map((a.predatorIntentEstimates || []).map((item) => [item.predatorId, item]));
-  const visiblePrey = attendedContacts.filter((item) => item.channel === "sight" && item.type === "conspecific" && item.targetId);
-  const estimates = [];
-  for (const contact of attendedContacts.filter((item) => item.channel === "sight" && item.type === "predator" && item.targetId)) {
-    const predator = animalById(contact.targetId); if (!predator?.alive) continue;
-    const previous = previousById.get(predator.id), distance = dist(a, contact);
-    const bearingToObserver = Math.atan2(a.z - contact.z, a.x - contact.x);
-    const radialX = (a.x - contact.x) / Math.max(.01, distance), radialZ = (a.z - contact.z) / Math.max(.01, distance);
-    const closingSpeed = (contact.vx || 0) * radialX + (contact.vz || 0) * radialZ;
-    const observablePosture = ({ "evaluate-prey": "evaluate", "track-scent": "stalk", stalk: "stalk", chase: "chase", attack: "attack" })[contact.bodyCues?.activity] || (contact.bodyCues?.activity === "urgent" ? "chase" : "patrol");
-    const evidence = { distance, bearingToObserver, bodyHeading: contact.heading, headHeading: contact.headHeading, closingSpeed, closingAcceleration: previous ? closingSpeed - (previous.closingSpeed || 0) : 0, routeDirectness: clamp(closingSpeed / Math.max(.02, Math.hypot(contact.vx || 0, contact.vz || 0)), 0, 1), trackingDuration: previous && previous.selfTargetLikelihood > .3 ? (previous.trackingDuration || 0) + 1 : 0, observablePosture, observationConfidence: contact.confidence, alternativePrey: visiblePrey.length, rememberedThreat: rememberedThreat(a, predator.id), companionWarning: (a.receivedSignals || []).some((signal) => ["threat", "alarm"].includes(signal.signalKind)) ? .45 : 0 };
-    const inferred = shouldRecomputePredatorIntent(previous, evidence, sim.tick) ? inferPredatorIntent(evidence, previous) : previous;
-    estimates.push({ ...inferred, predatorId: predator.id, tick: sim.tick, x: contact.x, z: contact.z, distance, bodyHeading: contact.heading, headHeading: contact.headHeading, closingSpeed, trackingDuration: evidence.trackingDuration, observablePosture });
-  }
-  // A short-lived estimate provides hysteresis through momentary occlusion, but
-  // decays quickly enough that it cannot become supernatural tracking.
-  for (const prior of previousById.values()) if (!estimates.some((item) => item.predatorId === prior.predatorId) && sim.tick - prior.tick <= 2) estimates.push({ ...prior, confidence: prior.confidence * .68 });
-  a.predatorIntentEstimates = estimates.sort((left, right) => right.selfTargetLikelihood * right.confidence - left.selfTargetLikelihood * left.confidence);
-  a.predatorIntentEstimate = a.predatorIntentEstimates[0] || null;
-  a.reciprocalAttention = { ...(a.reciprocalAttention || {}), predatorTargeting: preyTargetingEstimate(a.predatorIntentEstimate), updatedTick: sim.tick };
-  a.predatorTrackingCost = clamp((a.predatorIntentEstimate?.detectionLikelihood || 0) * (a.predatorIntentEstimate?.confidence || 0) * .32, 0, .28);
-  const strongest = a.predatorIntentEstimate;
-  if (strongest?.selfTargetLikelihood > .72 && strongest.confidence > .48 && sim.tick >= (a.lastIntentMemoryTick || -99) + 8) {
-    a.lastIntentMemoryTick = sim.tick;
-    rememberEntityEpisode(a, strongest.predatorId, "inferred-pursuit", sim.tick, { x: strongest.x, z: strongest.z, confidence: strongest.confidence, threat: strongest.selfTargetLikelihood });
-  }
+  return updatePredatorIntentObservations(a, attendedContacts, { herbivore: isHerbivore(a), tick: sim.tick, entityExists: id => Boolean(animalById(id)?.alive), rememberedThreat, rememberEpisode: rememberEntityEpisode });
 }
 
 function contactSalience(a, m, drives) {
@@ -6722,18 +7013,22 @@ function goalPlanForDecision(a, chosen, context = planningContextForDecision(a, 
 function recordNeedPlanEvent(a, event) {
   a.needPlanHistory ||= []; a.needPlanHistory.push({ tick: sim.tick, ecologicalMinute: sim.ecologicalMinute, ...event });
   if (a.needPlanHistory.length > 24) a.needPlanHistory.splice(0, a.needPlanHistory.length - 24);
+  const kinds = { "plan-start": "commitment-created", "target-change": "target-changed", "phase-change": "phase-changed", "method-change": "method-changed", suspension: "commitment-suspended", resumption: "commitment-resumed", completion: "commitment-completed", failure: "commitment-failed" }, kind = kinds[event.kind];
+  if (kind) appendCommitmentEvent(a, createCommitmentEvent({ eventId: `${a.id}:${sim.tick}:${kind}:${a.needPlanHistory.length}`, kind, tick: sim.tick, animalId: a.id, commitmentId: a.commitmentState?.episode?.commitmentId || a.commitmentState?.commitmentId, from: event.from, to: event.to, reason: event.reason || "need plan transition", details: { method: event.method || null } }));
 }
 
 function chooseAndAct(a) {
   if (performBoundaryRecovery(a)) return;
   if (a.lifeStage === "dependent") {
     if (a.hydration < 75) {
-      const chosen = { drive: "dependent water survival", score: 2800, urgent: true, commitTicks: 12 };
+      const chosen = { drive: "dependent water survival", needId: "hydration", satisfierId: "surface-water", methodId: "drink-confirmed-shoreline", precedenceClass: "physiological-failure", score: 2800, urgent: true, commitTicks: 12 };
       a.priorities = [{ drive: chosen.drive, score: chosen.score }];
       executeNeedDependencyPlan(a, "water");
       a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return;
     }
-    const chosen = { drive: "dependency", score: 100, commitTicks: 4 };
+    const knownCaregiverId = (a.motherId && animalById(a.motherId)?.alive ? a.motherId : null) || (a.caregiverIds || []).find(id => animalById(id)?.alive) || livingAncestorCandidates(a, sim.animals)[0]?.id || null;
+    const careTarget = knownCaregiverId ? { entityId: knownCaregiverId, targetKind: "caregiver" } : { regionId: `care-network:${a.id}`, targetKind: "search-region", x: a.x, z: a.z };
+    const chosen = { drive: "dependency", needId: "care", satisfierId: "caregiver-contact", methodId: "seek-caregiver", target: careTarget, targetKey: knownCaregiverId ? `entity:${knownCaregiverId}` : `care-search-region:${a.id}`, completionCondition: "physical caregiver contact is restored or dependency ends", precedenceClass: "dependent-critical", score: 100, commitTicks: 4 };
     a.priorities = [{ drive: chosen.drive, score: chosen.score }]; dependentAction(a);
     a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return;
   }
@@ -6745,7 +7040,7 @@ function chooseAndAct(a) {
   updateAndShareMateKnowledge(a);
   const reproductionEvent = reproductionStage(a, sim.tick);
   if (reproductionEvent === "birth") { const chosen = { drive: "giving birth", score: 1000, urgent: true, commitTicks: Math.max(1, a.birthEvent.completesAt - sim.tick) }; a.priorities = [{ drive: chosen.drive, score: chosen.score }]; setAction(a, "birth", { label: `in labour (${a.birthEvent.completesAt - sim.tick} steps remaining)`, intendedOutcome: "give birth safely" }); a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return; }
-  const emergencyWaterPlan = waterNeedPlan(a);
+  const emergencyWaterPlan = waterNeedPlan(a, bestKnownWater(a) || (a.needDependencyPlan?.need === "water" ? a.needDependencyPlan.target : null));
   const emergencyDehydration = dehydrationState(a);
   const immediateDefence = herbivoreDefenceOpportunity(a);
   if (immediateDefence && immediateThreatPrecedesWater({ action: immediateDefence.action, urgency: immediateDefence.urgency, attackImminence: immediateDefence.intent?.attackImminence })) {
@@ -6754,37 +7049,32 @@ function chooseAndAct(a) {
       recordNeedPlanEvent(a, { kind: "suspension", from: "water", to: immediateDefence.action, reason: a.needDependencyPlan.suspensionReason });
     }
     releaseShorelineReservation(a);
-    const chosen = { drive: `${immediateDefence.action} immediate predator threat`, score: 3000 + immediateDefence.urgency, urgent: true, commitTicks: 5 };
+    const threatEvidence = immediateDefence.contact || immediateDefence.threatHypothesis?.locationRegion?.centre || { targetId: immediateDefence.predator.id, evidenceId: immediateDefence.threatHypothesis?.provenance?.observationIds?.[0] };
+    const chosen = { ...safetyMethodCandidate({ observation: { ...threatEvidence, targetId: immediateDefence.predator.id, targetKey: immediateDefence.threatHypothesis?.hypothesisId }, tick: sim.tick, immediate: true, canDefend: immediateDefence.action === "attack", allies: immediateDefence.allies || 0, confidence: immediateDefence.threatHypothesis?.targeting?.confidence || immediateDefence.intent?.confidence || .8 }), drive: `${immediateDefence.action} immediate predator threat`, score: 3000 + immediateDefence.urgency, commitTicks: 5 };
     a.priorities = [{ drive: chosen.drive, score: chosen.score }]; performHerbivoreDefence(a, immediateDefence); a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return;
   }
   const criticalWaterFailure = emergencyDehydration.key === "critical" || emergencyWaterPlan.forecastState === "predicted-failure";
-  if (criticalWaterFailure) {
+  const reproductiveEpisodeActive = ["accepted", "mating", "courtship", "courtship-decision"].includes(reproductionEvent);
+  const survivalFoodInterrupt = a.stomach < (reproductiveEpisodeActive ? 16 : 6) || a.energy < (reproductiveEpisodeActive ? 14 : 7);
+  const emergencyCandidates = [];
+  if (criticalWaterFailure) emergencyCandidates.push({ drive: "water", needId: "hydration", satisfierId: "surface-water", methodId: "drink-confirmed-shoreline", precedenceClass: "physiological-failure", score: 1650 + Math.min(700, emergencyWaterPlan.urgency * 7), urgency: emergencyWaterPlan.urgency, forecastState: emergencyWaterPlan.forecastState, urgent: true, deathIfUnsatisfied: true, commitTicks: 16, run: () => executeNeedDependencyPlan(a, "water") });
+  if (survivalFoodInterrupt) emergencyCandidates.push({ drive: "emergency food acquisition", needId: "nutrition", satisfierId: speciesCanHunt(a) ? "hunt-prey" : eatsMeat(a) ? "scavenge" : "graze-browse", methodId: speciesCanHunt(a) ? "hunt-evidenced-prey" : eatsMeat(a) ? "feed-carcass" : "graze-local", precedenceClass: "physiological-failure", score: 2500, urgent: true, deathIfUnsatisfied: true, commitTicks: 16, run: () => executeNeedDependencyPlan(a, "food") });
+  const survivalSelection = arbitrateSurvivalNeeds(a, emergencyCandidates, sim.tick);
+  if (survivalSelection) {
     const partner = animalById(a.mating?.partnerId || a.courtship?.partnerId);
     if (partner?.mating?.partnerId === a.id) partner.mating = null;
     if (partner?.courtship?.partnerId === a.id) partner.courtship = null;
     a.mating = null;
     a.courtship = null;
-    const chosen = { drive: "water", score: Math.max(2250, emergencyWaterPlan.urgency * 24), urgency: emergencyWaterPlan.urgency, urgent: true, commitTicks: 16 };
-    a.priorities = [{ drive: chosen.drive, score: chosen.score }];
-    executeNeedDependencyPlan(a, "water");
+    const chosen = { ...survivalSelection.selected, switchReason: survivalSelection.reason };
+    a.survivalTriage = { tick: sim.tick, selectedNeed: survivalSelection.need, retained: survivalSelection.retained, reason: survivalSelection.reason, candidates: emergencyCandidates.map(candidate => ({ needId: candidate.needId, drive: candidate.drive, score: candidate.score })) };
+    a.priorities = [chosen, ...emergencyCandidates.filter(candidate => candidate !== survivalSelection.selected)].map(candidate => ({ drive: candidate.drive, score: candidate.score, needId: candidate.needId, precedenceClass: candidate.precedenceClass }));
+    chosen.run();
     a.goalPlan = goalPlanForDecision(a, chosen);
-    captureChosenDecision(a, chosen);
+    captureChosenDecision(a, chosen, undefined, null, { ...planningContextForDecision(a, "commitment"), switchReason: survivalSelection.reason });
     return;
   }
-  const reproductiveEpisodeActive = ["accepted", "mating", "courtship", "courtship-decision"].includes(reproductionEvent);
-  const survivalFoodInterrupt = a.stomach < (reproductiveEpisodeActive ? 16 : 6) || a.energy < (reproductiveEpisodeActive ? 14 : 7);
-  if (survivalFoodInterrupt) {
-    if (reproductiveEpisodeActive) {
-      const partner = animalById(a.mating?.partnerId || a.courtship?.partnerId);
-      if (partner?.mating?.partnerId === a.id) partner.mating = null;
-      if (partner?.courtship?.partnerId === a.id) partner.courtship = null;
-      a.mating = null; a.courtship = null;
-    }
-    const chosen = { drive: "emergency food acquisition", score: 2500, urgent: true, commitTicks: 16 };
-    a.priorities = [{ drive: chosen.drive, score: chosen.score }];
-    executeNeedDependencyPlan(a, "food");
-    a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return;
-  }
+  a.survivalTriage = null;
   if (reproductionEvent === "accepted" || reproductionEvent === "mating") { const mating = reproductionEvent === "mating", partner = animalById(a.mating.partnerId); const chosen = { drive: mating ? "mating" : "accepted courtship", score: 240, commitTicks: mating ? a.mating.completesAt - sim.tick : a.mating.startsAt - sim.tick }; a.priorities = [{ drive: chosen.drive, score: chosen.score }]; if (!partner?.alive) { a.mating = null; setAction(a, "search", { label: "mating partner unavailable", intendedOutcome: "find another mate" }); } else if (!physicalContact(a, partner)) { postponeMatingUntilContact(a, partner); moveToward(a, partner, mating ? "mating" : "accept-mate", `${a.mating?.contactEstablished ? "contact lost; re-approaching" : "approaching"} ${partner.id} for physical contact`, mating ? "restore contact to continue mating" : "make contact before mating", { interactionKind: "mating" }); } else { a.mating.contactEstablished = true; setAction(a, mating ? "mating" : "accept-mate", { label: mating ? `mating in physical contact with ${partner.id}` : `accepted ${partner.id}; in physical contact`, target: partner.id, intendedOutcome: mating ? "complete mating" : "begin mating" }); } a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return; }
   if (reproductionEvent === "mating-complete") { const partner = animalById(a.mating?.partnerId); if (partner?.alive && !physicalContact(a, partner)) { postponeMatingUntilContact(a, partner); moveToward(a, partner, "mating", `contact lost; re-approaching ${partner.id}`, "restore contact to complete mating", { interactionKind: "mating" }); return; } if (a.sex === "F") completeMating(a); else setAction(a, "rest", { label: "remaining beside mate after mating", target: a.mating.partnerId, intendedOutcome: "recover after mating" }); const chosen = { drive: "mating complete", score: 180, commitTicks: 2 }; a.priorities = [{ drive: chosen.drive, score: chosen.score }]; captureChosenDecision(a, chosen); return; }
   if (a.courtship) { const partner = animalById(a.courtship.partnerId); const chosen = { drive: "courtship", score: 150, commitTicks: Math.max(1, a.courtship.decisionAt - sim.tick) }; a.priorities = [{ drive: chosen.drive, score: chosen.score }]; if (partner?.alive) seekMate(a, partner); else { a.courtship = null; setAction(a, "search", { label: "courtship partner unavailable", intendedOutcome: "find another mate" }); } a.goalPlan = goalPlanForDecision(a, chosen); captureChosenDecision(a, chosen); return; }
@@ -6804,7 +7094,7 @@ function chooseAndAct(a) {
     return adjusted && candidate.drive === adjusted.drive && candidate.score === adjusted.score && candidate.risk === adjusted.risk && candidate.riskBias === adjusted.riskBias && candidate.confidence === adjusted.confidence && candidate.method === adjusted.method && candidate.urgent === adjusted.urgent && candidate.disabled === adjusted.disabled;
   });
   const candidates = rankingsEquivalent ? counterfactualRanked : selectWithCommitment(a, availableCandidates, sim.tick, selectionContext, rankingReuse);
-  a.priorities = candidates.map(({ drive, score }) => ({ drive, score: Math.round(score) }));
+  a.priorities = candidates.map(({ drive, score, needId, satisfierId, methodId, targetKey, precedenceClass, urgency }) => ({ drive, score: Math.round(score), needId, satisfierId, methodId, targetKey, precedenceClass, urgency }));
   const chosen = candidates[0];
   a.drive = chosen.drive;
   // captureDecisionTrace performs the single bounded immutable projection.
@@ -6873,7 +7163,7 @@ function performBoundaryRecovery(a) {
     const safest = bestByComparator(candidates, (left, right) => Math.hypot(right.x - threat.x, right.z - threat.z) - Math.hypot(left.x - threat.x, left.z - threat.z));
     Object.assign(recoveryTarget, safest);
   }
-  const chosen = { drive: threat ? "escape predator while returning to playable map" : "return to playable map", score: 5000, urgent: true, commitTicks: threat ? 2 : 4 };
+  const chosen = { drive: threat ? "escape predator while returning to playable map" : "return to playable map", needId: "safety", satisfierId: "playable-terrain", methodId: threat ? "flee-and-recover-boundary" : "return-inside-boundary", target: { ...recoveryTarget, targetKind: "safe-region", regionId: "playable-map-interior" }, targetKey: "safe-region:playable-map-interior", completionCondition: "the complete body is inside playable terrain with a safe inward margin", precedenceClass: threat ? "immediate-lethal" : "high-urgency", immediateLethal: Boolean(threat), score: 5000, urgent: true, commitTicks: threat ? 2 : 4 };
   a.priorities = [{ drive: chosen.drive, score: chosen.score }];
   a.drive = chosen.drive;
   applyMove(a, recoveryTarget, threat ? "flee" : "travel", threat ? "evading a predator while moving safely away from the map edge" : boundary.crossedPlayableEdge ? "walking back onto the map" : "moving away from the map edge", { destinationSource: "boundary-recovery", allowOutsideNavmesh: true, intendedOutcome: threat ? "return to playable terrain without approaching the predator" : "return safely to playable terrain", sprint: Boolean(threat && a.capabilities?.canSprint), target: threat?.targetId });
@@ -6883,6 +7173,7 @@ function performBoundaryRecovery(a) {
 }
 
 function captureChosenDecision(a, chosen, evidence = a.sensoryBuffer || [], predictiveDecisionContext = null, planningContext = null) {
+  reconcileChosenSafetyExecution(a, chosen);
   const context = planningContext || planningContextForDecision(a, "commitment");
   const activeNeedPlan = Number(a.needDependencyPlan?.tick) === sim.tick ? a.needDependencyPlan : null, executedMethod = activeNeedPlan?.method || a.actionState?.key || null;
   const previous = a.commitmentState?.priority;
@@ -6891,7 +7182,18 @@ function captureChosenDecision(a, chosen, evidence = a.sensoryBuffer || [], pred
     const assessment = a.commitmentState.riskReward;
     recordProtocolOutcome(a, { priority: previous, method: a.actionState?.key, success: improved, duration: Math.max(0, sim.tick - (a.commitmentState.startedTick || sim.tick)), gain: improved ? 1 : 0, risk: assessment?.risk, reward: assessment?.reward });
   }
-  observeCommitment(a, chosen, sim.tick, { ...context, method: executedMethod, progressMetric: Math.max(a.hydration || 0, a.stomach || 0, a.energy || 0), currentPlanBlocked: a.actionState?.key === "blocked" });
+  let commitmentChoice = chosen;
+  const canonicalChoiceNeed = chosen.needId || a.needDependencyPlan?.needId;
+  if (canonicalChoiceNeed === "hydration" && !chosen.targetKey) {
+    const destination = a.movementRequest?.destination || a.actionState?.destination || a.needDependencyPlan?.target || { x: a.x, z: a.z };
+    const searchTargetKey = `water-search-region:${Number(destination.x).toFixed(3)},${Number(destination.z).toFixed(3)}`;
+    const searchTarget = { x: Number(destination.x), z: Number(destination.z), regionId: searchTargetKey, targetKind: "search-region", exact: false, confidence: .25, source: "executed-water-search" };
+    commitmentChoice = { ...chosen, target: searchTarget, targetKey: searchTargetKey, completionCondition: chosen.completionCondition || `hydration reaches ${HYDRATION_ACQUISITION_TARGET}` };
+    if (a.needDependencyPlan?.need === "water" && !a.needDependencyPlan.targetKey) a.needDependencyPlan = { ...a.needDependencyPlan, target: searchTarget, targetKey: searchTargetKey, targetDecision: "stable water search region retained from the executed search route" };
+  }
+  const previousCommitmentId = a.commitmentState?.commitmentId || null;
+  observeCommitment(a, commitmentChoice, sim.tick, { ...context, method: executedMethod, progressMetric: Math.max(a.hydration || 0, a.stomach || 0, a.energy || 0), currentPlanBlocked: a.actionState?.key === "blocked" });
+  reconcileCommitmentExecution(a, previousCommitmentId);
   if (a.goalPlan) {
     a.goalPlan.riskReward = { ...a.commitmentState.riskReward };
     if (a.goalPlan.currentPriority) a.goalPlan.currentPriority.riskReward = { ...a.commitmentState.riskReward };
@@ -6913,40 +7215,63 @@ function postponeMatingUntilContact(a, partner) {
 
 function personalSpaceOpportunity(a) {
   a.personalSpaceCooldowns ||= {};
-  const contacts = (a.sensoryBuffer || []).filter((contact) => contact.targetId && ["sight", "proximity"].includes(contact.channel) && ["conspecific", "predator", "animal"].includes(contact.type));
+  const contacts = (a.sensoryBuffer || []).filter((contact) => contact.targetId && ["sight", "proximity", "sound", "smell"].includes(contact.channel) && ["conspecific", "predator", "prey", "animal"].includes(contact.type));
   const seen = new Set(), candidates = [];
   for (const contact of contacts) {
-    if (seen.has(contact.targetId) || (a.personalSpaceCooldowns[contact.targetId] || 0) > sim.tick) continue;
+    if (seen.has(contact.targetId)) continue;
     seen.add(contact.targetId);
     const target = animalById(contact.targetId); if (!target?.alive) continue;
-    const distance = dist(a, target), memory = a.socialMemory?.[target.id] || {};
+    const perceivedPosition = { x: Number.isFinite(contact.x) ? contact.x : target.x, z: Number.isFinite(contact.z) ? contact.z : target.z };
+    const distance = Math.hypot(perceivedPosition.x - a.x, perceivedPosition.z - a.z), memory = a.socialMemory?.[target.id] || {};
     const allies = sim.animals.filter((member) => member.alive && member.id !== a.id && member.groupId && member.groupId === a.groupId && dist(member, a) <= 5).length;
     const predatorRelationship = speciesCanHunt(target) && preyCompatible(target, a), predatorIntent = predatorRelationship ? (a.predatorIntentEstimates || []).find(estimate => estimate.predatorId === target.id) || null : null;
-    const assessment = assessPersonalSpace(a, target, { distance, contactSpan: bodyRadius(a) + bodyRadius(target), sameGroup: Boolean(a.groupId && a.groupId === target.groupId), related: kinshipBetween(a, target).related, affinity: memory.affinity, grievance: memory.grievance, compatibleMate: a.speciesId === target.speciesId && eligibleMate(a, target), allies, predatorRelationship, predatorIntent, roll: rand() });
-    if (assessment) candidates.push({ ...assessment, target });
+    const assessment = assessPersonalSpace(a, target, { tick: sim.tick, distance, estimatedPosition: perceivedPosition, distanceUncertainty: contact.uncertainty ?? contact.positionError, confidence: contact.confidence, channel: contact.channel, observation: contact, perceivedType: contact.type, perceivedSpecies: contact.speciesId || contact.bodyCues?.speciesId, contactSpan: bodyRadius(a) + bodyRadius(target), sameGroup: Boolean(a.groupId && a.groupId === target.groupId), related: kinshipBetween(a, target).related, affinity: memory.affinity, grievance: memory.grievance, compatibleMate: a.speciesId === target.speciesId && eligibleMate(a, target), allies, predatorRelationship, predatorIntent, roll: rand() });
+    if (assessment) candidates.push({ ...assessment, target, targetKey: `entity:${target.id}`, relationshipKey: `${a.id}->${target.id}`, perceivedPosition });
   }
-  return bestByComparator(candidates, (left, right) => (right.pressure || 0) - (left.pressure || 0) || String(left.target.id).localeCompare(String(right.target.id)));
+  const best = bestByComparator(candidates, (left, right) => (right.pressure || 0) - (left.pressure || 0) || String(left.target.id).localeCompare(String(right.target.id)));
+  const incumbent = candidates.find((candidate) => candidate.targetKey === a.primaryProximityTargetKey);
+  const selected = incumbent && (!best || incumbent.pressure >= best.pressure * .82 || ["flight", "defence"].includes(incumbent.curves?.state?.currentBand)) ? incumbent : best;
+  if (selected) { a.primaryProximityTargetKey = selected.targetKey; a.primaryProximityRelationship = { targetKey: selected.targetKey, relationshipKey: selected.relationshipKey, band: selected.curves?.state?.currentBand, retainedSinceTick: a.primaryProximityRelationship?.targetKey === selected.targetKey ? a.primaryProximityRelationship.retainedSinceTick : sim.tick, pressure: selected.pressure, releaseThreshold: selected.curves?.state?.activeReleaseThreshold, estimatedDistance: selected.curves?.state?.estimatedDistance }; }
+  return selected;
+}
+
+function reconcileChosenSafetyExecution(a, chosen) {
+  const needId = chosen.needId || chosen.need;
+  if (needId !== "safety") return false;
+  const methodId = chosen.methodId || chosen.method, band = chosen.proximityContext?.band || a.primaryProximityRelationship?.band || null;
+  if (safetyExecutionCompatible(methodId, a.actionState?.key, band)) return false;
+  const targetId = chosen.target?.entityId || chosen.targetRef?.entityId || String(chosen.targetKey || "").split(":").at(-1), target = animalById(targetId) || chosen.target;
+  if (band === "flight" || /flee|escape|withdraw/.test(String(methodId || ""))) {
+    if (target && Number.isFinite(target.x) && Number.isFinite(target.z)) fleeFromPoint(a, target, `correcting execution to create distance from ${target.id || targetId || "the perceived threat"}`, { destinationSource: "safety-reconciliation" });
+    else setAction(a, "flee", { label: "attempting to escape an unresolved perceived threat", target: targetId || null, intendedOutcome: "create safe separation" });
+  } else if (band === "defence" || /defen|attack|mob/.test(String(methodId || ""))) {
+    setAction(a, "defend", { label: `defending against ${target?.id || targetId || "the immediate threat"}`, target: target?.id || targetId || null, intendedOutcome: "survive an immediate threat when withdrawal is not currently viable" });
+  }
+  a.executionReconciliation = { tick: sim.tick, needId: "safety", methodId, band, correctedAction: a.actionState?.key, reason: "recorded safety method and executed action contradicted one another" };
+  return true;
 }
 
 function performPersonalSpaceInteraction(a, encounter) {
   const target = encounter.target; if (!target?.alive) return;
+  const spacingEvent = createCommitmentEvent({ eventId: `${a.id}:${sim.tick}:personal-space-adjustment:${target.id}:${a.commitmentEvents?.length || 0}`, kind: "personal-space-adjustment", tick: sim.tick, animalId: a.id, commitmentId: a.commitmentState?.commitmentId || null, from: null, to: `entity:${target.id}`, reason: `${encounter.kind} in ${encounter.curves?.state?.currentBand || "personal-space"} band`, countsAsSwitch: false, details: { relationshipKey: encounter.relationshipKey || `${a.id}->${target.id}`, band: encounter.curves?.state?.currentBand || null, pressure: Number(encounter.pressure || 0) } });
+  appendCommitmentEvent(a, spacingEvent);
   a.personalSpaceCooldowns ||= {}; a.personalSpaceCooldowns[target.id] = sim.tick + (encounter.kind === "ignore" ? 18 : encounter.kind.includes("rally") || encounter.kind === "attack" ? 30 : 12);
   const rememberBoth = (event) => { rememberSocialEvent(a, target.id, event, sim.tick, { x: target.x, z: target.z }); learnProximityRelationship(a, target.id, encounter.kind, sim.tick, encounter.pressure); if (target.speciesId === a.speciesId) rememberSocialEvent(target, a.id, event === "space-tolerated" ? event : "personal-space-contact", sim.tick, { x: a.x, z: a.z }); learnProximityRelationship(target, a.id, event === "space-tolerated" ? "space-tolerated" : "contact-observed", sim.tick, Math.min(1, encounter.pressure || 0)); };
   if (encounter.kind === "ignore") { rememberBoth("space-tolerated"); return setAction(a, "idle", { label: `tolerating ${target.id} inside personal space`, target: target.id, intendedOutcome: "avoid unnecessary social escalation" }); }
   if (encounter.kind === "orient") { rememberBoth("personal-space-notice"); return turnInPlace(a, Math.atan2(target.z - a.z, target.x - a.x), `looking toward ${target.id} after it entered personal space`, "orient", "assess the nearby animal"); }
   if (encounter.kind === "affiliate") {
     const record = rememberSocialEvent(a, target.id, "friendly-contact", sim.tick, { x: target.x, z: target.z }); record.affinity = clamp(record.affinity + .06, -1, 1); strengthenRelationship(a.id, target.id, kinshipBetween(a, target).related ? "family-association" : "friendship", Math.max(.15, record.affinity));
-    if (!a.groupId && dist(a, target) > bodyRadius(a) + bodyRadius(target) + .12) return moveToward(a, target, "join-herd", `accepting close social contact with ${target.id}`, "form or reinforce a social group", { interactionKind: "social" });
+    if (!a.groupId && dist(a, target) > bodyRadius(a) + bodyRadius(target) + .12) return moveToward(a, target, "join-herd", `accepting close social contact with ${target.id}`, "form or reinforce a social group", { interactionKind: "social", destinationSource: "personal-space", localAdjustment: { kind: "personal-space", entityId: target.id } });
     return setAction(a, "coordinate-group", { label: `affiliative contact with ${target.id}`, target: target.id, intendedOutcome: "strengthen familiarity and group cohesion" });
   }
   if (encounter.kind === "courtship") { rememberBoth("personal-space-courtship-opportunity"); return seekMate(a, target); }
-  if (encounter.kind === "retreat") { rememberBoth("personal-space-retreat"); return fleeFromPoint(a, target, `creating personal distance from ${target.id}`); }
+  if (encounter.kind === "retreat") { rememberBoth("personal-space-retreat"); return fleeFromPoint(a, target, `creating personal distance from ${target.id}`, { destinationSource: "personal-space", localAdjustment: { kind: "personal-space", entityId: target.id } }); }
   if (encounter.kind === "warn") {
-    rememberBoth("personal-space-warning"); a.socialSignal = { kind: "threat", urgency: 58, x: target.x, z: target.z, sourceId: a.id, targetId: target.id, since: sim.tick, until: sim.tick + 10 }; a.vocalUntil = sim.tick + 2;
+    rememberBoth("personal-space-warning"); a.socialSignal = { kind: "threat", urgency: 58, x: target.x, z: target.z, sourceId: a.id, targetId: target.id, since: sim.tick, until: sim.tick + 10 }; admitContextualVocalCall(a, a.socialSignal);
     return setAction(a, "communicate", { label: `warning ${target.id} out of personal space`, target: target.id, intendedOutcome: "make the intruder withdraw" });
   }
   if (encounter.kind === "rally-defence" || encounter.kind === "rally-aggression") {
-    rememberBoth("rallied-against-intruder"); a.socialSignal = { kind: "threat", urgency: 82, x: target.x, z: target.z, sourceId: a.id, targetId: target.id, since: sim.tick, until: sim.tick + 14 }; a.vocalUntil = sim.tick + 3;
+    rememberBoth("rallied-against-intruder"); a.socialSignal = { kind: "threat", urgency: 82, x: target.x, z: target.z, sourceId: a.id, targetId: target.id, since: sim.tick, until: sim.tick + 14 }; admitContextualVocalCall(a, a.socialSignal);
     for (const member of sim.animals) if (member.alive && member.id !== a.id && member.groupId && member.groupId === a.groupId && dist(member, a) <= species[a.speciesId].hearing) member.groupAlert = { goal: "confront social intruder", score: 86, source: a.id, targetId: target.id, until: sim.tick + 12 };
     if (encounter.kind === "rally-defence") { const defence = herbivoreDefenceOpportunity(a); if (defence) return performHerbivoreDefence(a, defence); }
     return performSocialEncounter(a, { kind: "social-attack", target, pressure: encounter.pressure });
@@ -6958,6 +7283,17 @@ function socialOpportunity(a) {
   for (const pressure of Object.values(a.socialPressures || {})) for (const key of ["dominance", "submission", "play", "aggression", "protection"]) pressure[key] = (pressure[key] || 0) * .985;
   if ((a.socialConflictCooldownUntil || 0) > sim.tick || a.courtship || a.mating || a.birthEvent || a.fear > 45 || a.energy < 22 || a.health < 42) return null;
   const visible = (a.sensoryBuffer || []).filter((contact) => contact.channel === "sight" && contact.type === "conspecific" && contact.targetId).slice(0, 6);
+  const rutCalendar = seasonForAbsoluteDay(sim.day, worldSetup.startSeason);
+  if (rutEligible(a, rutCalendar)) {
+    const rivalContact = visible.find(contact => { const rival = animalById(contact.targetId); return rival?.alive && rival.id !== a.id && rutEligible(rival, rutCalendar); });
+    const rival = animalById(rivalContact?.targetId);
+    if (rival) {
+      const apparentMass = clamp(Number(rivalContact.bodyCues?.apparentMassClass === "large" ? .8 : rivalContact.bodyCues?.apparentMassClass === "small" ? .3 : .55), 0, 1);
+      const measuredAntlers = Number(rivalContact.bodyCues?.antlerSize);
+      const apparentAntlers = clamp(Number.isFinite(measuredAntlers) ? measuredAntlers : rivalContact.bodyCues?.identifyingFeature === "seasonal-antlers" ? .65 : .45, 0, 1);
+      return { kind: "rut-contest", target: rival, contact: rivalContact, observedRivalQuality: apparentMass * .55 + apparentAntlers * .45 };
+    }
+  }
   if (a.sex === "M" && mature(a) && (a.careAffinity || 0) > .5) for (const contact of visible) {
     const victim = animalById(contact.targetId), aggressiveContact = visible.find((other) => other.targetId !== victim?.id && other.bodyCues?.sex === "M" && (other.bodyCues?.aggressionDisplay || 0) > .78 && other.bodyCues?.activity === "urgent"), attacker = animalById(aggressiveContact?.targetId);
     const attached = (a.socialMemory?.[victim?.id]?.affinity || 0) > 0 || victim?.sex === "F";
@@ -6976,6 +7312,28 @@ function socialOpportunity(a) {
 
 function performSocialEncounter(a, encounter) {
   const target = encounter.target; if (!target?.alive) return setAction(a, "idle", { label: "social partner moved away" });
+  if (encounter.kind === "rut-contest") {
+    const contest = advanceRutContest(a, target, { tick: sim.tick, referenceMass: species[a.speciesId]?.adultMass || 160, observedRivalQuality: encounter.observedRivalQuality, observedRivalResistance: encounter.contact?.bodyCues?.movementConfidence || .5 });
+    a.socialConflictCooldownUntil = contest.phase === "resolved" ? sim.tick + 18 : sim.tick + 1;
+    if (contest.phase === "roar-assessment") {
+      a.socialSignal = { kind: "courtship", urgency: 64, sourceId: a.id, targetId: target.id, since: sim.tick, until: sim.tick + 4 }; admitContextualVocalCall(a, a.socialSignal);
+      return setAction(a, "assess-rival", { label: `roaring while assessing rival ${target.id}`, target: target.id, intendedOutcome: "resolve mating status without physical fighting" });
+    }
+    if (contest.phase === "approach") return moveToward(a, target, "dominance", `approaching rival ${target.id} after mutual assessment`, "begin a parallel assessment walk", { interactionKind: "social" });
+    if (contest.phase === "parallel-walk") return setAction(a, "dominance", { label: `parallel-walking with rival ${target.id}`, target: target.id, intendedOutcome: "compare condition before escalating" });
+    if (contest.phase === "antler-lock") {
+      if (!physicalContact(a, target)) return moveToward(a, target, "spar", `closing carefully to lock hardened antlers with ${target.id}`, "make contest contact", { interactionKind: "sparring" });
+      chargeDiscreteActivity(a, "fight", 1.8, "ritualised-antler-contest"); target.fatigue = clamp((target.fatigue || 0) + 1.2, 0, 100);
+      return setAction(a, "spar", { label: `locking antlers and pushing against ${target.id}`, target: target.id, intendedOutcome: "resolve mating status while limiting injury" });
+    }
+    if (contest.phase === "resolved") {
+      const won = contest.outcome?.startsWith("won") || contest.outcome === "rival-yielded";
+      a.rutStatus = { schemaVersion: 1, outcome: won ? "holding-access" : "yielded", rivalId: target.id, since: sim.tick, until: sim.tick + (won ? 72 : 36), confidence: contest.assessmentConfidence };
+      rememberSocialEvent(a, target.id, won ? "rut-contest-won" : "rut-contest-withdrew", sim.tick, { x: target.x, z: target.z });
+      return setAction(a, won ? "dominance" : "submit", { label: won ? `holding mating status after ${target.id} yielded` : `withdrawing from rut contest with ${target.id}`, target: target.id, intendedOutcome: won ? "retain mating access" : "avoid further contest injury" });
+    }
+    return setAction(a, "assess-rival", { label: `noticing rut rival ${target.id}`, target: target.id, intendedOutcome: "assess before escalation" });
+  }
   if (encounter.kind === "submit") {
     a.socialConflictCooldownUntil = sim.tick + 8 + Math.round(a.fear / 12 + a.fatigue / 18); a.fear = clamp(a.fear + 8, 0, 100);
     rememberSocialEvent(a, target.id, "dominated", sim.tick, { x: target.x, z: target.z });
@@ -7181,8 +7539,10 @@ function performBereavementResponse(a, state) {
 function actionCandidates(a) {
   const d = driveLevels(a);
   const c = a.capabilities || computeCapabilities(a, species[a.speciesId]);
-  const waterPlan = waterNeedPlan(a);
+  const knownWaterTarget = bestKnownWater(a) || (a.needDependencyPlan?.need === "water" && !a.needDependencyPlan.suspended ? a.needDependencyPlan.target : null);
+  const waterPlan = waterNeedPlan(a, knownWaterTarget);
   a.needPlanning = needPlanningSnapshot(a, waterPlan);
+  storeNeedStates(a, commitmentPlanningContext(a), sim.tick);
   const physical = performanceState(a), recoveryRequirement = recoveryNeeds(a), movementExhausted = !physical.canTravel;
   const candidates = [];
   const thermalBiology = biologicalPhenotype(a)?.thermoregulation;
@@ -7207,7 +7567,7 @@ function actionCandidates(a) {
   if ((a.collapseUntil || 0) > sim.tick) candidates.push({ drive: "emergency collapse", urgent: true, commitTicks: a.collapseUntil - sim.tick, score: 2000, run: () => rest(a, "collapsed after emergency exertion", "collapse") });
   if ((a.alertPauseUntil || 0) > sim.tick) candidates.push({ drive: "focused vigilance", commitTicks: a.alertPauseUntil - sim.tick, score: 410 + a.fear, run: () => setAction(a, "freeze", { label: "frozen briefly to see and hear farther", intendedOutcome: "improve detection before moving" }) });
   if (isHerbivore(a) && threat >= 46) candidates.push({ drive: "threat response", urgent: true, score: 330 + threat * 2, run: () => flee(a) });
-  if (nursingChildren.length && threat < 52) candidates.push({ drive: "allow offspring to nurse", commitTicks: 4, score: 520 + nursingChildren.length * 45 + (a.careAffinity || .5) * 90, run: () => { a.nursingUntil = sim.tick + 3; a.nursingDependentIds = nursingChildren.map((child) => child.id); setAction(a, "allow-nursing", { label: `lying low while ${nursingChildren.length} ${nursingChildren.length === 1 ? "dependent nurses" : "dependants nurse"}`, target: nursingChildren[0].id, intendedOutcome: "provide milk while remaining alert to danger" }); } });
+  if (nursingChildren.length && threat < 52) { const care = careMethodCandidate({ actorId: a.id, targetId: nursingChildren[0].id, role: "caregiver", nursing: true, critical: nursingChildren.some(child => child.energy < 18 || child.hydration < 22), tick: sim.tick }); candidates.push({ ...care, commitTicks: 4, score: 520 + nursingChildren.length * 45 + (a.careAffinity || .5) * 90, run: () => { a.nursingUntil = sim.tick + 3; a.nursingDependentIds = nursingChildren.map((child) => child.id); upsertParallelObligation(a, { kind: "care", needId: care.needId, satisfierId: care.satisfierId, methodId: care.methodId, targetId: nursingChildren[0].id, completionCondition: care.completionCondition, reason: "dependent is actively nursing" }, sim.tick); setAction(a, "allow-nursing", { label: `lying low while ${nursingChildren.length} ${nursingChildren.length === 1 ? "dependent nurses" : "dependants nurse"}`, target: nursingChildren[0].id, intendedOutcome: "provide milk while remaining alert to danger" }); } }); }
   if (nursingCompanion && threat < 60) candidates.push({ drive: "guard nursing family", commitTicks: 5, score: 115 + (a.careAffinity || .5) * 135 + (a.aggression || 0) * 45, run: () => { if (dist(a, nursingCompanion) > 3.2) moveToward(a, nursingCompanion, "guard", `approaching ${nursingCompanion.id}'s vulnerable nursing site`, "guard nursing mother and dependants", { interactionKind: "guarding" }); else setAction(a, "guard", { label: `guarding ${nursingCompanion.id} and nursing dependants`, target: nursingCompanion.id, intendedOutcome: "detect and deter threats during nursing" }); } });
   const missingChild = missingDependentNeed(a);
   if (missingChild) candidates.push({ drive: "safeguard missing offspring", urgent: true, score: missingChild.emergency ? 920 : 520, run: () => searchForOffspring(a, missingChild) });
@@ -7238,15 +7598,39 @@ function actionCandidates(a) {
     const refillScore = finishRehydrating ? 2450 + (HYDRATION_ACQUISITION_TARGET - a.hydration) * 4 : 0;
     const arrivalRiskScore = arrivalReserveRisk ? 520 + Math.max(0, waterPlan.reserve + 10 - waterPlan.predictedAmountAtArrival) * 18 : 0;
     const forecastWaterScore = ({ comfortable: 0, "plan-soon": 360, "commit-now": 940, emergency: 1650, "predicted-failure": 2250 }[waterPlan.forecastState] || 0);
-    candidates.push({ drive: "water", urgency: waterPlan.urgency, evidenceType: "water", urgent: waterPlan.forecastState !== "comfortable" || hydrationSeverity !== "hydrated" || waterPlan.urgency >= 68 || arrivalReserveRisk || finishRehydrating, commitTicks: finishRehydrating ? 12 : hydrationSeverity === "critical" || hydrationSeverity === "severe" ? 16 : waterPlan.urgency >= 68 || arrivalReserveRisk ? 14 : 8, score: Math.max(forecastWaterScore, physiologicalWaterScore, emergencyWaterScore, refillScore, arrivalRiskScore, waterPlan.urgency * (waterPlan.urgency > 55 ? 2.65 : 1.65) + memorySupport(a, "water") * 8), run: () => executeNeedDependencyPlan(a, "water") });
+    const waterPrecedence = waterPlan.forecastState === "predicted-failure" || hydrationSeverity === "critical" ? "physiological-failure" : waterPlan.forecastState === "emergency" || hydrationSeverity === "severe" ? "high-urgency" : "ordinary";
+    candidates.push({ drive: "water", needId: "hydration", satisfierId: "surface-water", methodId: "drink-confirmed-shoreline", target: knownWaterTarget, targetKey: knownWaterTarget ? waterTargetKey(knownWaterTarget) : a.needDependencyPlan?.need === "water" ? a.needDependencyPlan.targetKey : null, completionCondition: `hydration reaches ${HYDRATION_ACQUISITION_TARGET}`, precedenceClass: waterPrecedence, urgency: waterPlan.urgency, evidenceType: "water", urgent: waterPrecedence !== "ordinary", deathIfUnsatisfied: waterPrecedence === "physiological-failure", commitTicks: finishRehydrating ? 12 : hydrationSeverity === "critical" || hydrationSeverity === "severe" ? 16 : waterPlan.urgency >= 68 || arrivalReserveRisk ? 14 : 8, score: Math.max(forecastWaterScore, physiologicalWaterScore, emergencyWaterScore, refillScore, arrivalRiskScore, waterPlan.urgency * (waterPlan.urgency > 55 ? 2.65 : 1.65) + memorySupport(a, "water") * 8), run: () => executeNeedDependencyPlan(a, "water") });
   }
   const defensiveResponse = herbivoreDefenceOpportunity(a);
-  if (defensiveResponse) candidates.push({ drive: `${defensiveResponse.action} predator`, urgent: defensiveResponse.action === "attack" || defensiveResponse.action === "flee", commitTicks: defensiveResponse.action === "watch" ? 3 : 5, score: defensiveResponse.urgency + (defensiveResponse.action === "attack" ? 75 : defensiveResponse.action === "mob" ? 45 : 0), run: () => performHerbivoreDefence(a, defensiveResponse) });
-  if (a.fear > 28) candidates.push({ drive: "fear", urgent: true, score: d.fear * 1.7 + vulnerability(a) * 25 + threat, run: () => flee(a, eatsMeat(a) && sim.tick - (a.lastDefensiveThreat?.tick || -999) < 12 ? a.lastDefensiveThreat : null) });
+  if (defensiveResponse) candidates.push({ drive: `${defensiveResponse.action} predator`, needId: "safety", satisfierId: defensiveResponse.action === "watch" ? "threat-monitoring" : defensiveResponse.action === "attack" || defensiveResponse.action === "mob" ? "defence" : "escape", methodId: defensiveResponse.action === "watch" ? "vigilance" : defensiveResponse.action === "attack" || defensiveResponse.action === "mob" ? "physical-defence" : "ordinary-escape", targetKey: defensiveResponse.predator?.id ? `entity:${defensiveResponse.predator.id}` : null, precedenceClass: defensiveResponse.action === "attack" || defensiveResponse.action === "flee" ? "immediate-lethal" : "high-urgency", immediateLethal: defensiveResponse.action === "attack" || defensiveResponse.action === "flee", urgent: defensiveResponse.action === "attack" || defensiveResponse.action === "flee", commitTicks: defensiveResponse.action === "watch" ? 3 : 5, score: defensiveResponse.urgency + (defensiveResponse.action === "attack" ? 75 : defensiveResponse.action === "mob" ? 45 : 0), run: () => performHerbivoreDefence(a, defensiveResponse) });
+  if (a.fear > 28) {
+    const fearThreat = (a.sensoryBuffer || []).filter(item => item.type === "predator" && item.targetId).sort((left, right) => dist(a, left) - dist(a, right))[0] || (sim.tick - (a.lastDefensiveThreat?.tick || -999) < 12 ? a.lastDefensiveThreat : null);
+    const fearTargetId = fearThreat?.targetId || fearThreat?.id || null;
+    const fearTargetKey = fearTargetId ? `perceived-threat:${fearTargetId}` : fearThreat?.evidenceId ? `threat-evidence:${fearThreat.evidenceId}` : `threat-field:${a.id}`;
+    candidates.push({ drive: "fear", needId: "safety", satisfierId: "create-distance", methodId: "flee-perceived-threat", target: fearThreat ? { entityId: fearTargetId, x: fearThreat.x, z: fearThreat.z, evidenceId: fearThreat.evidenceId, targetKind: "perceived-threat", confidence: fearThreat.confidence } : { regionId: `threat-field:${a.id}`, targetKind: "uncertain-threat-field", x: a.x, z: a.z }, targetKey: fearTargetKey, completionCondition: "perceived danger and fear fall below their release thresholds", precedenceClass: "high-urgency", urgent: true, score: d.fear * 1.7 + vulnerability(a) * 25 + threat, run: () => flee(a, fearThreat) });
+  }
   const rememberedDanger = isHerbivore(a) ? mostDangerousArea(a) : null;
   if (rememberedDanger && manhattan(a, rememberedDanger) < 12) candidates.push({ drive: "avoid remembered predator area", score: 34 + rememberedDanger.predatorCount * rememberedDanger.confidence * 55, run: () => flee(a, rememberedDanger) });
   const personalSpace = personalSpaceOpportunity(a);
-  if (personalSpace) candidates.push({ drive: `personal space: ${personalSpace.kind}`, urgent: ["attack", "rally-defence", "rally-aggression", "retreat"].includes(personalSpace.kind), commitTicks: personalSpace.kind === "ignore" ? 2 : 4, score: personalSpace.kind === "courtship" ? 82 + personalSpace.pressure * 25 : personalSpace.kind === "affiliate" ? 42 + personalSpace.pressure * 35 : personalSpace.kind === "orient" || personalSpace.kind === "ignore" ? 24 + personalSpace.pressure * 28 : 120 + personalSpace.pressure * 90, run: () => performPersonalSpaceInteraction(a, personalSpace) });
+  if (personalSpace) {
+    const relationshipBand = personalSpace.curves?.state?.currentBand;
+    const relationshipCrisis = ["flight", "defence"].includes(relationshipBand);
+    const proximityNeed = relationshipCrisis ? "safety" : personalSpace.needId || (personalSpace.kind === "courtship" ? "reproduction" : personalSpace.kind === "affiliate" ? "affiliation" : "autonomy");
+    const immediateRelationshipDanger = relationshipBand === "flight";
+    const defensiveRelationshipDanger = relationshipBand === "defence";
+    candidates.push({ drive: `${proximityNeed} relationship with ${personalSpace.target.id}`, need: proximityNeed, needId: proximityNeed, satisfierId: personalSpace.satisfierId || (relationshipCrisis ? "restore-safe-distance" : null), method: personalSpace.methodId || personalSpace.kind, methodId: personalSpace.methodId || personalSpace.kind, target: { entityId: personalSpace.target.id, x: personalSpace.target.x, z: personalSpace.target.z, targetKind: proximityNeed === "safety" ? "perceived-threat" : "entity" }, targetKey: personalSpace.targetKey || `${proximityNeed === "safety" ? "perceived-threat" : "entity"}:${personalSpace.target.id}`, completionCondition: Number.isFinite(personalSpace.curves?.state?.activeReleaseThreshold) ? `perceived distance exceeds ${personalSpace.curves.state.activeReleaseThreshold.toFixed(3)}` : "the relationship returns to a tolerable band", precedenceClass: immediateRelationshipDanger ? "immediate-lethal" : defensiveRelationshipDanger || ["attack", "rally-defence", "rally-aggression"].includes(personalSpace.kind) ? "high-urgency" : "ordinary", immediateLethal: immediateRelationshipDanger, urgent: immediateRelationshipDanger || defensiveRelationshipDanger || ["attack", "rally-defence", "rally-aggression"].includes(personalSpace.kind), commitTicks: personalSpace.kind === "ignore" ? 2 : ["withdrawal", "flight", "defence"].includes(relationshipBand) ? 8 : 5, score: personalSpace.kind === "courtship" ? 82 + personalSpace.pressure * 25 : personalSpace.kind === "affiliate" ? 42 + personalSpace.pressure * 35 : personalSpace.kind === "orient" || personalSpace.kind === "ignore" ? 24 + personalSpace.pressure * 28 : 120 + personalSpace.pressure * 90, proximityContext: { relationshipKey: personalSpace.relationshipKey, band: relationshipBand, completionThreshold: personalSpace.curves?.state?.activeReleaseThreshold, progressMetric: personalSpace.curves?.state?.escapeMargin }, run: () => performPersonalSpaceInteraction(a, personalSpace) });
+  } else {
+    // A staggered perception tick must not cancel an already recorded flight
+    // or defence response. Continue only from the observer-owned relationship
+    // record; once that record leaves the emergency bands this candidate
+    // disappears normally.
+    const retained = a.primaryProximityRelationship, band = retained?.band, state = retained?.targetKey ? a.proximityStates?.[retained.targetKey] : null;
+    const targetId = retained?.targetKey?.startsWith("entity:") ? retained.targetKey.slice(7) : state?.otherEntityId, target = targetId ? animalById(targetId) : null, perceivedPoint = state?.estimatedPosition;
+    if (target?.alive && Number.isFinite(perceivedPoint?.x) && Number.isFinite(perceivedPoint?.z) && ["flight", "defence"].includes(band)) {
+      const flight = band === "flight", methodId = flight ? "flee-perceived-threat" : "physical-defence";
+      candidates.push({ drive: `${flight ? "escape" : "defend against"} retained perceived threat ${target.id}`, needId: "safety", satisfierId: flight ? "create-distance" : "defence", methodId, target: { entityId: target.id, x: perceivedPoint.x, z: perceivedPoint.z, targetKind: "perceived-threat", confidence: Number(state?.confidence ?? .5) }, targetKey: retained.targetKey, completionCondition: Number.isFinite(retained.releaseThreshold) ? `perceived distance exceeds ${retained.releaseThreshold.toFixed(3)}` : "the retained relationship leaves its emergency band", precedenceClass: flight ? "immediate-lethal" : "high-urgency", immediateLethal: flight, urgent: true, commitTicks: 8, score: (flight ? 360 : 240) + Number(retained.pressure || state?.compositePressure || 0) * 100, proximityContext: { relationshipKey: retained.relationshipKey, band, completionThreshold: retained.releaseThreshold }, run: () => flight ? fleeFromPoint(a, perceivedPoint, `continuing escape from retained perceived threat ${target.id}`, { destinationSource: "retained-perceived-safety" }) : setAction(a, "defend", { label: `maintaining defence against retained perceived threat ${target.id}`, target: target.id, intendedOutcome: "remain ready until the perceived defence band releases" }) });
+    }
+  }
   const socialEncounter = socialOpportunity(a);
   if (socialEncounter) candidates.push({ drive: socialEncounter.kind === "intervene" ? "protect group member" : socialEncounter.kind === "spar" ? "social sparring" : socialEncounter.kind === "submit" ? "avoid dominance conflict" : "social contest", commitTicks: socialEncounter.kind === "spar" ? 3 : 4, score: socialEncounter.kind === "intervene" ? 180 + (socialEncounter.pressure || 0) * 110 : socialEncounter.kind === "submit" ? 55 + (socialEncounter.pressure || 0) * 55 : 28 + (socialEncounter.pressure || 0) * 82, run: () => performSocialEncounter(a, socialEncounter) });
   const careConflict = caregiverSocialOpportunity(a);
@@ -7282,7 +7666,7 @@ function actionCandidates(a) {
         const attacker = animalById(alert.targetId);
         if (!attacker?.alive) setAction(a, "guard", { label: "guarding after the group attacker disappeared", target: alert.source, intendedOutcome: "protect surviving group members" });
         else if (alert.response === "flee") fleeFromPoint(a, attacker, `retreating from ${attacker.id} after it attacked the group`);
-        else if (alert.response === "warn") { a.socialSignal = { kind: "threat", urgency: 88, x: attacker.x, z: attacker.z, sourceId: a.id, targetId: attacker.id, since: sim.tick, until: sim.tick + 12 }; a.vocalUntil = sim.tick + 2; setAction(a, "communicate", { label: `warning ${attacker.id} after its attack on ${alert.source}`, target: attacker.id, intendedOutcome: "deter another strike and alert allies" }); }
+        else if (alert.response === "warn") { a.socialSignal = { kind: "threat", urgency: 88, x: attacker.x, z: attacker.z, sourceId: a.id, targetId: attacker.id, since: sim.tick, until: sim.tick + 12 }; admitContextualVocalCall(a, a.socialSignal); setAction(a, "communicate", { label: `warning ${attacker.id} after its attack on ${alert.source}`, target: attacker.id, intendedOutcome: "deter another strike and alert allies" }); }
         else {
           if (alert.response === "rally") for (const ally of sim.animals.filter(other => other.alive && other.id !== a.id && other.groupId === a.groupId && dist(a, other) <= species[a.speciesId].hearing)) if (!other.groupAlert || other.groupAlert.until <= sim.tick) other.groupAlert = { ...alert, response: "defend", score: Math.max(110, alert.score - 15), source: a.id, until: sim.tick + 10 };
           if (!physicalContact(a, attacker)) moveToward(a, attacker, "defend", `${alert.response === "rally" ? "rallying toward" : "approaching"} group attacker ${attacker.id}`, "defend the attacked group member", { target: attacker.id, interactionKind: "fighting" });
@@ -7396,13 +7780,15 @@ function assessObservedPreyInterception(a, sight, target = null) {
   const targetDistance = sight ? dist(a, sight) : Infinity, chaseRange = huntRange(a, observedTargetShape, "chase"), sprintRange = huntRange(a, observedTargetShape, "sprint");
   const atContact = Boolean(target && predatorCanStrike(a, target));
   const motionForecast = sight ? (a.predictiveCycle?.predictions || []).find((item) => item.modelId === "motion.v1" && item.referent === sight.targetId && (!sight.evidenceId || item.evidenceRefs?.includes(sight.evidenceId))) : null;
-  const forecastPoint = motionForecast?.output?.position && Number.isFinite(motionForecast.output.position.x) && Number.isFinite(motionForecast.output.position.z) ? motionForecast.output.position : sight;
-  const forecastDistance = forecastPoint ? dist(a, forecastPoint) : Infinity, forecastConfidence = Math.min(sight?.confidence ?? 0, motionForecast?.confidence ?? sight?.confidence ?? 0);
+  const preyHypothesis = sight ? a.preyHypotheses?.[sight.targetId] || createPreyHypothesis(a, sight) : null;
+  const interceptionRegion = preyHypothesis ? planInterceptionRegion(a, preyHypothesis, { tick: sim.tick, speed: Math.max(.05, a.capabilities?.speed || species[a.speciesId].speed), cap: 4 }) : null;
+  const forecastPoint = interceptionRegion?.centre || (motionForecast?.output?.position && Number.isFinite(motionForecast.output.position.x) && Number.isFinite(motionForecast.output.position.z) ? motionForecast.output.position : sight);
+  const forecastDistance = forecastPoint ? dist(a, forecastPoint) : Infinity, forecastConfidence = Math.min(sight?.confidence ?? 0, interceptionRegion?.confidence ?? motionForecast?.confidence ?? sight?.confidence ?? 0);
   const requestedPace = a.energy < 10 && forecastDistance <= chaseRange ? "sprint" : targetDistance <= sprintRange ? "sprint" : "sustainable-run", pursuitPace = sight ? selectAffordablePace(a, requestedPace) : selectAffordablePace(a, "walk");
   const journey = sight ? metabolicJourneyBudget(a, { distance: forecastDistance, sprint: requestedPace === "sprint", thermalCost: 1 + (a.tempStress || 0) / 100 }) : null;
   const continuation = sight ? assessObjectiveContinuation({ affordablePace: pursuitPace.selected, targetDistance: forecastDistance, targetConfidence: forecastConfidence, arrivalReserve: pursuitPace.reserveAtCompletion, injury: (a.injuries || []).reduce((sum, injury) => sum + (injury.severity || 0), 0), thermalRisk: (a.tempStress || 0) / 100 }) : { decision: "abandon-objective", reason: "current prey evidence is unavailable" };
   const movement = movementCapability(a), assessment = lastResortHuntAssessment(a, { currentPreyEvidence: Boolean(sight), compatiblePrey: observedPreyCompatible(a, sight), evidenceConfidence: forecastConfidence, atContact, canTravel: movement.canTravel, canSprint: movement.canSprint, burstReserve: movement.burst, journeyViable: Boolean(journey?.viable), interceptionForecast: { source: motionForecast?.predictionId || (sight ? "current-observation-persistence" : "no-current-prey-observation"), viable: atContact || (forecastDistance <= chaseRange && ["continue", "continue-slower"].includes(continuation.decision)), distance: forecastDistance, maximumDistance: chaseRange, decision: sight ? continuation.decision : "search-only", confidence: forecastConfidence } });
-  return { assessment, observedTargetShape, targetDistance, chaseRange, sprintRange, stalkRange: huntRange(a, observedTargetShape, "stalk"), recoveryRange: huntRange(a, observedTargetShape, "recovery"), atContact, motionForecast, forecastDistance, forecastConfidence, requestedPace, pursuitPace, journey, continuation };
+  return { assessment, observedTargetShape, targetDistance, chaseRange, sprintRange, stalkRange: huntRange(a, observedTargetShape, "stalk"), recoveryRange: huntRange(a, observedTargetShape, "recovery"), atContact, motionForecast, interceptionRegion, forecastDistance, forecastConfidence, requestedPace, pursuitPace, journey, continuation };
 }
 
 function executeNeedDependencyPlan(a, need) {
@@ -7426,7 +7812,13 @@ function executeNeedDependencyPlan(a, need) {
   const rememberedPreyEvidence = speciesCanHunt(a) ? choosePreyEvidence(a.memories || []) : null;
   const preyEvidence = currentPreyEvidence || rememberedPreyEvidence;
   const foodEvidence = Boolean(localFood || (eatsPlants(a) && nearestMemory(a, "food")) || carcass || carcassMemory || preyEvidence);
-  const foodTarget = localFood ? cellAt(a.x, a.z) : carcass || (eatsPlants(a) && nearestMemory(a, "food")) || carcassMemory || preyEvidence, target = need === "water" ? waterTarget : foodTarget;
+  const foodCandidate = localFood ? cellAt(a.x, a.z) : carcass || (eatsPlants(a) && nearestMemory(a, "food")) || carcassMemory || preyEvidence;
+  const incumbentFoodTarget = priorPlan?.need === "food" && priorPlan.target ? { ...priorPlan.target, targetKey: priorPlan.targetKey } : null;
+  const candidateFoodType = carcass || carcassMemory ? "carcass" : preyEvidence && !localFood ? "prey" : "forage";
+  const incumbentFoodInvalid = Boolean(incumbentFoodTarget?.targetKind === "carcass" && incumbentFoodTarget.id != null && !sim.corpses.some(item => item.id === incumbentFoodTarget.id));
+  const foodTargetDecision = need === "food" ? retainResourceTarget({ needId: "nutrition", resourceKind: candidateFoodType, incumbent: incumbentFoodTarget, challenger: foodCandidate, tick: sim.tick, minimumReviewTick: priorPlan?.minimumUntilTick ?? -Infinity, incumbentDistance: incumbentFoodTarget ? dist(a, incumbentFoodTarget) : Infinity, challengerDistance: foodCandidate ? dist(a, foodCandidate) : Infinity, invalid: incumbentFoodInvalid, routeUnavailable: priorPlan?.routeUnavailable === true, stalled: priorPlan?.stalled === true, etaIncreaseRatio: priorPlan?.etaIncreaseRatio || 0 }) : null;
+  const foodTarget = need === "food" && foodTargetDecision?.retain ? incumbentFoodTarget : foodCandidate, target = need === "water" ? waterTarget : foodTarget;
+  const resourceType = need === "water" ? "water" : candidateFoodType;
   const targetDistance = target ? dist(a, target) : Infinity;
   const waterPlanning = need === "water" ? waterNeedPlan(a, waterTarget) : a.needPlanning?.water || waterNeedPlan(a);
   const expectedTravelHours = need === "water" ? waterPlanning.travelHours : Number.isFinite(targetDistance) ? targetDistance / Math.max(.05, a.capabilities?.speed || species[a.speciesId].speed || 1) * ecologicalHoursThisTick() : 4;
@@ -7439,7 +7831,7 @@ function executeNeedDependencyPlan(a, need) {
   const basePlan = needDependencyPlan({ need, speciesId: a.speciesId, hydration: a.hydration, fatigue: a.fatigue, energy: a.energy, stomach: a.stomach, atResource: need === "water" ? nearWater(a, 1) : localFood, hasResourceEvidence: need === "water" ? waterEvidence : foodEvidence, hasCarcass: Boolean(carcass), hasCarcassEvidence: Boolean(carcass || carcassMemory), minimumDepartureEndurance, forecastState: need === "food" && (a.stomach < 8 || a.energy < 20) ? "predicted-failure" : waterPlanning.forecastState, travelStrategy });
   const planContext = planningContextForDecision(a, "commitment"), unstabilizedPlan = { ...basePlan, protocolId: a.commitmentState?.protocolKey || null, startedAt: sim.ecologicalMinute, forecast: need === "water" ? { ...waterPlanning, metabolicJourney: fuelJourney } : { etaHours: expectedTravelHours, metabolicJourney: fuelJourney }, protectedReserves: { hydration: waterPlanning.reserve, endurance: minimumDepartureEndurance, adrenaline: true, metabolicArrival: fuelJourney?.arrivalReserve ?? null }, evidenceSnapshot: { source: target?.source || target?.channel || "none", confidence: target?.confidence ?? Number(Boolean(target)), ageTicks: target ? Math.max(0, sim.tick - Number(target.tick ?? target.lastSeen ?? sim.tick)) : null }, contextSnapshot: contextSnapshot(a, planContext), interruptionConditions: ["target disproved", "ETA exceeds the safe need window", "metabolic fuel cannot support arrival", "threat conditions change", "a nearer resource is discovered", "progress remains near zero", "group movement makes the route unsafe"] };
   const previousPlan = priorPlan;
-  const plan = stabilizeNeedDependencyPlan(previousPlan, unstabilizedPlan, { tick: sim.tick, targetKey: need === "water" ? waterTargetKey(waterTarget) : waterTargetKey(target), target, targetDecision, commitmentTicks: need === "water" ? 16 : 8 });
+  const plan = stabilizeNeedDependencyPlan(previousPlan, unstabilizedPlan, { tick: sim.tick, targetKey: need === "water" ? waterTargetKey(waterTarget) : resourceTargetKey(target, resourceType || "food"), target: target ? { ...target, targetKind: resourceType } : target, targetDecision: need === "water" ? targetDecision : foodTargetDecision, commitmentTicks: need === "water" ? 16 : 8, resourceLabel: need === "water" ? "water" : resourceType || "food" });
   if (!previousPlan || previousPlan.need !== plan.need || previousPlan.method !== plan.method || previousPlan.phase !== plan.phase || previousPlan.targetKey !== plan.targetKey) {
     const kind = !previousPlan ? "plan-start" : previousPlan.targetKey !== plan.targetKey ? "target-change" : previousPlan.phase !== plan.phase ? "phase-change" : "method-change";
     recordNeedPlanEvent(a, { kind, from: previousPlan ? `${previousPlan.need} · ${previousPlan.phase} · ${previousPlan.targetKey || "unresolved"}` : "none", to: `${plan.need} · ${plan.phase} · ${plan.targetKey || "unresolved"}`, method: plan.method, reason: kind === "target-change" ? plan.targetDecision : plan.reason });
@@ -7663,7 +8055,9 @@ function updateGroupAlerts() {
   const groupsById = new Map();
   for (const a of sim.animals) if (a.alive && a.groupId) { const list = groupsById.get(a.groupId) || []; list.push(a); groupsById.set(a.groupId, list); }
   for (const members of groupsById.values()) {
-    const signals = members.flatMap((a) => a.receivedSignals || []).filter((s) => s.confidence > 0.24);
+    const signalRows = members.flatMap(listener => (listener.receivedSignals || []).map(signal => ({ listener, signal, sender: animalById(signal.communicatedBy) }))).filter(row => row.signal.confidence > 0.24 && row.sender);
+    const responsiveSignals = signalRows.map(row => ({ ...row.signal, listenerId: row.listener.id, socialResponse: socialCueCompatibility(row.sender, row.listener, row.signal.signalKind) })).filter(signal => signal.socialResponse.score >= .28);
+    const signals = responsiveSignals;
     const threat = Math.max(0, ...members.map((a) => (a.threatAssessment?.overallConfidence || 0) * 100));
     let goal = null, score = 0, source = null, threatPoint = null;
     if (signals.some((s) => s.signalKind === "attacked")) { goal = "defend / rescue"; score = 100; source = signals.find((s) => s.signalKind === "attacked")?.communicatedBy; }
@@ -7672,6 +8066,7 @@ function updateGroupAlerts() {
     else if (signals.some((s) => s.signalKind === "care")) { goal = "caregiving"; score = 76; source = signals.find((s) => s.signalKind === "care")?.communicatedBy; }
     else if (signals.some((s) => s.signalKind === "water")) { goal = "water"; score = 55; source = signals.find((s) => s.signalKind === "water")?.communicatedBy; }
     else if (signals.some((s) => ["injury", "distress"].includes(s.signalKind))) { goal = "assist / protect"; score = 48; source = signals.find((s) => ["injury", "distress"].includes(s.signalKind))?.communicatedBy; }
+    else if (signals.some((s) => s.signalKind === "contact")) { const call = signals.filter((s) => s.signalKind === "contact").sort((left, right) => right.socialResponse.score - left.socialResponse.score)[0]; goal = "regroup / coordinate"; score = 28 + call.socialResponse.score * 32; source = call.communicatedBy; }
     for (const a of members) {
       const old = a.groupAlert;
       a.groupAlert = goal ? { goal, score, source, threat: threatPoint ? { x: threatPoint.x, z: threatPoint.z, targetId: threatPoint.targetId || null, confidence: threatPoint.confidence || 0 } : null, until: sim.tick + 10 } : old?.until > sim.tick ? old : null;
@@ -7679,7 +8074,7 @@ function updateGroupAlerts() {
   }
 }
 function socialCompatible(a, b) { if (kinshipBetween(a, b).related) return true; if (a.lifeStage === "dependent" || b.lifeStage === "dependent") return (a.careAffinity || 0.5) > 0.55 || (b.careAffinity || 0.5) > 0.55; if (a.speciesId === "hunter") return a.aggression > 0.3 || b.aggression > 0.3; return !(a.aggression > 0.86 && b.lifeStage === "juvenile") && !(b.aggression > 0.86 && a.lifeStage === "juvenile"); }
-function groupGoal(members) { const pregnancy = members.some((m) => m.pregnant || Object.values(m.socialMemory || {}).some(record => record.pregnant && members.some(member => member.id === record.partnerId))); const young = members.some((m) => m.offspringIds?.some((id) => { const child = animalById(id); return child?.alive && child.energy < 55; })); const carcass = members.some((m) => (m.sensoryBuffer || []).some((x) => x.type === "carcass") || nearestMemory(m, "carcass")); const fear = Math.max(...members.map((m) => m.fear)); const thirst = Math.max(...members.map((m) => 100 - m.hydration)); const hunger = Math.max(...members.map((m) => 100 - m.energy)); const recovery = Math.max(...members.map((m) => groupRecoveryPressure(m, members.length))); if (fear > 55) return "protection"; if (pregnancy) return "pregnancy support"; if (young) return "caregiving"; if (carcass && members[0].speciesId === "hunter") return "carcass hunt"; if (fear > 32) return "protection"; if (thirst > 56) return "water"; if (hunger > 52) return members[0].speciesId === "hunter" ? "hunting" : "foraging"; if (recovery > 24 || members.some((m) => reproductionDrive(m) > 55)) return "mates"; return "travelling"; }
+function groupGoal(members) { const pregnancy = members.some((m) => m.pregnant || Object.values(m.socialMemory || {}).some(record => record.pregnant && members.some(member => member.id === record.partnerId))); const young = members.some((m) => m.offspringIds?.some((id) => { const child = animalById(id); return child?.alive && child.energy < 55; })); const carcass = members.some((m) => (m.sensoryBuffer || []).some((x) => x.type === "carcass") || nearestMemory(m, "carcass")); const fear = Math.max(...members.map((m) => m.fear)); const thirst = Math.max(...members.map((m) => 100 - m.hydration)); const hunger = Math.max(...members.map((m) => 100 - m.energy)); const recovery = Math.max(...members.map((m) => groupRecoveryPressure(m, members.length))); const hunters = speciesCanHunt(members[0]); if (fear > 55) return "protection"; if (pregnancy) return "pregnancy support"; if (young) return "caregiving"; if (carcass && hunters) return "carcass hunt"; if (fear > 32) return "protection"; if (thirst > 56) return "water"; if (hunger > 52) return hunters ? "hunting" : "foraging"; if (recovery > 24 || members.some((m) => reproductionDrive(m) > 55)) return "mates"; return "travelling"; }
 function groupSkillFor(a, goal) { if (goal === "carcass hunt" || goal === "hunting") return (a.scentSkill || 1) * 2 + a.aggression; if (goal === "caregiving" || goal === "protection" || goal === "pregnancy support") return (a.careAffinity || 0.5) * 2 + (1 - a.aggression) + ((a.waterSkill || 1) + (a.foodSkill || 1)) * .35; if (goal === "water") return a.waterSkill || 1; if (goal === "foraging") return a.foodSkill || 1; if (goal === "mates") return a.mateSkill || 1; return ((a.waterSkill || 1) + (a.foodSkill || 1)) / 2; }
 function leadershipSuitability(a, goal) {
   if (!a?.alive || a.lifeStage === "dependent") return -Infinity;
@@ -7804,7 +8199,7 @@ function missingDependentNeed(a) {
 function searchForOffspring(a, target) {
   if (dist(a, target) > 1.4) return moveToward(a, target, target.emergency ? "protect-offspring" : "search", target.emergency ? "rushing to attacked offspring" : "searching for missing offspring", "find and safeguard offspring");
   setAction(a, target.emergency ? "guard" : "search", { label: target.emergency ? "guarding attacked offspring's last call" : "searching offspring's last known location", target: target.targetId || target.communicatedBy || null, intendedOutcome: "re-establish offspring contact" });
-  a.orientation = gradualHeading(a.orientation || 0, (a.orientation || 0) + 0.52);
+  setAuthoritativeBodyHeading(a, gradualHeading(a.orientation || 0, (a.orientation || 0) + 0.52));
   a.stationaryTicks = (a.stationaryTicks || 0) + 1;
 }
 function attendOffspring(a) {
@@ -7835,18 +8230,42 @@ function herbivoreDefenceOpportunity(a) {
   const contact = (a.sensoryBuffer || []).filter((item) => item.type === "predator" && item.targetId && ["sight", "proximity"].includes(item.channel)).sort((left, right) => dist(a, left) - dist(a, right))[0];
   const predator = contact ? animalById(contact.targetId) : null;
   if (!predator?.alive) return null;
-  const herd = visibleHerd(a), adultPredatorsNearby = (a.sensoryBuffer || []).filter((item) => item.type === "predator" && item.targetId !== predator.id).map((item) => animalById(item.targetId)).filter((hunter) => hunter?.alive && mature(hunter) && dist(predator, hunter) <= 7).length;
+  const herd = visibleHerd(a), observedPredators = (a.sensoryBuffer || []).filter((item) => item.type === "predator" && item.targetId && ["sight", "proximity"].includes(item.channel)), adultPredatorsNearby = Math.max(0, observedPredators.length - 1);
   const protectingYoung = (a.offspringIds || []).some((id) => animalById(id)?.alive) || (a.sensoryBuffer || []).some((item) => item.type === "conspecific" && animalById(item.targetId)?.lifeStage === "dependent");
   const intent = (a.predatorIntentEstimates || []).find((item) => item.predatorId === predator.id), thresholds = predatorIntentResponseThresholds(a);
-  return { ...assessHerbivoreDefence({ herbivore: a, predator, herdAdults: herd.length, adultPredatorsNearby, protectingYoung, distance: dist(a, predator), rememberedThreat: rememberedThreat(a, predator.id), attackInProgress: a.lastHit?.attackerId === predator.id && sim.tick - a.lastHit.tick < 12, targetLikelihood: intent?.selfTargetLikelihood || 0, attackImminence: intent?.attackImminence || 0, intentConfidence: intent?.confidence || 0, thresholds }), predator, contact, protectingYoung, intent };
+  const threatHypothesis = (a.threatHypotheses || []).find(item => item.subjectAssociationId === predator.id) || createThreatHypothesis(a, contact, intent || {}, { tick: sim.tick, immediateContactRisk: contact.channel === "proximity" ? 1 : 0, probableCount: observedPredators.length });
+  const distance = contact.distanceEstimate ?? dist(a, contact), attackInProgress = a.lastHit?.attackerId === predator.id && sim.tick - a.lastHit.tick < 12;
+  const base = assessHerbivoreDefence({ herbivore: a, threatHypothesis, herdAdults: herd.length, adultPredatorsNearby, protectingYoung, distance, rememberedThreat: rememberedThreat(a, predator.id), attackInProgress, thresholds });
+  if (a.speciesId !== "valley-grazer-updated") return { ...base, predator, contact, threatHypothesis, protectingYoung, intent };
+  const escapeMoves = validMoves(a), viableEscapeMoves = escapeMoves.filter(move => dist(move, predator) >= distance + .35);
+  const dependentUnderAttack = (a.offspringIds || []).some(id => { const child = animalById(id); return child?.alive && child.lastHit?.attackerId === predator.id && sim.tick - child.lastHit.tick < 12; });
+  const response = deerPredatorResponse(base, { viableEscape: viableEscapeMoves.length > 0, cornered: escapeMoves.length === 0, packEncirclement: observedPredators.length >= 3 && viableEscapeMoves.length <= 1, exhausted: a.fatigue >= 88 || !a.capabilities?.canSprint, immediateContact: physicalContact(a, predator), attackInProgress, dependentUnderAttack, distance });
+  a.deerDefenceAssessment = { tick: sim.tick, predatorId: predator.id, action: response.action, reason: response.reason, conflictPurpose: response.conflictPurpose, weapon: response.weapon, gates: { ...response.gates }, escapeOptions: viableEscapeMoves.length };
+  return { ...response, predator, contact, threatHypothesis, protectingYoung, intent, escapeOptions: viableEscapeMoves.length };
+}
+
+function roleAdjustedPursuitPoint(hunter, observation) {
+  const role = hunter.groupRoleState?.primary;
+  if (!observation || !["left-pressure", "right-pressure"].includes(role)) return observation;
+  const dx = observation.x - hunter.x, dz = observation.z - hunter.z, length = Math.hypot(dx, dz) || 1;
+  const side = role === "left-pressure" ? -1 : 1, offset = Math.min(2.5, Math.max(.8, length * .22));
+  return { ...observation, x: clamp(observation.x + -dz / length * side * offset, -HALF + 1, HALF - 1), z: clamp(observation.z + dx / length * side * offset, -HALF + 1, HALF - 1), source: `observer-owned-${role}` };
 }
 function performHerbivoreDefence(a, response) {
   const predator = response.predator;
   if (!predator?.alive) return socialWander(a, "checking where the predator went", "search");
-  if (["flee", "withdraw"].includes(response.action)) return flee(a, { x: predator.x, z: predator.z, targetId: predator.id });
-  if (response.action === "watch") return turnInPlace(a, Math.atan2(predator.z - a.z, predator.x - a.x), `watching ${predator.lifeStage} predator ${predator.id}`, "listen", "monitor the predator without closing distance");
-  if (dist(a, predator) > (response.action === "attack" ? 1.1 : 1.8)) return moveToward(a, predator, "defend", `${response.action === "attack" ? "charging" : "group-mobbing"} ${predator.lifeStage} predator ${predator.id}`, "drive the predator away while retaining an escape route", { interactionKind: "fighting" });
-  if (response.action === "attack") return herbivoreCounterattack(a, predator);
+  const perceived = response.contact || response.threatHypothesis?.locationRegion?.centre;
+  if (["flee", "withdraw"].includes(response.action)) {
+    if (a.speciesId === "valley-grazer-updated" && (a.nextPredatorAlarmTick || 0) <= sim.tick) {
+      a.socialSignal = { kind: "alarm", urgency: 92, sourceId: a.id, targetId: predator.id, predatorId: predator.id, since: sim.tick, until: sim.tick + 4, evidenceId: response.contact?.evidenceId || null };
+      admitContextualVocalCall(a, a.socialSignal); a.tailFlagUntil = sim.tick + 8; a.nextPredatorAlarmTick = sim.tick + 36;
+    }
+    const plan = planEscapeFromThreat(a, [response.threatHypothesis].filter(Boolean), { tick: sim.tick, distance: response.action === "flee" ? 6 : 3.5 }); if (plan) return flee(a, { ...plan.threatRegion.centres[0], x: plan.threatRegion.centres[0].x, z: plan.threatRegion.centres[0].z, targetId: predator.id, escapePlan: plan }); return flee(a, perceived);
+  }
+  if (response.action === "watch") return turnInPlace(a, Math.atan2(perceived.z - a.z, perceived.x - a.x), `watching perceived predator ${predator.id}`, "listen", "monitor the predator without closing distance");
+  if (response.action === "defend" && !physicalContact(a, predator) && !response.gates?.dependentUnderAttack) return turnInPlace(a, Math.atan2(perceived.z - a.z, perceived.x - a.x), `holding a last-resort defensive position against ${predator.id}`, "defend", response.reason);
+  if (!physicalContact(a, predator)) return moveToward(a, perceived, "defend", `${response.action === "attack" ? "charging" : "group-mobbing"} perceived predator ${predator.id}`, "seek physical contact while retaining an escape route", { interactionKind: "fighting", destinationSource: "observer-owned-threat-hypothesis" });
+  if (["attack", "defend"].includes(response.action)) return herbivoreCounterattack(a, predator);
   predator.fear = clamp(predator.fear + 14 + response.numericalAdvantage * 3, 0, 100); predator.lastDefensiveThreat = { sourceId: a.id, x: a.x, z: a.z, tick: sim.tick };
   setAction(a, "defend", { label: `threat-displaying and mobbing ${predator.id}`, target: predator.id, intendedOutcome: "displace predator without treating it as prey" });
 }
@@ -7862,18 +8281,19 @@ function runPredation(a) {
   if (!activeTarget && !eligible) return rest(a, "conserving energy until hunger justifies a hunt");
   if (a.predation.lastKillTick != null && a.predation.nextHuntTick == null) a.predation.nextHuntTick = sim.tick;
   if (!a.predation.targetId || a.predation.targetKind !== "prey" || !animalById(a.predation.targetId)?.alive) {
-    const target = choosePerceivedPrey(a);
-    if (!target) {
+    const preyHypothesis = choosePerceivedPrey(a);
+    if (!preyHypothesis) {
       if (a.energy < 10) {
         const movement = movementCapability(a);
         a.lastResortHuntAssessment = { ...lastResortHuntAssessment(a, { currentPreyEvidence: false, compatiblePrey: false, evidenceConfidence: 0, canTravel: movement.canTravel, canSprint: movement.canSprint, burstReserve: movement.burst, journeyViable: false, interceptionForecast: { source: "no-current-prey-observation", viable: false, decision: "search-only", confidence: 0 } }), tick: sim.tick, targetId: null };
       }
       return followPreyTrailOrWander(a);
     }
-    const contact = preyContactFor(a, target.id);
-    const group = groupObservation(a.sensoryBuffer || [], target.id), awareness = inferPreyAwareness(a, contact, group.size);
-    a.predation = observePrey(transitionPredation(a.predation, "assess", sim.tick, { targetKind: "prey", targetId: target.id, startedTick: sim.tick }), contact, sim.tick, awareness.level, group);
-    setAction(a, "evaluate-prey", { label: "evaluating prey", target: target.id, intendedOutcome: "choose a safe hunting approach" });
+    const targetId = preyHypothesis.subjectAssociationId, contact = preyContactFor(a, targetId);
+    a.preyHypotheses ||= {}; a.preyHypotheses[targetId] = preyHypothesis;
+    const group = groupObservation(a.sensoryBuffer || [], targetId), awareness = inferPreyAwareness(a, contact, group.size);
+    a.predation = observePrey(transitionPredation(a.predation, "assess", sim.tick, { targetKind: "prey", targetId, targetHypothesisId: preyHypothesis.hypothesisId, startedTick: sim.tick }), contact, sim.tick, awareness.level, group);
+    setAction(a, "evaluate-prey", { label: "evaluating observed prey", target: targetId, intendedOutcome: "choose a safe hunting approach" });
   }
   const target = animalById(a.predation.targetId);
   if (!target || !target.alive) { a.predation = clearPredation(a.predation, sim.tick, "target unavailable"); return; }
@@ -7929,7 +8349,8 @@ function runPredation(a) {
     const sprint = pursuitPace.selected === "sprint";
     const intent = predatorContactIntent(a, target, sight);
     if (continuation.decision === "pause-and-observe") { a.predation = transitionPredation(a.predation, "reassess", sim.tick, { reason: continuation.reason }); return beginFocusedVigilance(a, `watching ${target.id} while burst capacity recovers`, 2); }
-    return moveToward(a, sight, "chase", sprint ? "burst chasing perceived prey" : `continuing ${pursuitPace.selected.replaceAll("-", " ")} pursuit of perceived prey`, "make physical contact with prey", { sprint, contactIntent: intent });
+    const rolePoint = roleAdjustedPursuitPoint(a, sight);
+    return moveToward(a, rolePoint, "chase", ["left-pressure", "right-pressure"].includes(a.groupRoleState?.primary) ? `${a.groupRoleState.primary.replace("-", " ")} using perceived prey motion` : sprint ? "burst chasing perceived prey" : `continuing ${pursuitPace.selected.replaceAll("-", " ")} pursuit of perceived prey`, "make physical contact with prey", { sprint, contactIntent: intent, destinationSource: rolePoint.source || "observer-owned-prey-observation" });
   }
   queuePredatorContactAttack(a, predatorContactIntent(a, target, sight));
 }
@@ -7990,17 +8411,18 @@ function herbivoreCounterattack(defender, hunter) {
   if (!physicalContact(defender, hunter)) { moveToward(defender, hunter, "defend", `approaching ${hunter.id} to make defensive contact`, "make physical contact before counterattack", { interactionKind: "fighting" }); return; }
   const hunterStrikeEquivalent = 18 + rand() * 18;
   const defence = biologicalPhenotype(defender)?.defence, damage = hunterStrikeEquivalent * 0.10 * (.35 + (defence?.counterattack || 0));
-  chargeDiscreteActivity(defender, "fight", 3.6, "horn-hoof-counterattack");
+  const updatedDeer = defender.speciesId === "valley-grazer-updated", weapon = updatedDeer ? "front-hoof-or-kick" : "horn-hoof-counterattack";
+  chargeDiscreteActivity(defender, "fight", 3.6, weapon);
   setAction(defender, "defend", { label: `defending against ${hunter.id}`, target: hunter.id, intendedOutcome: "repel hunter" });
-  strikeAnimal(defender, hunter, damage, "horn/hoof defence");
+  strikeAnimal(defender, hunter, damage, updatedDeer ? "front-hoof defence" : "horn/hoof defence");
   hunter.fear = clamp(hunter.fear + 10, 0, 100);
   if (hunter.health <= 0) die(hunter, `killed by ${defender.id}`, defender.id);
 }
 
 function choosePerceivedPrey(a) {
   const contact = (a.sensoryBuffer || []).filter((item) => ["sight", "proximity"].includes(item.channel) && item.type === "animal" && item.targetId && item.confidence > .18 && observedPreyCompatible(a, item)).sort((left, right) => (dist(a, left) - left.confidence * 2 - rememberedOpportunity(a, left.targetId) * 1.4 + rememberedThreat(a, left.targetId) * 1.2) - (dist(a, right) - right.confidence * 2 - rememberedOpportunity(a, right.targetId) * 1.4 + rememberedThreat(a, right.targetId) * 1.2) || String(left.targetId).localeCompare(String(right.targetId)))[0];
-  const seen = contact ? animalById(contact.targetId) : null;
-  return seen?.alive ? seen : undefined;
+  if (!contact || !animalById(contact.targetId)?.alive) return undefined;
+  return createPreyHypothesis(a, contact, { apparentIsolation: groupObservation(a.sensoryBuffer || [], contact.targetId).size <= 1, pursuitCostEstimate: dist(a, contact), approachCover: contact.coverFraction || 0 });
 }
 
 function sightContactFor(a, targetId) { return (a.sensoryBuffer || []).find((m) => m.targetId === targetId && m.channel === "sight" && m.confidence > 0.12); }
@@ -8080,9 +8502,10 @@ function seekMate(a, establishedMate = null) {
     const record = a.socialMemory?.[contact.targetId] || {}, preferred = contact.targetId === strategy.preferredPartnerId;
     const femaleReputation = a.sex === "F" ? (a.femaleMateGraph?.[contact.targetId]?.alignment ?? .5) : .5;
     const maleRating = a.sex === "M" ? (a.maleFemaleRatings?.[contact.targetId]?.rating ?? .5) : .5;
-    if (strategy.kind === "partner-bonded") return (preferred ? 4 : -2) + (record.affinity || 0) + (record.matings || 0) * .2;
-    if (strategy.kind === "broad-courtship") return 1 - Math.min(1, (record.courtshipAttempts || 0) / 3) + (record.affinity || 0) * .2;
-    return (record.affinity || 0) * .8 + (record.matings || 0) * .12 - (record.courtshipAttempts || 0) * .04 + (femaleReputation - .5) * 1.2 + (maleRating - .5) * .8;
+    const rutAccess = a.speciesId === "valley-grazer-updated" && a.sex === "M" && a.rutStatus?.until > sim.tick ? a.rutStatus.outcome === "holding-access" ? .85 : -.65 : 0;
+    if (strategy.kind === "partner-bonded") return (preferred ? 4 : -2) + (record.affinity || 0) + (record.matings || 0) * .2 + rutAccess;
+    if (strategy.kind === "broad-courtship") return 1 - Math.min(1, (record.courtshipAttempts || 0) / 3) + (record.affinity || 0) * .2 + rutAccess;
+    return (record.affinity || 0) * .8 + (record.matings || 0) * .12 - (record.courtshipAttempts || 0) * .04 + (femaleReputation - .5) * 1.2 + (maleRating - .5) * .8 + rutAccess;
   };
   const contacts = available.sort((left, right) => mateScore(right) - mateScore(left) || String(left.targetId).localeCompare(String(right.targetId)));
   const contact = contacts[0];
@@ -8348,7 +8771,7 @@ function drink(a) {
   }
   if (!state.facing || !state.stationary) {
     clearFrameMotion(a);
-    a.orientation = gradualHeading(a.orientation || 0, state.desiredOrientation);
+    setAuthoritativeBodyHeading(a, gradualHeading(a.orientation || 0, state.desiredOrientation));
     a.drinkingSource = { id: source.cell.id, x: contact.edgeX, z: contact.edgeZ, reservationKey: source.reservationKey };
     return setAction(a, "orient", { label: "stopping and turning directly toward the water", target: source.cell.id, intendedOutcome: "face the water before drinking" });
   }
@@ -8393,8 +8816,8 @@ function rest(a, label = "resting", actionKey = "rest") {
 function turnInPlace(a, orientation, label, actionKey = "listen", intendedOutcome = "localise danger") {
   const visual = visualState(a);
   setAction(a, actionKey, { label, intendedOutcome });
-  a.orientation = gradualHeading(a.orientation || 0, orientation);
-  a.visualMove = { fromX: visual.x, fromZ: visual.z, toX: a.x, toZ: a.z, fromOrientation: visual.orientation, toOrientation: a.orientation, started: performance.now(), duration: clamp(430 / Math.max(1, requestedTicksPerSecond()), 80, 430) };
+  setAuthoritativeBodyHeading(a, gradualHeading(a.orientation || 0, orientation));
+  a.visualMove = { fromX: visual.x, fromZ: visual.z, toX: a.x, toZ: a.z, fromOrientation: visual.orientation, toOrientation: a.orientation, started: performance.now(), duration: continuousPresentationDuration(requestedTicksPerSecond()) };
 }
 function beginFocusedVigilance(a, label, duration = 3) {
   a.alertPauseUntil = Math.max(a.alertPauseUntil || 0, sim.tick + duration);
@@ -8404,27 +8827,25 @@ function fearfulListen(a, predator) {
   const bearing = Math.atan2(predator.z - a.z, predator.x - a.x);
   const scan = bearing + Math.sin(sim.tick * 1.7 + a.x * 0.13 + a.z * 0.17) * 0.72;
   a.alertPauseUntil = sim.tick + alertPauseDuration(a.speciesId, rand);
-  turnInPlace(a, scan, "frozen momentarily and scanning for danger; listening farther");
-  a.actionState.key = "freeze";
+  turnInPlace(a, scan, "frozen momentarily and scanning for danger; listening farther", "freeze", "increase visual and auditory detection before choosing an escape direction");
 }
 function flee(a, sharedThreat = null) {
   const predator = sharedThreat || nearestMemory(a, "predator");
   if (!sharedThreat && predator && shouldFreeze(a.speciesId, a.fear, rand)) return fearfulListen(a, predator);
-  const predatorEntity = predator?.targetId ? animalById(predator.targetId) : predator?.id ? animalById(predator.id) : null;
   const predatorDistance = predator ? Math.hypot(a.x - predator.x, a.z - predator.z) : Infinity;
-  const speed = Math.max(.01, predatorEntity?.capabilities?.speed || species.hunter.speed || 1), contactEta = Number.isFinite(predatorDistance) ? predatorDistance / speed * ecologicalHoursThisTick() : Infinity;
+  const threatHypothesis = (a.threatHypotheses || []).find(item => item.subjectAssociationId === (predator?.targetId || predator?.id)) || null, observedVelocity = threatHypothesis?.motion?.velocity?.estimate, estimatedClosingSpeed = observedVelocity ? Math.max(.01, Math.hypot(observedVelocity.x, observedVelocity.z)) : null, contactEta = Number.isFinite(predatorDistance) && estimatedClosingSpeed ? predatorDistance / estimatedClosingSpeed * ecologicalHoursThisTick() : Infinity;
   const herd = a.speciesId === "grazer" ? visibleHerd(a) : [], assessment = emergencyReleaseAssessment(a, {
-    directPursuit: Boolean(predator && (a.fear > 42 || predatorEntity?.predation?.targetId === a.id)), targeted: predatorEntity?.predation?.targetId === a.id,
-    pursuerId: predatorEntity?.id || predator?.targetId, contactEta, targetLikelihood: a.predatorIntent?.targetLikelihood ?? (a.fear || 0) / 100,
-    distanceTrend: a.predatorIntent?.distanceTrend ?? -Math.max(0, Number(predatorEntity?.capabilities?.speed || 0) - Number(a.capabilities?.speed || 0)), routeQuality: .7,
+    directPursuit: Boolean(predator && (a.fear > 42 || (threatHypothesis?.targeting?.probability || 0) >= .55)), targeted: (threatHypothesis?.targeting?.probability || 0) >= .72,
+    pursuerId: predator?.targetId || predator?.id, contactEta, targetLikelihood: threatHypothesis?.targeting?.probability ?? (a.fear || 0) / 100,
+    distanceTrend: estimatedClosingSpeed == null ? 0 : -estimatedClosingSpeed, routeQuality: .7,
     congestion: nearbyAnimals(a, 1.5).length / 8, alliesReachable: herd.length > 0, safetyEta: herd.length ? Math.min(...herd.map((other) => dist(a, other))) / Math.max(.01, a.capabilities?.speed || 1) * ecologicalHoursThisTick() : Infinity,
     immediateLethalThreat: contactEta < .4 || (a.health || 100) < 25,
   });
   a.emergencyRelease = assessment; recordEmergencyAssessment(a, assessment, sim.tick); a.emergencyReleaseAuthorised = assessment.released;
-  if (assessment.released || (a.fear || 0) > 55) activateStressResponse(a, { triggerId: predatorEntity?.id || predator?.targetId, triggerKind: "direct-pursuit", confidence: predator?.confidence ?? a.fear / 100, intensity: assessment.released ? .9 : clamp(a.fear / 100, .35, .8) }, sim.tick);
-  const dx = predator ? a.x - predator.x : Math.cos(a.orientation || 0), dz = predator ? a.z - predator.z : Math.sin(a.orientation || 0), length = Math.hypot(dx, dz) || 1, destination = { x: clamp(a.x + dx / length * 5, -HALF + 1, HALF - 1), z: clamp(a.z + dz / length * 5, -HALF + 1, HALF - 1) };
-  a.flightState ||= { phase: "orient", threatId: predatorEntity?.id || predator?.targetId || null, threatConfidence: 0, startedAt: sim.tick, separation: 0, safeSeparation: Math.max(7, species[a.speciesId].vision * .7), escapeTarget: null, burstUsed: false };
-  a.flightState.threatId = predatorEntity?.id || predator?.targetId || a.flightState.threatId; a.flightState.threatConfidence = predator?.confidence ?? a.fear / 100; a.flightState.separation = predatorDistance; a.flightState.escapeTarget = destination;
+  if (assessment.released || (a.fear || 0) > 55) activateStressResponse(a, { triggerId: predator?.targetId || predator?.id, triggerKind: "direct-pursuit", confidence: threatHypothesis?.targeting?.confidence ?? predator?.confidence ?? a.fear / 100, intensity: assessment.released ? .9 : clamp(a.fear / 100, .35, .8) }, sim.tick);
+  const escapePlan = sharedThreat?.escapePlan || planEscapeFromThreat(a, [threatHypothesis].filter(Boolean), { tick: sim.tick, distance: 5 }), dx = escapePlan?.escapeDirection.x ?? (predator ? a.x - predator.x : Math.cos(a.orientation || 0)), dz = escapePlan?.escapeDirection.z ?? (predator ? a.z - predator.z : Math.sin(a.orientation || 0)), length = Math.hypot(dx, dz) || 1, destination = escapePlan?.destinationRegion?.centre ? { x: clamp(escapePlan.destinationRegion.centre.x, -HALF + 1, HALF - 1), z: clamp(escapePlan.destinationRegion.centre.z, -HALF + 1, HALF - 1) } : { x: clamp(a.x + dx / length * 5, -HALF + 1, HALF - 1), z: clamp(a.z + dz / length * 5, -HALF + 1, HALF - 1) };
+  a.flightState ||= { phase: "orient", threatId: predator?.targetId || predator?.id || null, threatConfidence: 0, startedAt: sim.tick, separation: 0, safeSeparation: Math.max(7, species[a.speciesId].vision * .7), escapeTarget: null, burstUsed: false };
+  a.flightState.threatId = predator?.targetId || predator?.id || a.flightState.threatId; a.flightState.threatConfidence = threatHypothesis?.targeting?.confidence ?? predator?.confidence ?? a.fear / 100; a.flightState.separation = predatorDistance; a.flightState.escapeTarget = destination; a.flightState.escapePlan = escapePlan;
   const immediate = predatorDistance < 3.2 || contactEta < .5, separated = predatorDistance >= a.flightState.safeSeparation, requested = immediate && !a.flightState.burstUsed ? "sprint" : separated ? "walk" : "sustainable-run", pace = selectAffordablePace(a, requested);
   a.flightState.phase = requested === "sprint" && pace.selected === "sprint" ? "separation-burst" : separated ? "vigilant-recovery" : "sustainable-escape"; if (pace.selected === "sprint") a.flightState.burstUsed = true;
   applyMove(a, destination, "flee", `${a.flightState.phase.replaceAll("-", " ")} from perceived danger at ${pace.selected.replaceAll("-", " ")} pace`, { target: predator?.targetId, intendedOutcome: "increase distance from perceived danger without sustaining maximum sprint unnecessarily", sprint: pace.selected === "sprint", destinationSource: sharedThreat ? "group-threat" : predator ? "threat-memory" : "escape-heading" });
@@ -8437,7 +8858,7 @@ function wander(a, key = "wander", label = "exploring") {
   const destination = selectHabitatWeighted(a, choices, rand()) || { x: a.x, z: a.z };
   applyMove(a, destination, key, sprint ? `sprinting sporadically while ${label}` : label, { sprint, intendedOutcome: key === "search" ? "locate resource or entity" : "explore suitable surroundings" });
 }
-function moveToward(a, target, actionKey, label, intendedOutcome, options = {}) { applyMove(a, target, actionKey, label, { ...options, target: target.id || target.targetId || `${target.x},${target.z}`, intendedOutcome, perceivedTarget: target, destinationSource: target.channel || target.type ? "perceived-evidence" : "environment" }); }
+function moveToward(a, target, actionKey, label, intendedOutcome, options = {}) { applyMove(a, target, actionKey, label, { ...options, target: target.id || target.targetId || `${target.x},${target.z}`, intendedOutcome, perceivedTarget: target, destinationSource: options.destinationSource || (target.channel || target.type ? "perceived-evidence" : "environment") }); }
 function visualState(a, now = performance.now(), target = {}) {
   // fx/fz are continuous surface coordinates. x/z remain the hidden ecology
   // grid location used for reproducible contacts, feeding and hydrology.
@@ -8453,10 +8874,10 @@ function visualState(a, now = performance.now(), target = {}) {
   target.x = move.fromX + (move.toX - move.fromX) * t; target.z = move.fromZ + (move.toZ - move.fromZ) * t; target.orientation = move.fromOrientation + turn * turnEase; return target;
 }
 function beginAnimalPresentation(starts, now = performance.now()) {
-  const ticksPerSecond = requestedTicksPerSecond();
-  // A manual Step at the slider's 0 setting still gets a readable one-second
-  // transition instead of an effectively infinite animation.
-  const duration = ticksPerSecond > 0 ? 1000 / ticksPerSecond : 1000;
+  // Movement slightly overlaps the expected tick interval. Each new tick
+  // retargets from the displayed pose, preserving continuous screen motion
+  // while all decisions, contacts and energy accounting remain tick-owned.
+  const duration = continuousPresentationDuration(requestedTicksPerSecond());
   for (const a of sim.animals) {
     if (!a.alive) continue;
     const start = starts.get(a.id);
@@ -9562,6 +9983,29 @@ function updateEntityPosture(rendered, a, state, now, visual = a, groundRestProg
     if (parts.head) { parts.head.position.y += pose.headLift; parts.head.position.z += pose.headForward; parts.head.rotation.x += pose.headPitch; }
   }
   else if (state.action.posture === "birth" && a.sex === "F") { const labour = Math.sin(now * .006); parts.body.position.y -= .1; parts.body.scale.z *= 1 + Math.abs(labour) * .045; if (parts.head) parts.head.position.y -= .08; }
+  const interactionPartner = state.action.target ? animalById(state.action.target) : null;
+  // Original generic founders are a permanent visual-compatibility option.
+  // Their copied updated descendants, the other catalogue species and future
+  // species use the shared dynamic layer.
+  const preserveOriginalFounder = a.speciesId === "grazer" || a.speciesId === "hunter", deerOwnsSpecificLayer = a.speciesId === "valley-grazer-updated";
+  const dynamicPose = dynamicInteractionPose(a, { actionKey: preserveOriginalFounder || deerOwnsSpecificLayer ? "idle" : state.action.key, partner: interactionPartner?.alive ? interactionPartner : null, wallTimeMs: now, separation: interactionPartner?.alive ? dist(a, interactionPartner) : Infinity, contactSpan: interactionPartner?.alive ? bodyRadius(a) + bodyRadius(interactionPartner) : 0, confidence: a.rutContest?.assessmentConfidence });
+  rendered.userData.dynamicInteractionPose = dynamicPose;
+  if (dynamicPose.active) {
+    parts.body.position.y += dynamicPose.body.lift; parts.body.position.z += dynamicPose.body.forward; parts.body.position.x += dynamicPose.body.lateral; parts.body.rotation.x += dynamicPose.body.pitch; parts.body.rotation.y += dynamicPose.body.yaw; parts.body.rotation.z += dynamicPose.body.roll;
+    if (parts.head) { parts.head.position.y += dynamicPose.head.lift; parts.head.position.z += dynamicPose.head.forward; parts.head.rotation.x += dynamicPose.head.pitch; parts.head.rotation.y += dynamicPose.head.yaw; parts.head.rotation.z += dynamicPose.head.roll; }
+    if (parts.tail) { parts.tail.rotation.x += dynamicPose.tail.pitch; parts.tail.rotation.y += dynamicPose.tail.yaw; }
+  }
+  const deerHistory = rendered.userData.deerAnimationHistory ||= { recentMotifs: [], currentKey: null };
+  const rutOutcome = a.rutStatus?.outcome === "holding-access" ? "winner" : a.rutStatus?.outcome === "yielded" ? "loser" : null;
+  const deerPose = deerDynamicPose(a, { actionKey: state.action.key, partner: interactionPartner?.alive ? interactionPartner : null, wallTimeMs: now, recentMotifs: deerHistory.recentMotifs, rutOutcome, separation: interactionPartner?.alive ? dist(a, interactionPartner) : Infinity, contactSpan: interactionPartner?.alive ? bodyRadius(a) + bodyRadius(interactionPartner) : 0 });
+  rendered.userData.deerDynamicPose = deerPose;
+  const deerPoseKey = deerPose.active ? `${deerPose.motifId}:${deerPose.epoch}` : null;
+  if (deerPoseKey && deerPoseKey !== deerHistory.currentKey) { deerHistory.currentKey = deerPoseKey; deerHistory.recentMotifs = [...deerHistory.recentMotifs, deerPose.motifId].slice(-6); }
+  if (deerPose.active) {
+    parts.body.position.y += deerPose.body.lift; parts.body.position.z += deerPose.body.forward; parts.body.position.x += deerPose.body.lateral; parts.body.rotation.x += deerPose.body.pitch; parts.body.rotation.y += deerPose.body.yaw; parts.body.rotation.z += deerPose.body.roll;
+    if (parts.head) { parts.head.position.y += deerPose.head.lift; parts.head.position.z += deerPose.head.forward; parts.head.rotation.x += deerPose.head.pitch; parts.head.rotation.y += deerPose.head.yaw; parts.head.rotation.z += deerPose.head.roll; }
+    if (parts.tail) { parts.tail.rotation.x += deerPose.tail.pitch; parts.tail.rotation.y += deerPose.tail.yaw; }
+  }
   if (groundRestProgress > 0) {
     // Resting is one coherent vertical pose, not a squash of independent body
     // parts. Moving every anatomical part by the same eased amount keeps the
@@ -9732,10 +10176,13 @@ function syncAnimalVisuals(now, motionNow = animalMotionTimeMs) {
     const channels = rendered.userData.presentationChannels || new Set();
     updateAnimalTransientParts(rendered, a, state, now);
     updateVisibleEyeDynamics(rendered, a);
+    updateVisibleEarDynamics(rendered, a);
     const groundRestProgress = groundedPostureProgress(rendered, a, state.action.posture, now);
     const scale = animalVisualScale(a), standingClearance = animalGroundOffset(scale, "idle"), restingClearance = animalGroundOffset(scale, "rest");
     const movementMedium = terrainMobilityAssessment(a, cellAt(visual.x, visual.z)).medium, flightLift = movementMedium === "flight" && !state.movement.stationary ? scale * 1.35 : 0;
-    const terrainSupport = poseOnTerrain(rendered, visual, standingClearance + (restingClearance - standingClearance) * groundRestProgress + flightLift);
+    const presentationClearance = standingClearance + (restingClearance - standingClearance) * groundRestProgress + flightLift;
+    rendered.userData.presentationClearance = presentationClearance;
+    const terrainSupport = poseOnTerrain(rendered, visual, presentationClearance);
     if (graphicsSettings.contactShadows && contactShadowCount < 1024) {
       contactShadowDummy.position.set(visual.x, terrainRenderHeight(visual.x, visual.z) + .025, visual.z);
       contactShadowDummy.quaternion.copy(frameScratch.slope);
@@ -9760,6 +10207,34 @@ function syncAnimalVisuals(now, motionNow = animalMotionTimeMs) {
   animalContactShadows.count = contactShadowCount;
   if (contactShadowCount) animalContactShadows.instanceMatrix.needsUpdate = true;
   sweepDormantConstellationPanelResources(now);
+}
+
+// Expensive anatomy, overlay and panel work may be throttled for large
+// populations. Root transforms must still update every rendered frame or the
+// animals visibly advance in steps. This presentation-only pass cannot affect
+// authoritative movement, contacts, decisions or energy accounting.
+function syncAnimalMotionRoots(now, motionNow = animalMotionTimeMs) {
+  for (const [id, rendered] of animalRenderCache) {
+    const a = animalById(id);
+    if (!a?.alive || !rendered.visible) continue;
+    const current = applyNursingVisualPosition(a, applyMatingVisualPosition(a, visualState(a, now, frameScratch.visual), now), now);
+    const visual = { x: current.x, z: current.z, orientation: current.orientation };
+    rendered.userData.presentationVisual = visual;
+    const state = entityPresentationCache.get(a.id), posture = state?.action?.posture || "idle";
+    const terrainSupport = poseOnTerrain(rendered, visual, rendered.userData.presentationClearance ?? animalGroundOffset(animalVisualScale(a), posture));
+    // The observed subject receives dense anatomy and gait animation even when
+    // population-wide presentation work is on a reduced cadence.
+    if (a.id === selectedId && state) {
+      refreshFrameMovement(state, a, now);
+      state.movement.facingDirection = visual.orientation;
+      updateAnimalTransientParts(rendered, a, state, now);
+      updateVisibleEyeDynamics(rendered, a);
+      updateVisibleEarDynamics(rendered, a);
+      const groundRestProgress = groundedPostureProgress(rendered, a, posture, now);
+      updateEntityPosture(rendered, a, state, motionNow, visual, groundRestProgress);
+      correctAnimalGroundPenetration(rendered, terrainSupport.height);
+    }
+  }
 }
 function terrainTravelEffects(c, subject) {
   const speciesId = typeof subject === "string" ? subject : subject?.speciesId;
@@ -9786,20 +10261,32 @@ function applyMove(a, p, actionKey, label, options = {}) {
   const contactTarget = targetId ? sim.animals.find((other) => other.id === targetId) || sim.corpses.find((corpse) => corpse.id === targetId) : null;
   const spacingKind = options.interactionKind || (actionKey === "chase" ? "attack" : ["mate-search", "courtship", "accept-mate", "mating"].includes(actionKey) ? "mating" : actionKey === "nurse" ? "nursing" : actionKey === "drink" ? "drinking" : ["scavenge", "feed-carcass"].includes(actionKey) ? "feeding" : actionKey === "spar" ? "sparring" : ["social-attack", "intervene"].includes(actionKey) ? "fighting" : "ordinary");
   const radius = options.interactionRadius ?? (contactTarget ? interactionRadius(a, contactTarget, spacingKind) : .1);
+  const commitmentId = a.commitmentState?.episode?.commitmentId || a.commitmentState?.commitmentId || null, targetKey = a.commitmentState?.episode?.targetKey || a.needDependencyPlan?.targetKey || (targetId ? `entity:${targetId}` : null);
   const stableWaterRequestId = a.needDependencyPlan?.need === "water" && ["travel", "search"].includes(actionKey) && a.needDependencyPlan.targetKey
     ? `water:${a.needDependencyPlan.planId || a.needDependencyPlan.targetKey}:${a.needDependencyPlan.phase || "travel"}`
     : null;
-  const requestId = stableWaterRequestId || `${actionKey}:${targetId || `${Number(p.x).toFixed(2)},${Number(p.z).toFixed(2)}`}`;
+  // A route destination may be refined without creating a new movement
+  // purpose. Coordinate-derived IDs made every refinement look like a new
+  // request, bypassing retention and allowing adjacent choices to alternate.
+  const requestId = stableWaterRequestId || options.movementRequestId || `${actionKey}:${commitmentId || targetKey || targetId || "uncommitted"}`;
   const desiredPace = options.sprint ? "sprint" : actionKey === "stalk" ? "stalk" : "walk", paceSelection = selectAffordablePace(a, desiredPace), requestedSprint = paceSelection.selected === "sprint" && a.lifeStage !== "dependent";
   if (paceSelection.selected === "stationary") { setBlockedAction(a, paceSelection.reason, { label: `unable to move while ${label}`, target: options.target, intendedOutcome: options.intendedOutcome }); return false; }
   const movementMode = paceSelection.selected;
-  const nextMovementRequest = createMovementRequest(requestId, p, { destinationSource: options.destinationSource, allowOutsideNavmesh: Boolean(options.allowOutsideNavmesh), perceivedTarget: options.perceivedTarget ? { targetId: options.perceivedTarget.targetId, x: options.perceivedTarget.x, z: options.perceivedTarget.z, vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0, confidence: options.perceivedTarget.confidence ?? 1, velocityConfidence: options.perceivedTarget.velocityConfidence || 0, evidenceId: options.perceivedTarget.evidenceId || options.perceivedTarget.id || null, observedTick: options.perceivedTarget.observedTick ?? sim.tick } : null, observationId: options.perceivedTarget?.evidenceId || options.perceivedTarget?.id || null, observationTick: options.perceivedTarget?.observedTick ?? sim.tick, predictedVelocity: options.perceivedTarget ? { vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0 } : null, velocityConfidence: options.perceivedTarget?.velocityConfidence || 0, interactionRadius: radius, urgency: requestedSprint ? 1 : .5, mode: movementMode, contactTargetId: targetId, contactIntent: options.contactIntent || null });
-  if (equivalentMovementRequest(a.movementRequest, nextMovementRequest)) {
+  const localAdjustment = options.localAdjustment || (options.destinationSource === "personal-space" ? { kind: "personal-space", entityId: targetId } : null);
+  const nextMovementRequest = createMovementRequest(requestId, p, { destinationSource: options.destinationSource, commitmentId, targetKey, contactId: a.needDependencyPlan?.contactReservationKey || null, routeId: commitmentId && targetKey ? `${commitmentId}:${targetKey}` : null, movementPurpose: actionKey, localAdjustment, createdTick: sim.tick, allowOutsideNavmesh: Boolean(options.allowOutsideNavmesh), perceivedTarget: options.perceivedTarget ? { targetId: options.perceivedTarget.targetId, x: options.perceivedTarget.x, z: options.perceivedTarget.z, vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0, confidence: options.perceivedTarget.confidence ?? 1, velocityConfidence: options.perceivedTarget.velocityConfidence || 0, evidenceId: options.perceivedTarget.evidenceId || options.perceivedTarget.id || null, observedTick: options.perceivedTarget.observedTick ?? sim.tick } : null, observationId: options.perceivedTarget?.evidenceId || options.perceivedTarget?.id || null, observationTick: options.perceivedTarget?.observedTick ?? sim.tick, predictedVelocity: options.perceivedTarget ? { vx: options.perceivedTarget.vx || 0, vz: options.perceivedTarget.vz || 0 } : null, velocityConfidence: options.perceivedTarget?.velocityConfidence || 0, interactionRadius: radius, urgency: requestedSprint ? 1 : .5, mode: movementMode, contactTargetId: targetId, contactIntent: options.contactIntent || null });
+  const retarget = movementRetargetDecision(a.movementRequest, nextMovementRequest, a.locomotion || a, sim.tick, { routeBlocked: ["no-route", "body-clearance", "body-blocked"].includes(a.routeState?.replanReason) });
+  let executionDestination = p;
+  if (retarget.retain) {
     a.movementRequest.observationId = nextMovementRequest.observationId; a.movementRequest.observationTick = nextMovementRequest.observationTick;
     a.movementRequest.perceivedTarget = nextMovementRequest.perceivedTarget; a.movementRequest.predictedVelocity = nextMovementRequest.predictedVelocity; a.movementRequest.velocityConfidence = nextMovementRequest.velocityConfidence;
-  } else a.movementRequest = nextMovementRequest;
+    executionDestination = a.movementRequest.destination;
+    a.movementRetargetState = { tick: sim.tick, retained: true, reason: retarget.reason, requestedDestination: { x: p.x, z: p.z }, activeDestination: { ...a.movementRequest.destination }, reversalRadians: retarget.reversalRadians || 0, remainingTicks: retarget.remainingTicks || 0 };
+  } else {
+    a.movementRequest = nextMovementRequest;
+    a.movementRetargetState = { tick: sim.tick, retained: false, reason: retarget.reason, requestedDestination: { x: p.x, z: p.z }, activeDestination: { ...p }, reversalRadians: retarget.reversalRadians || 0, remainingTicks: 0 };
+  }
   if (paceSelection.downgraded) label = `${label}; continuing at ${paceSelection.selected.replaceAll("-", " ")} as burst capacity recovers`;
-  setAction(a, actionKey, { label, target: options.target, destination: { x: p.x, z: p.z }, intendedOutcome: options.intendedOutcome, moving: true });
+  setAction(a, actionKey, { label: retarget.reason === "opposite destination suppressed during heading hold" ? `${label}; retaining direction briefly instead of reversing` : label, target: options.target ?? targetId, episodeKey: options.actionEpisodeKey ?? (commitmentId ? `${commitmentId}:${targetKey || "untargeted"}` : undefined), destination: { x: executionDestination.x, z: executionDestination.z }, intendedOutcome: options.intendedOutcome, moving: true });
   return true;
   /* Retired schema-2 neighbour-cell locomotion remains below temporarily as
      reference during ecological calibration; it is unreachable and no longer
@@ -9919,6 +10406,34 @@ function terrainDetailStride() {
 
 function renderAll() { return profiler.measure("animal presentation rebuild/update", () => renderAllWork()); }
 function refreshCameraAdmission() { return profiler.measure("camera admission", () => renderAllWork({ cameraOnly: true })); }
+function refreshTickPresentation() {
+  // An ecological tick normally changes organisms, not the 40,000-cell scene.
+  // Refresh semantic snapshots independently of object/canvas reconstruction;
+  // frame animation already consumes these snapshots for existing roots.
+  return profiler.measure("tick presentation refresh", () => {
+    const now = performance.now(), selected = selectedAnimal();
+    pendingTickPresentationSnapshotIds.length = 0; pendingTickPresentationSnapshotSet.clear();
+    if (selected?.alive) { buildPresentationSnapshots(now, [selected]); pendingTickPresentationSnapshotSet.add(selected.id); }
+    const suppressBackgroundDiagnostics = graphicsSettings.largeMapPerformanceMode && activePopulationForScheduling >= 80;
+    if (!suppressBackgroundDiagnostics) for (const id of admittedAnimalIds) if (!pendingTickPresentationSnapshotSet.has(id)) { pendingTickPresentationSnapshotSet.add(id); pendingTickPresentationSnapshotIds.push(id); }
+    if (selected || selectedCorpse() || selectedGroupId) {
+      invalidateEntityConstellationSolve({ viewport: true });
+      clear(groups.overlays);
+      drawSelectedOverlays();
+      finalizeTemporaryOverlayPool();
+    }
+  });
+}
+function processPendingTickPresentationSnapshots(budgetMs = 3) {
+  if (!pendingTickPresentationSnapshotIds.length) return 0;
+  const started = performance.now(); let completed = 0;
+  do {
+    const id = pendingTickPresentationSnapshotIds.shift(); pendingTickPresentationSnapshotSet.delete(id);
+    const animal = animalById(id); if (animal?.alive) buildPresentationSnapshots(performance.now(), [animal]);
+    completed += 1;
+  } while (pendingTickPresentationSnapshotIds.length && performance.now() - started < budgetMs);
+  return completed;
+}
 function requestCinemaShotPresentationRefresh() {
   cinemaPresentationRefreshStage = 1;
   cinemaPresentationRefreshRequestedAt = performance.now();
@@ -10563,14 +11078,35 @@ function updateVisibleEyeDynamics(group, a) {
     || (a.predation?.targetId ? animalById(a.predation.targetId) : null);
   const weather = localizedWeatherPresentation(regionalWeatherAt(a));
   const response = { illumination: weather.solarIllumination, arousal: Math.max(a.fear || 0, a.stressResponse?.intensity ? a.stressResponse.intensity * 100 : 0) / 100 };
-  const irisScale = visibleIrisScale(response), pupilScale = visiblePupilScale(response);
+  const irisScale = graphicsSettings.dynamicAnimalPupils ? visibleIrisScale(response) : 1, pupilScale = graphicsSettings.dynamicAnimalPupils ? visiblePupilScale(response) : 1, anatomy = visualAnatomyProfile(a.speciesId)?.eye;
   for (const eye of dynamicEyes) {
     const uniforms = eye.material.uniforms;
-    const gaze = visibleEyeGazeOffset(a, target, { side: eye.userData.eyeSide, convergence: a.orientingState?.convergence || 0 });
-    uniforms.gazeOffset.value.x += (gaze.x - uniforms.gazeOffset.value.x) * .22;
-    uniforms.gazeOffset.value.y += (gaze.y - uniforms.gazeOffset.value.y) * .22;
-    uniforms.irisScale.value += (irisScale - uniforms.irisScale.value) * .1;
-    uniforms.pupilScale.value += (pupilScale - uniforms.pupilScale.value) * .12;
+    const side = eye.userData.eyeSide, sensorYaw = side < 0 ? a.orientingState?.leftEyeYaw : a.orientingState?.rightEyeYaw;
+    const targetGaze = visibleEyeGazeOffset(a, target, { side, convergence: a.orientingState?.convergence || 0 });
+    // Authoritative paired-eye orientation remains useful during momentary
+    // occlusion, when no renderable target position is available.
+    const outward = anatomy?.gaze?.outwardLimit ?? .14, inward = anatomy?.gaze?.inwardLimit ?? .14;
+    const rawGaze = !graphicsSettings.dynamicAnimalEyes ? { x: 0, y: 0 } : Number.isFinite(sensorYaw) ? { x: Math.sin(sensorYaw) * .3, y: targetGaze.y } : targetGaze;
+    // The head-facing side of each lateral eye has the tighter limit. This
+    // keeps the iris on the visible hemisphere rather than through the skull.
+    const gaze = { x: eye.userData.eyeSide < 0 ? clamp(rawGaze.x, -outward, inward) : clamp(rawGaze.x, -inward, outward), y: clamp(rawGaze.y, -(anatomy?.gaze?.downwardLimit ?? .07), anatomy?.gaze?.upwardLimit ?? .07) };
+    uniforms.gazeOffset.value.x += (gaze.x - uniforms.gazeOffset.value.x) * .32;
+    uniforms.gazeOffset.value.y += (gaze.y - uniforms.gazeOffset.value.y) * .28;
+    const boundedIris = clamp(irisScale, anatomy?.iris?.dynamicScaleMinimum ?? .72, anatomy?.iris?.dynamicScaleMaximum ?? 1.38);
+    const boundedPupil = clamp(pupilScale, anatomy?.pupil?.dilationMinimum ?? .6, anatomy?.pupil?.dilationMaximum ?? 1.76);
+    uniforms.irisScale.value += (boundedIris - uniforms.irisScale.value) * .16;
+    uniforms.pupilScale.value += (boundedPupil - uniforms.pupilScale.value) * .2;
+  }
+}
+function updateVisibleEarDynamics(group, a) {
+  const earProfile = visualAnatomyProfile(a.speciesId)?.ear;
+  for (const pivot of group.userData.parts?.earPivots || []) {
+    const requested = pivot.userData.earSide < 0 ? a.orientingState?.leftEarYaw : a.orientingState?.rightEarYaw;
+    const range = earProfile?.mobility?.yawRange ?? 1.18, speed = earProfile?.mobility?.responseSpeed ?? .24;
+    const target = graphicsSettings.independentAnimalEars ? clamp(Number(requested) || 0, -range, range) : 0;
+    pivot.rotation.y += Math.atan2(Math.sin(target - pivot.rotation.y), Math.cos(target - pivot.rotation.y)) * speed;
+    // A small forward cup is visible even when yaw is near neutral.
+    pivot.rotation.x += ((-.13 - Math.abs(target) * .08) - pivot.rotation.x) * Math.min(.22, speed);
   }
 }
 function applyPresentationTier(group, tier, channels) {
@@ -10604,12 +11140,27 @@ function realSpeciesHeadGeometry(kind) {
   return silhouetteHeadGeometries[kind] || geos.herbivore;
 }
 function addRealSpeciesFeatures(design, head, body, material, scale, animal = null) {
-  const parts = [], groups = [], roots = new Map(); let root = null;
+  const parts = [], groups = [], earPivots = [], roots = new Map(); let root = null;
   const addHead = (geometry, position, featureScale, rotation = [0, 0, 0], partMaterial = material) => {
     const mesh = new THREE.Mesh(geometry, partMaterial); mesh.position.set(...position.map(value => value * scale)); mesh.scale.set(...featureScale.map(value => value * scale)); mesh.rotation.set(...rotation); root.add(mesh); parts.push(mesh); return mesh;
   };
   const addBody = (geometry, position, featureScale, rotation = [0, 0, 0], partMaterial = material) => {
     const mesh = new THREE.Mesh(geometry, partMaterial); mesh.position.set(...position); mesh.scale.set(...featureScale); mesh.rotation.set(...rotation); root.add(mesh); parts.push(mesh); return mesh;
+  };
+  const addTaperedSegment = (parent, start, end, radius, partMaterial = mats.deerAntler) => {
+    const from = new THREE.Vector3(...start).multiplyScalar(scale), to = new THREE.Vector3(...end).multiplyScalar(scale);
+    const direction = to.clone().sub(from), length = direction.length();
+    const mesh = new THREE.Mesh(geos.deerAntlerSegment, partMaterial);
+    mesh.position.copy(from).add(to).multiplyScalar(.5);
+    mesh.scale.set(radius * scale, length, radius * scale);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+    mesh.userData.isDeerAntlerSegment = true; parent.add(mesh); parts.push(mesh); return mesh;
+  };
+  const addAntlerJoint = (parent, point, radius, partMaterial = mats.deerAntler) => {
+    const joint = new THREE.Mesh(geos.eye, partMaterial);
+    joint.position.set(...point.map(value => value * scale));
+    joint.scale.setScalar(radius * scale / .05);
+    joint.userData.isDeerAntlerJoint = true; parent.add(joint); parts.push(joint); return joint;
   };
   for (const feature of design.featureGroups || design.features || []) {
     const kind = feature.kind, parent = feature.attach === "head" ? head : body;
@@ -10619,20 +11170,79 @@ function addRealSpeciesFeatures(design, head, body, material, scale, animal = nu
       const length = kind === "long-ears" ? .34 : kind === "large-ears" ? .25 : kind === "small-ears" ? .12 : .18;
       for (const side of [-1, 1]) {
         const rounded = kind.includes("round") || kind === "small-ears";
-        if (rounded) addHead(geos.eye, [side * .19, .23, -.02], [1.5, length / .26, 1.2], [0, 0, side * .18]);
-        else {
-          const deerFace = animal?.speciesId === "valley-grazer-updated", wolfFace = animal?.speciesId === "ridge-hunter-updated";
-          const earGeometry = wolfFace ? geos.wolfEar : geos.animalEar;
-          const earPosition = deerFace ? [side * .18, .19, -.025] : wolfFace ? [side * .145, .205, -.045] : [side * .2, .23, .015];
-          const earScale = deerFace ? [.52, .58, .72] : wolfFace ? [.55, .7, .72] : [kind === "large-ears" ? 1.18 : .9, length / .26, 1];
-          const earRotation = deerFace ? [-.06, side * -.14, side * .72] : wolfFace ? [-.04, side * -.1, side * .1] : [0, side * -.12, side * (kind === "large-ears" ? .58 : .3)];
-          const ear = addHead(earGeometry, earPosition, earScale, earRotation);
-          const inner = new THREE.Mesh(earGeometry, mats.animalInnerEar); inner.position.z = .025; inner.scale.set(.66, .69, .16); inner.userData.isInnerEar = true; ear.add(inner); parts.push(inner);
+        const deerFace = animal?.speciesId === "valley-grazer-updated", wolfFace = animal?.speciesId === "ridge-hunter-updated";
+        const earProfile = visualAnatomyProfile(animal?.speciesId)?.ear;
+        if (rounded && !deerFace && !wolfFace) {
+          const pivot = new THREE.Group(); pivot.position.set(side * .19 * scale, .23 * scale, -.02 * scale); pivot.userData.earSide = side; pivot.userData.visualEarType = earProfile?.visualType || "rounded"; root.add(pivot); earPivots.push(pivot);
+          const profileScale = earProfile?.scale || [1, 1, 1];
+          const outer = new THREE.Mesh(geos.eye, material); outer.scale.set(1.5 * profileScale[0] * scale, length / .26 * profileScale[1] * scale, 1.2 * profileScale[2] * scale); outer.rotation.z = side * .18; pivot.add(outer); parts.push(outer);
+          const inner = new THREE.Mesh(geos.eye, mats.animalInnerEar); inner.position.z = .026 * scale; inner.scale.set(.72, .72, .34); inner.userData.isInnerEar = true; outer.add(inner); parts.push(inner);
+        } else {
+          const earGeometry = deerFace ? geos.deerEar : wolfFace ? geos.wolfEar : geos.animalEar;
+          // The deer roots sit inside the upper lateral skull surface. The old
+          // values placed their pivots beyond the head, making the ears float.
+          const earPosition = deerFace ? [side * .125, .115, -.005] : wolfFace ? [side * .145, .205, -.045] : [side * .2, .23, .015];
+          const profileScale = earProfile?.scale || [1, 1, 1];
+          const earScale = deerFace ? [.27, .38, .2] : wolfFace ? [.55, .7, .72] : [(kind === "large-ears" ? 1.18 : .9) * profileScale[0], length / .26 * profileScale[1], profileScale[2]];
+          // Local +Y is the root-to-tip axis. Mirrored roll sweeps both ears
+          // outward and upward; a small yaw exposes the warm inner cup forward.
+          const earRotation = deerFace ? [-.1, side * .34, -side * .62] : wolfFace ? [-.04, side * -.1, side * .1] : [0, side * -.12, side * (kind === "large-ears" ? .58 : .3)];
+          const pivot = new THREE.Group(); pivot.position.set(...earPosition.map(value => value * scale)); pivot.userData.earSide = side; root.add(pivot); earPivots.push(pivot);
+          const earMaterial = deerFace ? markResource(material.clone(), RESOURCE_OWNERSHIP.entity) : material;
+          if (deerFace) earMaterial.side = THREE.DoubleSide;
+          if (deerFace) {
+            const rootPad = new THREE.Mesh(geos.eye, earMaterial);
+            rootPad.scale.set(.78 * scale, .68 * scale, .72 * scale);
+            rootPad.userData.isEarRoot = true; pivot.add(rootPad); parts.push(rootPad);
+          }
+          const ear = new THREE.Mesh(earGeometry, earMaterial); ear.scale.set(...earScale.map(value => value * scale)); ear.rotation.set(...earRotation); pivot.add(ear); parts.push(ear);
+          const inner = new THREE.Mesh(deerFace ? geos.deerEarInner : earGeometry, mats.animalInnerEar); inner.position.z = deerFace ? .003 : .025; inner.scale.set(deerFace ? 1 : .66, deerFace ? 1 : .69, deerFace ? 1 : .16); inner.userData.isInnerEar = true; ear.add(inner); parts.push(inner);
         }
       }
       continue;
     }
     if (["paired-horns", "pronged-horns", "swept-horns", "wide-horns", "broad-antlers"].includes(kind)) {
+      if (kind === "broad-antlers" && animal?.speciesId === "valley-grazer-updated") {
+        const phenotype = antlerRenderProfile(animal);
+        if (!phenotype.visible) continue;
+        for (const side of [-1, 1]) {
+          // Skull-rooted pivot: above and slightly behind the independently
+          // moving ear, so neither feature appears to grow from the other.
+          const antlerRoot = new THREE.Group();
+          antlerRoot.position.set(side * .075 * scale, .14 * scale, -.09 * scale);
+          antlerRoot.userData.antlerSide = side; antlerRoot.userData.isAntlerRoot = true;
+          root.add(antlerRoot);
+          const antlerMaterial = phenotype.velvet ? mats.deerAntlerVelvet : mats.deerAntler;
+          const pedicle = new THREE.Mesh(geos.deerAntlerPedicle, antlerMaterial);
+          pedicle.position.y = .03 * scale; pedicle.scale.set(.035 * scale, .075 * scale, .035 * scale);
+          pedicle.userData.isDeerAntlerPedicle = true; antlerRoot.add(pedicle); parts.push(pedicle);
+          const traits = phenotype.traits, sideNoise = side < 0 ? phenotype.leftScale : phenotype.rightScale;
+          const antlerScale = phenotype.size * phenotype.growth * sideNoise * .72;
+          const outward = traits.outwardSpread * traits.beamCurve, backward = traits.backwardSweep;
+          const beam = [
+            [0, .06, 0], [.035, .15, -.018], [.095, .245, -.05],
+            [.18, .335, -.095], [.285, .415, -.15], [.41, .48, -.215]
+          ].map(([x, y, z]) => [side * x * outward * antlerScale, y * traits.beamLength * antlerScale, z * backward * antlerScale]);
+          for (let index = 0; index < beam.length - 1; index += 1) {
+            const radius = (.032 - index * .0042) * traits.baseThickness * Math.max(.4, phenotype.growth);
+            addTaperedSegment(antlerRoot, beam[index], beam[index + 1], radius, antlerMaterial);
+            addAntlerJoint(antlerRoot, beam[index], radius * .92, antlerMaterial);
+          }
+          addAntlerJoint(antlerRoot, beam[beam.length - 1], .012, antlerMaterial);
+          const tineScale = traits.tineLength * antlerScale;
+          const tineEnds = [[.09, .13, .12], [.08, .16, .1], [.07, .17, .075], [.055, .16, .055], [.04, .14, .035]];
+          const tineCount = Math.min(traits.tineCountPotential, tineEnds.length, Math.max(0, Math.floor(phenotype.growth * 7) - 2));
+          const tines = Array.from({ length: tineCount }, (_, index) => {
+            const beamIndex = Math.min(index + 1, beam.length - 2), [x, y, z] = tineEnds[index];
+            return [beam[beamIndex], [beam[beamIndex][0] + side * x * tineScale, beam[beamIndex][1] + y * tineScale, beam[beamIndex][2] + z * tineScale], Math.max(.011, .023 - index * .0025)];
+          });
+          for (const [start, end, radius] of tines) {
+            addTaperedSegment(antlerRoot, start, end, radius * traits.baseThickness, antlerMaterial);
+            addAntlerJoint(antlerRoot, start, radius * .86, antlerMaterial);
+          }
+        }
+        continue;
+      }
       const wide = kind === "wide-horns" || kind === "broad-antlers", swept = kind === "swept-horns";
       for (const side of [-1, 1]) {
         const segments = swept ? 3 : 1;
@@ -10647,7 +11257,11 @@ function addRealSpeciesFeatures(design, head, body, material, scale, animal = nu
     if (kind === "nasal-horns") { addHead(geos.horn, [0, .03, .34], [1.2, 1.75, 1.2], [Math.PI / 2, 0, 0]); addHead(geos.horn, [0, .11, .18], [.75, 1.05, .75], [Math.PI / 2, 0, 0]); continue; }
     if (kind === "tusks") { for (const side of [-1, 1]) addHead(geos.horn, [side * .15, -.11, .3], [.62, 1.35, .62], [Math.PI / 2, 0, side * .12]); continue; }
     if (kind === "curved-trunk") { for (let segment = 0; segment < 4; segment += 1) addHead(geos.horn, [0, -.2 - segment * .12, .22 - segment * .035], [1.15 - segment * .16, 1.15, 1.15 - segment * .16], [segment * .18, 0, 0]); continue; }
-    if (kind === "ear-plates") { for (const side of [-1, 1]) addHead(geos.herbivore, [side * .31, .02, -.05], [.14, .72, .7], [0, 0, side * .08]); continue; }
+    if (kind === "ear-plates") { for (const side of [-1, 1]) {
+      const pivot = new THREE.Group(); pivot.position.set(side * .31 * scale, .02 * scale, -.05 * scale); pivot.userData.earSide = side; pivot.userData.visualEarType = "fan"; root.add(pivot); earPivots.push(pivot);
+      const plate = new THREE.Mesh(geos.herbivore, material); plate.scale.set(.14 * scale, .72 * scale, .7 * scale); plate.rotation.z = side * .08; pivot.add(plate); parts.push(plate);
+      const inner = new THREE.Mesh(geos.herbivore, mats.animalInnerEar); inner.position.z = .02 * scale; inner.scale.set(.72, .82, .82); inner.userData.isInnerEar = true; plate.add(inner); parts.push(inner);
+    } continue; }
     if (kind === "head-crest") { addHead(geos.horn, [0, .24, -.05], [.75, 1.15, .75], [0, 0, -.2]); continue; }
     if (["armoured-ridge", "bristle-ridge"].includes(kind)) { addBody(geos.herbivore, [0, .42, -.05], [.62, kind === "bristle-ridge" ? .12 : .18, .82]); continue; }
     if (kind === "feather-tail") { for (let feather = -1; feather <= 1; feather += 1) addBody(geos.animalWedge, [feather * .08, .02, -.54 - Math.abs(feather) * .03], [.18, 1.8 - Math.abs(feather) * .25, .18], [-Math.PI / 2, 0, feather * .08]); continue; }
@@ -10657,7 +11271,7 @@ function addRealSpeciesFeatures(design, head, body, material, scale, animal = nu
       addBody(geos.horn, [0, .02, -.58], [kind === "bushy-tail" || kind === "ringed-tail" ? 1.8 : .85, long ? 3.1 : 1.25, kind === "bushy-tail" || kind === "ringed-tail" ? 1.8 : .85], [-Math.PI / 2, 0, 0], patternedAnimalMaterial(material, tailPattern));
     }
   }
-  return { parts, groups, roots };
+  return { parts, groups, earPivots, roots };
 }
 function addRealSpeciesMarkings(design, head, body, featureRoots, scale, headMesh) {
   const parts = [];
@@ -10681,19 +11295,22 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
   if (cached) removeAnimalVisual(a.id);
   const group = new THREE.Group();
   resourceCounters.animalRootsCreated += 1;
-  let head = null, headMesh = null, tail = null, feature = null, youngMarker = null; const eyes = []; let featureParts = [], featureGroups = [], markingParts = [];
+  let head = null, headMesh = null, tail = null, feature = null, youngMarker = null; const eyes = []; let featureParts = [], featureGroups = [], earPivots = [], markingParts = [];
   const scale = animalVisualScale(a);
   // The hunter muzzle and grazer head extend beyond the torso ellipsoid.
   // Ground support must cover that entire length on slopes and hill crests.
   group.userData.groundFootprint = scale * (a.speciesId === "hunter" ? 1.18 : speciesCanHunt(a) ? 1.14 : 1.08);
   const shape = speciesProfile(a), design = shape.visual, small = ["tiny", "small"].includes(shape.sizeClass), bodyLength = shape.sizeClass === "small" ? .7 : shape.sizeClass === "large" ? 1.02 : .84;
+  const updatedStag = a.speciesId === "valley-grazer-updated" && a.sex === "M" && !["dependent", "juvenile"].includes(a.lifeStage);
   const bodyMat = animalMaterial(a), surfaceMarkings = design?.markings?.map(marking => marking.kind) || [], bodySurfaceMat = patternedAnimalMaterial(bodyMat, surfaceMarkings), headSurfaceMat = patternedAnimalMaterial(bodyMat, surfaceMarkings.filter(kind => ["spots", "snake-patches"].includes(kind)));
   // Both silhouettes face local +Z. Group rotation then makes the head point
   // exactly along the organism's actual orientation.
   if (design) group.userData.groundFootprint = scale * Math.max(1.02, design.bodyScale[2] + design.headOffset[2] * .45) * (design.footprint || 1);
   const body = new THREE.Mesh(design ? realSpeciesBodyGeometry(design.bodyShape) : geos.herbivore, design ? bodySurfaceMat : bodyMat);
   if (design) {
-    body.scale.set(...design.bodyScale.map(value => value * scale));
+    const bodyScale = design.bodyScale.map(value => value * scale);
+    if (updatedStag) { bodyScale[0] *= 1.05; bodyScale[1] *= 1.07; bodyScale[2] *= 1.04; }
+    body.scale.set(...bodyScale);
     body.position.y = (design.bodyElevation ?? (["curved-tube", "flattened-taper"].includes(design.bodyShape) ? .22 : design.bodyScale[1] * .72)) * scale;
   } else {
     const founderBaseline = FOUNDER_VISUAL_BASELINE[a.speciesId];
@@ -10748,14 +11365,16 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
     head = new THREE.Group(); head.position.set(...design.headOffset.map(value => value * scale)); group.add(head);
     headMesh = new THREE.Mesh(realSpeciesHeadGeometry(design.headShape), headSurfaceMat);
     if (design.headShape === "downturned") headMesh.rotation.x = .2;
-    headMesh.scale.set(...design.headScale.map(value => value * scale)); head.add(headMesh);
-    const featureBuild = addRealSpeciesFeatures(design, head, body, bodyMat, scale, a); featureParts = featureBuild.parts; featureGroups = featureBuild.groups;
+    const headScale = design.headScale.map(value => value * scale * (updatedStag ? 1.035 : 1));
+    headMesh.scale.set(...headScale); head.add(headMesh);
+    const featureBuild = addRealSpeciesFeatures(design, head, body, bodyMat, scale, a); featureParts = featureBuild.parts; featureGroups = featureBuild.groups; earPivots = featureBuild.earPivots;
     markingParts = addRealSpeciesMarkings(design, head, body, featureBuild.roots, scale, headMesh); feature = featureGroups[0] || featureParts[0] || null;
     for (const side of [-1, 1]) {
       const deerFace = a.speciesId === "valley-grazer-updated", wolfFace = a.speciesId === "ridge-hunter-updated";
-      const sharedEyeMaterial = deerFace ? mats.deerCartoonEye : wolfFace ? mats.wolfCartoonEye : mats.genericCartoonEye;
+      const sharedEyeMaterial = deerFace ? mats.deerCartoonEye : wolfFace ? mats.wolfCartoonEye : cartoonEyeMaterialFor(a.speciesId);
       const eyeMaterial = markResource(sharedEyeMaterial.clone(), RESOURCE_OWNERSHIP.entity);
-      const eye = new THREE.Mesh(geos.eye, eyeMaterial), eyeScale = clamp(scale * (small ? .7 : .82), .36, .82);
+      const anatomyEye = visualAnatomyProfile(a.speciesId)?.eye;
+      const eye = new THREE.Mesh(geos.eye, eyeMaterial), eyeScale = clamp(scale * (small ? .7 : .82) * (anatomyEye?.eyeScale || 1), .3, 1.02);
       const eyePosition = attachedAnimalEyePosition({ side, headScale: headMesh.scale, headKind: "rounded" });
       const eyeSensor = sensorDefinitions(a).find(sensor => sensor.id === (side < 0 ? "left-eye" : "right-eye"));
       const requestedEyeYaw = -visualSensorYawRadians(eyeSensor) * (deerFace ? .35 : wolfFace ? .65 : 1);
@@ -10790,7 +11409,7 @@ function drawAnimal(a, tier = "close", channels = new Set()) {
   group.userData.presentationTier = tier;
   group.userData.presentationChannels = channels;
   group.userData.constellation = constellationParts.constellationRoot;
-  group.userData.parts = { body, head, headMesh, eyes, tail, feature, features: featureParts, featureGroups, markings: markingParts, youngMarker, ...constellationParts, ...transientParts };
+  group.userData.parts = { body, head, headMesh, eyes, tail, feature, features: featureParts, featureGroups, earPivots, markings: markingParts, youngMarker, ...constellationParts, ...transientParts };
   group.userData.groundingMeshes = [body, headMesh, tail, ...eyes, ...featureParts, ...markingParts].filter(part => part?.isMesh);
   for (const part of [constellationParts.identityPanel, ...Object.values(constellationParts.ownershipNotches), transientParts.pregnantIcon, ...transientParts.courtshipHearts, transientParts.rejection, transientParts.acceptance, transientParts.attackIcon, transientParts.injuryAlert, transientParts.signal, transientParts.face]) if (part) part.userData.ownerEntityId = a.id;
   for (const part of [body, head, tail]) if (part) part.userData.restTransform = { position: part.position.clone(), rotation: part.rotation.clone(), scale: part.scale.clone() };
@@ -10904,7 +11523,9 @@ function drawReproductiveHighlights() {
 }
 function awarenessRange(a) { return Math.max(3, Math.round((species[a.speciesId].vision + species[a.speciesId].smell + species[a.speciesId].hearing) / 3 * (a.capabilities?.perceptionScale || 1))); }
 function applyDefaultEntityOverlayView() {
-  for (const [control, enabled] of [[ui.overlayVision, true], [ui.overlayPersonalSpace, false], [ui.overlayHealthBars, true], [ui.overlayEnduranceBar, true], [ui.overlayCompositionBar, true], [ui.overlaySmell, false], [ui.overlaySound, false], [ui.overlayCalls, false], [ui.overlayMemory, false], [ui.overlayEnvironmentalHistory, false], [ui.overlayEntityFocus, false], [ui.overlayAnalysisStage, false], [ui.overlayOrganismOnly, false], [ui.overlayBiomass, false], [ui.overlayWater, false], [ui.overlayPheromone, false]]) if (control) control.checked = enabled;
+  // Personal space is a user-owned diagnostic choice and must survive changing
+  // the selected entity. Other legacy defaults remain selection-scoped.
+  for (const [control, enabled] of [[ui.overlayVision, true], [ui.overlayHealthBars, true], [ui.overlayEnduranceBar, true], [ui.overlayCompositionBar, true], [ui.overlaySmell, false], [ui.overlaySound, false], [ui.overlayCalls, false], [ui.overlayMemory, false], [ui.overlayEnvironmentalHistory, false], [ui.overlayEntityFocus, false], [ui.overlayAnalysisStage, false], [ui.overlayOrganismOnly, false], [ui.overlayBiomass, false], [ui.overlayWater, false], [ui.overlayPheromone, false]]) if (control) control.checked = enabled;
 }
 function selectObject(e) { if (sim?.embodiment?.experience === "embodied" && !presentationPolicy(embodimentCapabilities()).selectOthers) return; const rect = renderer.domElement.getBoundingClientRect(); pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1; pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1; raycaster.setFromCamera(pointer, camera); const hits = raycaster.intersectObjects(entityOwnershipPickTargets(), false), hit = hits.find((candidate) => candidate.object.userData.ownerEntityId) || hits[0], hadEntity = Boolean(selectedAnimal() || selectedCorpse() || selectedGroupId); if (hit) { const clickedId = hit.object.userData.ownerEntityId || hit.object.userData.id; if (String(clickedId).startsWith("organization:")) { selectedGroupId = clickedId; selectedId = null; selectedTerrain = null; } else if (String(clickedId).startsWith("group:")) { selectedGroupId = clickedId.slice(6); selectedId = null; selectedTerrain = null; } else if (selectedId === clickedId && !entityLocked) selectedId = null; else { selectedId = clickedId; selectedGroupId = null; selectedTerrain = null; applyDefaultEntityOverlayView(); } } else if (!entityLocked) { selectedId = null; selectedGroupId = null; selectedTerrain = null; if (!hadEntity) { const groundHit = terrainPickable ? raycaster.intersectObject(terrainPickable, false)[0] : null; if (groundHit) { const x = Math.round(groundHit.point.x), z = Math.round(groundHit.point.z); selectedTerrain = inside(x, z) ? { x, z } : null; } } } renderAll(); updateUI(); }
 function followSelected() {
@@ -11622,8 +12243,8 @@ function resetCamera() {
 }
 function clearEntityPresentation() { for (const id of [...animalRenderCache.keys()]) removeAnimalVisual(id); for (const id of [...entityIntentCache.keys()]) removeIntentVisual(id); clearOwnershipPanelSpritePool(); animalContactShadows.count = 0; hoveredEntityId = null; entityConstellationLayouts = new Map(); entityConstellationBudgetState = null; entityConstellationSolveState = { signature: "", revision: -1, solvedAt: -Infinity, layouts: new Map(), budget: null }; invalidateEntityConstellationSolve({ viewport: true }); entityPanelScaleSnapshots.clear(); entityThoughtStates.clear(); expressionTransientStates.clear(); presentationChannelHolds.clear(); presentationEmptyPulses.clear(); presentationSnapshots.clear(); entityMotionHistory.clear(); currentVisionCells.clear(); cellVisionCaches.clear(); visualEvents.clear(); presentationBudgets.reset(); minimapInvalidation.reset(); realityTerrainCache = { key: "", html: "" }; }
 function clearCorpsePresentation() { corpseRenderCache.clear(); clear(groups.corpses); }
-function readLocalList(key) { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } }
-function writeLocalList(key, items) { try { localStorage.setItem(key, JSON.stringify(items)); } catch { addEvent("Browser storage is unavailable"); } }
+function readLocalList(key) { return readJsonList(localStorage, key); }
+function writeLocalList(key, items) { writeJsonList(localStorage, key, items, () => addEvent("Browser storage is unavailable")); }
 function predictiveTraceProjection(cycle) {
   if (!cycle) return null;
   return {
@@ -11637,22 +12258,14 @@ function predictiveTraceProjection(cycle) {
     decisionImpact: cycle.decisionImpact || null
   };
 }
-function snapshotAnimalForPersistence(animal) {
-  const { visualMove, rss, predictiveCycle, decisionTrace, acousticObservations, ...canonical } = animal;
-  // predictiveCognition.current is the canonical cycle. predictiveCycle and the
-  // trace projection are runtime/readability aliases reconstructed after load.
-  let canonicalTrace = decisionTrace;
-  if (decisionTrace) { canonicalTrace = { ...decisionTrace }; delete canonicalTrace.predictive; }
-  return { ...canonical, decisionTrace: canonicalTrace };
-}
-function snapshotWorld() { const snapshot = { ...sim, animals: sim.animals.map(snapshotAnimalForPersistence), predictivePersistenceSchema: 1, acousticSchema: 2, needPlanSchema: NEED_DEPENDENCY_PLAN_SCHEMA, worldSchema: WORLD_SCHEMA, savedAt: new Date().toISOString(), saveSlotName: activeSaveSlotName || null }; delete snapshot.occupied; delete snapshot.entityIndex; delete snapshot.hexWorld; delete snapshot.cells; delete snapshot.soundEvents; delete snapshot.signalEmissions; delete snapshot.environmentSoundSources; return snapshot; }
+function snapshotWorld() { return createWorldSnapshot(sim, { worldSchema: WORLD_SCHEMA, acousticSchema: 2, needPlanSchema: NEED_DEPENDENCY_PLAN_SCHEMA, saveSlotName: activeSaveSlotName }); }
 function openProgressDb() { return openCachedIndexedDB(AUTOSAVE_DB, { version: 1, indexedDBFactory: window.indexedDB, upgrade: db => { if (!db.objectStoreNames.contains(AUTOSAVE_STORE)) db.createObjectStore(AUTOSAVE_STORE); } }); }
 async function writeSnapshot(slot, snapshot = snapshotWorld()) { const db = await openProgressDb(); return new Promise((resolve, reject) => { const tx = db.transaction(AUTOSAVE_STORE, "readwrite"); tx.objectStore(AUTOSAVE_STORE).put(snapshot, slot); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Snapshot write aborted")); }); }
 async function deleteSnapshot(slot) { const db = await openProgressDb(); return new Promise((resolve, reject) => { const tx = db.transaction(AUTOSAVE_STORE, "readwrite"); tx.objectStore(AUTOSAVE_STORE).delete(slot); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Snapshot deletion aborted")); }); }
 async function readSnapshot(slot) { const db = await openProgressDb(); return new Promise((resolve, reject) => { const tx = db.transaction(AUTOSAVE_STORE, "readonly"), request = tx.objectStore(AUTOSAVE_STORE).get(slot); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); tx.onabort = () => reject(tx.error || new Error("Snapshot read aborted")); }); }
 let jsonExportSerializer = null;
 function backgroundJsonStringify(value) {
-  if (!jsonExportSerializer && typeof Worker === "function") {
+  if (!jsonExportSerializer && runtimeCapabilities.workers) {
     try { jsonExportSerializer = new WorkerJsonSerializer(new Worker(new URL("./json-serialization-worker.js", import.meta.url), { type: "module", name: "living-laboratory-json-export" })); }
     catch { jsonExportSerializer = null; }
   }
@@ -11664,7 +12277,7 @@ function activateSnapshot(snapshot, label, preparedHexWorld = null, preparedNavi
   sim = migrateEcologicalClock(migrateMinuteClock({ ...createWorld(snapshot.seed, snapshot.worldSetup || worldSetup, null, preparedHexWorld, preparedNavigationMesh), ...snapshot })); activeSaveSlotName = String(snapshot.saveSlotName || "").trim() || null; ecologicalAccounting.reset(); ecologicalStockSnapshot = null; sim.worldSchema = WORLD_SCHEMA; sim.acousticSchema = 2; sim.needPlanSchema = NEED_DEPENDENCY_PLAN_SCHEMA; sim.worldSetup = { ...worldSetup }; sim.embodiment = normalizeEmbodiment(snapshot.embodiment); sim.activeScent ||= {}; sim.airborneScentField ||= {}; sim.weatherSystems ||= []; sim.lineageRecords ||= {}; sim.traceField ||= {}; sim.soundEvents = []; sim.signalEmissions = [];
   for (const cell of sim.cells || []) migrateSurfaceState(cell);
   for (const animal of sim.animals) {
-    migrateActionState(animal); migrateGoalPlan(animal, sim.tick); migrateCommitment(animal, sim.tick); migrateNeedPlanAudit(animal); animal.needDependencyPlan = migrateNeedDependencyPlan(animal.needDependencyPlan, { tick: sim.tick, fallbackTargetKey: waterTargetKey(animal.actionState?.destination) }); migrateTemperatureState(animal); migrateReproductionEvents(animal, sim.tick); migrateReproductiveState(animal); migratePregnancyState(animal, species[animal.speciesId]); migrateSocialState(animal, species[animal.speciesId]); migrateGroupDisposition(animal, sim.tick); migrateEntityMemory(animal); migrateStrategicMemory(animal); migrateBodyComposition(animal); initializeFuelProjection(animal); migrateExertionState(animal); migrateLifeHistory(animal); migrateSenescence(animal, species[animal.speciesId].lifeHistory.development); migratePredationState(animal, sim.tick); migrateKinship(animal); migratePersonalSpace(animal); migratePredictiveCognition(animal, { mode: snapshot.animalCognitionMode || "PREDICTIVE_SHADOW", profile: snapshot.animalCognitionProfile || "FIXED" }); animal.predictiveCycle = animal.predictiveCognition?.current || null; if (animal.decisionTrace && animal.predictiveCycle) animal.decisionTrace.predictive = predictiveTraceProjection(animal.predictiveCycle); storeLineage(sim.lineageRecords, animal); clearFrameMotion(animal);
+    migrateActionState(animal); migrateGoalPlan(animal, sim.tick); migrateCommitment(animal, sim.tick); migrateParallelObligations(animal); migrateNeedPlanAudit(animal); animal.needDependencyPlan = migrateNeedDependencyPlan(animal.needDependencyPlan, { tick: sim.tick, fallbackTargetKey: waterTargetKey(animal.actionState?.destination) }); migrateTemperatureState(animal); migrateReproductionEvents(animal, sim.tick); migrateReproductiveState(animal); migratePregnancyState(animal, species[animal.speciesId]); migrateSocialState(animal, species[animal.speciesId]); migrateGroupDisposition(animal, sim.tick); migrateEntityMemory(animal); migrateStrategicMemory(animal); migrateBodyComposition(animal); initializeFuelProjection(animal); migrateExertionState(animal); migrateLifeHistory(animal); migrateSenescence(animal, species[animal.speciesId].lifeHistory.development); migratePredationState(animal, sim.tick); migrateKinship(animal); migratePersonalSpace(animal); migrateAntlerDevelopment(animal, sim.seed); migrateObserverEvidenceState(animal, sim.tick); migratePredictiveCognition(animal, { mode: snapshot.animalCognitionMode || "PREDICTIVE_SHADOW", profile: snapshot.animalCognitionProfile || "FIXED" }); animal.predictiveCycle = animal.predictiveCognition?.current || null; if (animal.decisionTrace && animal.predictiveCycle) animal.decisionTrace.predictive = predictiveTraceProjection(animal.predictiveCycle); storeLineage(sim.lineageRecords, animal); clearFrameMotion(animal);
     if (animal.needDependencyPlan?.need === "water" && !animal.needDependencyPlan.contactReservationKey) animal.needDependencyPlan.contactReservationKey = animal.drinkingSource?.reservationKey || null;
     const profile = LOCOMOTION_PROFILES[animal.speciesId];
     animal.locomotion ||= createLocomotionState(animal, profile);
@@ -12599,8 +13212,25 @@ function buildEntityIndex({ rebuildCorpses = false } = {}) {
   // rebuilding their buckets after every locomotion pass.
   if (created || rebuildCorpses || index.byCorpseId.size !== sim.corpses.length) index.rebuildCorpses(sim.corpses);
   sim.entityIndex = index;
+  entityIndexRevision += 1;
+  tickAnimalNeighbourQueries.clear();
 }
-function nearbyAnimals(a, range) { return sim.entityIndex?.queryAnimals(a, range) || sim.animals; }
+function nearbyAnimals(a, range) {
+  if (!sim.entityIndex) return sim.animals;
+  const boundedRange = Math.max(0, Number(range) || 0);
+  // Stable query results are important as well as fast: the spatial index's
+  // default scratch buffer is shared, so a nested query could otherwise mutate
+  // an outer loop. Reuse one owned buffer for identical observer/range queries
+  // until locomotion rebuilds the index.
+  const observerKey = a?.id != null ? `id:${a.id}` : `point:${Number(a?.x || 0).toFixed(3)},${Number(a?.z || 0).toFixed(3)}`;
+  const queryKey = `${entityIndexRevision}|${observerKey}|${boundedRange.toFixed(3)}`;
+  let cached = tickAnimalNeighbourQueries.get(queryKey);
+  if (cached) { neighbourQueryCounters.hits += 1; return cached; }
+  neighbourQueryCounters.misses += 1;
+  cached = sim.entityIndex.queryAnimals(a, boundedRange, []);
+  tickAnimalNeighbourQueries.set(queryKey, cached);
+  return cached;
+}
 function nearbyCorpses(a, range) { const found = sim.entityIndex?.queryCorpses(a, range) || sim.corpses; spatialQueryCounters.corpseQueries += 1; spatialQueryCounters.corpseCandidates += found.length; return found; }
 function animalById(id) { return sim.entityIndex?.byAnimalId.get(id) || sim.animals.find((a) => a.id === id); }
 function corpseById(id) { return sim.entityIndex?.byCorpseId.get(id) || sim.corpses.find((c) => c.id === id); }
@@ -12926,13 +13556,13 @@ function moveToCarcassAtPurposefulPace(a, target, label) {
 
 function carcassFamilyUrgency(a) { return (a.offspringIds || []).reduce((score, id) => { const child = animalById(id); return score + (child?.alive && (child.energy < 55 || child.hydration < 45) ? 80 : 0); }, 0); }
 
-function fleeFromPoint(a, point, label) {
+function fleeFromPoint(a, point, label, options = {}) {
   let bestMove = null, bestDistance = -Infinity;
   for (const move of validMoves(a)) {
     const distance = manhattan(move, point);
     if (distance > bestDistance) { bestDistance = distance; bestMove = move; }
   }
-  applyMove(a, bestMove, "flee", label, { target: point.id || null, intendedOutcome: "increase distance from danger" });
+  applyMove(a, bestMove, "flee", label, { ...options, target: point.id || null, intendedOutcome: "increase distance from danger" });
 }
 
 function localPreyScentBonus(a) {
@@ -13011,6 +13641,68 @@ function drawVisionSector(a, range, sensor = null, poolKey = "vision") {
   projection.geometry.setDrawRange(0, required / 3);
   projection.mesh.visible = true;
 }
+const personalSpaceOverlayFrustum = new THREE.Frustum(), personalSpaceOverlayViewProjection = new THREE.Matrix4(), personalSpaceOverlayPoint = new THREE.Vector3();
+function personalSpaceOverlaySources(selected) {
+  if (personalSpaceOverlaySettings.scope === "selected") return [selected];
+  const candidates = sim.animals.filter(other => other.alive && other.id !== selected.id)
+    .sort((left, right) => dist(selected, left) - dist(selected, right));
+  if (personalSpaceOverlaySettings.scope === "visible") personalSpaceOverlayFrustum.setFromProjectionMatrix(personalSpaceOverlayViewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+  const scoped = personalSpaceOverlaySettings.scope === "nearby" ? candidates.filter(other => dist(selected, other) <= 18) : candidates.filter(other => personalSpaceOverlayFrustum.containsPoint(personalSpaceOverlayPoint.set(other.x, terrainRenderHeight(other.x, other.z), other.z)));
+  return [selected, ...scoped].slice(0, personalSpaceOverlaySettings.maximumEntities);
+}
+function personalSpaceStatesFor(source) {
+  migratePersonalSpace(source);
+  const ordered = Object.values(source.proximityStates || {}).filter(state => state.otherEntityId && animalById(state.otherEntityId)?.alive)
+    .sort((left, right) => right.compositePressure - left.compositePressure);
+  const primary = ordered.find(state => `entity:${state.otherEntityId}` === source.primaryProximityTargetKey) || ordered[0];
+  return personalSpaceOverlaySettings.relationshipMode === "primary" ? (primary ? [primary] : []) : ordered;
+}
+function personalSpacePressureColour(state) {
+  const [channel] = dominantPressureChannel(state, personalSpaceOverlaySettings);
+  return { threat: 0xff6574, avoidance: 0xffa24b, attraction: 0x74f0b4, affiliationCare: 0x62d8ff, courtship: 0xf58ad8 }[channel] || 0xffcf68;
+}
+function perceivedPersonalSpacePosition(source, target, state) {
+  const actualDistance = Math.max(.001, dist(source, target)), estimated = Math.max(0, Number(state.estimatedDistance) || actualDistance);
+  return { x: source.x + (target.x - source.x) / actualDistance * estimated, z: source.z + (target.z - source.z) / actualDistance * estimated };
+}
+function drawPersonalSpaceOverlay(selected) {
+  const opacityScale = personalSpaceOverlaySettings.opacity / 100;
+  personalSpaceMats.tolerant.opacity = .38 * opacityScale; personalSpaceMats.guarded.opacity = .48 * opacityScale; personalSpaceMats.aggressive.opacity = .58 * opacityScale;
+  const diagnostics = [], fallbacks = [];
+  let displayed = 0;
+  for (const source of personalSpaceOverlaySources(selected)) {
+    const states = personalSpaceStatesFor(source);
+    if (!states.length && personalSpaceOverlaySettings.legacyFallback) {
+      ringAt(source, personalSpaceRadius(source, bodyRadius(source) * 2), personalSpaceMats.guarded);
+      fallbacks.push(`${source.id}: no active perceived relationship—showing one legacy fallback ring`);
+    } else if (!states.length) fallbacks.push(`${source.id}: no active perceived relationship—fallback hidden`);
+    for (const state of states) {
+      if (displayed >= personalSpaceOverlaySettings.maximumEntities) break;
+      const target = animalById(state.otherEntityId); if (!target) continue;
+      displayed += 1;
+      if (personalSpaceOverlaySettings.preferredBand) { ringAt(source, state.preferredMinimum, personalSpaceMats.tolerant); ringAt(source, state.preferredMaximum, personalSpaceMats.tolerant); }
+      if (personalSpaceOverlaySettings.minimumBoundary) ringAt(source, state.preferredMinimum, personalSpaceMats.aggressive);
+      if (personalSpaceOverlaySettings.maximumBoundary) ringAt(source, state.preferredMaximum, personalSpaceMats.tolerant);
+      if (personalSpaceOverlaySettings.releaseThreshold && Number.isFinite(state.activeReleaseThreshold)) ringAt(source, state.activeReleaseThreshold, personalSpaceMats.guarded);
+      if (personalSpaceOverlaySettings.currentBand && Number.isFinite(state.activeEntryThreshold)) ringAt(source, state.activeEntryThreshold, state.threatPressure > 0 ? personalSpaceMats.aggressive : personalSpaceMats.guarded);
+      const perceived = perceivedPersonalSpacePosition(source, target, state), colour = personalSpacePressureColour(state);
+      if (personalSpaceOverlaySettings.directionArrows) {
+        const direction = temporaryOverlayPool.direction.set(perceived.x - source.x, 0, perceived.z - source.z), length = direction.length();
+        if (length > .01) temporaryOverlayArrow(direction.normalize(), temporaryOverlayPool.origin.set(source.x, terrainRenderHeight(source.x, source.z) + .25, source.z), Math.min(length, 4), colour, .28, .16, 36);
+      }
+      if (personalSpaceOverlaySettings.uncertainty && Number(state.uncertainty) > .01) ringAt(perceived, Math.max(.12, Number(state.uncertainty)), personalSpaceMats.guarded);
+      if (personalSpaceOverlaySettings.truthVsPerceived) {
+        const error = temporaryOverlayPool.direction.set(target.x - perceived.x, 0, target.z - perceived.z), errorLength = error.length();
+        if (errorLength > .02) temporaryOverlayArrow(error.normalize(), temporaryOverlayPool.origin.set(perceived.x, terrainRenderHeight(perceived.x, perceived.z) + .18, perceived.z), errorLength, 0xffffff, .2, .1, 37);
+      }
+      if (personalSpaceOverlaySettings.relationshipLabels) diagnostics.push(`${source.id}→${target.id}: ${String(state.relationshipClass || "unknown").replaceAll("-", " ")} · ${state.currentBand} · ${Number(state.estimatedDistance || 0).toFixed(1)}m ±${Number(state.uncertainty || 0).toFixed(1)}`);
+    }
+  }
+  if (personalSpaceOverlayUi.status) {
+    const parts = [...diagnostics.slice(0, personalSpaceOverlaySettings.maximumEntities), ...fallbacks];
+    personalSpaceOverlayUi.status.textContent = parts.length ? parts.join(" | ") : "No observer-owned personal-space relationships are available for the chosen animals.";
+  }
+}
 function drawSelectedOverlays() {
   drawTerritoryOverlay();
   drawWorldEcologyFields();
@@ -13030,21 +13722,7 @@ function drawSelectedOverlays() {
       addTemporaryOverlayInstance(geos.marker, durable ? mats.skeleton : mats.memory, 28, { x: record.x, y: terrainRenderHeight(record.x, record.z) + (durable ? .22 : .12), z: record.z }, { x: size, y: durable ? .22 : .1, z: size });
     }
   }
-  if (enabled("personal", ui.overlayPersonalSpace)) {
-    const nearby = [a], nearbyIds = new Set([a.id]);
-    for (const contact of a.sensoryBuffer || []) {
-      if (nearby.length >= 18 || !contact.targetId || (contact.channel !== "sight" && contact.channel !== "proximity") || nearbyIds.has(contact.targetId)) continue;
-      const animal = animalById(contact.targetId); if (!animal?.alive) continue;
-      nearbyIds.add(animal.id); nearby.push(animal);
-    }
-    for (const animal of nearby) {
-      migratePersonalSpace(animal);
-      const radius = personalSpaceRadius(animal, bodyRadius(animal) * 2);
-      const reactivity = clamp((animal.personalSpaceTrait || 0) * .42 + (animal.aggression || 0) * .48 - (animal.intrusionTolerance || 0) * .38, 0, 1);
-      const material = reactivity > .62 ? personalSpaceMats.aggressive : reactivity < .28 ? personalSpaceMats.tolerant : personalSpaceMats.guarded;
-      ringAt(animal, radius, material);
-    }
-  }
+  if (enabled("personal", ui.overlayPersonalSpace)) drawPersonalSpaceOverlay(a);
   if (enabled("decisions", ui.overlayPredatorIntent) && isHerbivore(a)) {
     for (const estimate of (a.predatorIntentEstimates || []).slice(0, 5)) {
       const predator = animalById(estimate.predatorId); if (!predator?.alive) continue;
@@ -13815,7 +14493,9 @@ function updateUIWork(force = false, now = performance.now()) {
     const spatialProfile = spatialEcology(selected);
     const territoryClaim = Object.values(sim.territoryClaims || {}).find(claim => claim.ownerId === selected.id || (selected.groupId && claim.ownerId === selected.groupId));
     const territoryText = spatialProfile.territoriality < .35 ? `${spatialProfile.mode}; non-exclusive home range` : territoryClaim ? `${territoryClaim.mode || spatialProfile.mode}; ${territoryClaim.established ? "established" : "establishing"} defended area, radius ${territoryClaim.radius.toFixed(1)}m` : `${spatialProfile.mode}; no defended claim established`;
-    ui.selectedRelation.textContent = `${relationText(selected)}; ${socialRelationshipText(selected)}${bereavementProfile}; spatial ecology: ${territoryText}; traits: ${ecologicalTraits}, care ${(selected.careAffinity || 0.5).toFixed(2)}, aggression ${selected.aggression.toFixed(2)}, memory persistence ${(selected.memoryPersistence || 1).toFixed(2)}, personal-space preference ${selected.personalSpaceTrait.toFixed(2)}, intrusion tolerance ${selected.intrusionTolerance.toFixed(2)}, typical boundary ${personalRadius.toFixed(2)}m${traitProfile}${matureMating}${preference ? `; visible-trait preference: injury tolerance ${preference.injuryTolerance}, mass ${preference.preferredMass.toFixed(0)} kg, age ${preference.preferredAge.toFixed(0)} d, aggression ${preference.preferredAggression.toFixed(2)}, observed libido ${preference.preferredLibido.toFixed(2)}, duration ${preference.preferredMatingDuration.toFixed(0)}±${preference.matingDurationTolerance.toFixed(0)}m, foraging ${preference.valuesForaging.toFixed(2)}, care ${preference.valuesCare.toFixed(2)}, calm movement ${preference.valuesCalmMovement.toFixed(2)}, attentive head movement ${preference.valuesAttentiveness.toFixed(2)}` : ""}`;
+    const primaryProximity = Object.values(selected.proximityStates || {}).sort((left, right) => right.compositePressure - left.compositePressure)[0];
+    const proximityText = !personalSpaceOverlaySettings.laboratoryDetails ? "" : primaryProximity ? `; primary directional relationship ${selected.id}→${primaryProximity.otherEntityId || primaryProximity.perceivedEntityKey}: ${primaryProximity.relationshipClass}, band ${primaryProximity.currentBand}, perceived distance ${primaryProximity.estimatedDistance.toFixed(2)}m ±${Number(primaryProximity.uncertainty || 0).toFixed(2)}, preferred ${primaryProximity.preferredMinimum.toFixed(2)}–${primaryProximity.preferredMaximum.toFixed(2)}m${Number.isFinite(primaryProximity.activeReleaseThreshold) ? `, release beyond ${primaryProximity.activeReleaseThreshold.toFixed(2)}m` : ""}` : `; no active perceived pair; legacy fallback boundary ${personalRadius.toFixed(2)}m`;
+    ui.selectedRelation.textContent = `${relationText(selected)}; ${socialRelationshipText(selected)}${bereavementProfile}; spatial ecology: ${territoryText}; traits: ${ecologicalTraits}, care ${(selected.careAffinity || 0.5).toFixed(2)}, aggression ${selected.aggression.toFixed(2)}, memory persistence ${(selected.memoryPersistence || 1).toFixed(2)}, spacing temperament ${selected.personalSpaceTrait.toFixed(2)}, intrusion tolerance ${selected.intrusionTolerance.toFixed(2)}${proximityText}${traitProfile}${matureMating}${preference ? `; visible-trait preference: injury tolerance ${preference.injuryTolerance}, mass ${preference.preferredMass.toFixed(0)} kg, age ${preference.preferredAge.toFixed(0)} d, aggression ${preference.preferredAggression.toFixed(2)}, observed libido ${preference.preferredLibido.toFixed(2)}, duration ${preference.preferredMatingDuration.toFixed(0)}±${preference.matingDurationTolerance.toFixed(0)}m, foraging ${preference.valuesForaging.toFixed(2)}, care ${preference.valuesCare.toFixed(2)}, calm movement ${preference.valuesCalmMovement.toFixed(2)}, attentive head movement ${preference.valuesAttentiveness.toFixed(2)}` : ""}`;
     ui.selectedMemory.innerHTML = detailedMemoryHtml(selected);
     ui.selectedTarget.textContent = selected.actionTarget || selected.predation?.targetId || "none";
     const listening = (selected.stationaryTicks || 0) >= 2 ? "focused listening ×5" : "moving/ordinary listening";

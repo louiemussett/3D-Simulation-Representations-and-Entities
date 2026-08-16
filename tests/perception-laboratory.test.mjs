@@ -21,3 +21,11 @@ test("why diagnostics explain ranking without inventing missing flee evidence", 
   const diagnostic = causalWhyDiagnostic({ drive: "water", priorities: [{ drive: "water", score: 80 }, { drive: "forage", score: 40 }], actionState: { key: "travel", intendedOutcome: "drink" }, sensoryBuffer: [] });
   assert.match(diagnostic.whyNot[0].reason, /40 points/); assert.match(diagnostic.whyNotFlee, /No qualifying/); assert.equal(diagnostic.explanationStatus, "current-state-fallback");
 });
+
+test("why diagnostics distinguish a retained action episode from a one-tick replacement", () => {
+  const diagnostic = causalWhyDiagnostic({ drive: "food", priorities: [{ drive: "food", score: 70 }], actionState: { key: "graze", episodeId: "action:A:3", startedTick: 8, continuationTicks: 6 }, sensoryBuffer: [] });
+  assert.equal(diagnostic.chosen.actionEpisodeId, "action:A:3");
+  assert.equal(diagnostic.chosen.actionStartedTick, 8);
+  assert.equal(diagnostic.chosen.actionContinuationTicks, 6);
+  assert.match(diagnostic.chain.at(-1), /continued 6 ticks/);
+});

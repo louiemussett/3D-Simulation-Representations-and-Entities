@@ -49,33 +49,34 @@ const graphicsPresetDefinition = (overrides) => Object.freeze({
 
 export const GRAPHICS_PRESETS = Object.freeze({
   low: graphicsPresetDefinition({ iconTextureQuality: 1, renderScale: .65, adaptiveMinScale: .5, adaptiveMaxScale: .65, vegetationStride: 4, animalDetail: .72, diagnosticScale: 1.25, effects: false, contactShadows: false, adaptiveResolution: true, frameCap: 30, weatherCloudQuality: "low", weatherLocalPrecipitation: true, weatherDistantShafts: false, weatherCloudShadows: true, weatherWetGround: true, weatherSplashes: false, weatherLightning: false, weatherHaze: true, weatherParticleDensity: .45 }),
-  balanced: graphicsPresetDefinition({ iconTextureQuality: 2, renderScale: 1, adaptiveMinScale: .65, adaptiveMaxScale: 1, vegetationStride: 2, animalDetail: 1, diagnosticScale: 1.25, effects: true, contactShadows: true, adaptiveResolution: true, frameCap: 30, weatherCloudQuality: "high", weatherLocalPrecipitation: true, weatherDistantShafts: true, weatherCloudShadows: true, weatherWetGround: true, weatherSplashes: true, weatherLightning: true, weatherHaze: true, weatherParticleDensity: .75 }),
+  balanced: graphicsPresetDefinition({ largeMapPerformanceMode: true, iconTextureQuality: 1, renderScale: .75, adaptiveMinScale: .5, adaptiveMaxScale: .75, vegetationStride: 4, animalDetail: .72, diagnosticScale: 1.25, effects: true, contactShadows: false, adaptiveResolution: true, frameCap: 60, weatherCloudQuality: "low", weatherLocalPrecipitation: true, weatherDistantShafts: false, weatherCloudShadows: true, weatherWetGround: true, weatherSplashes: false, weatherLightning: false, weatherHaze: true, weatherParticleDensity: .45 }),
   high: graphicsPresetDefinition({ iconTextureQuality: 4, renderScale: 1.25, adaptiveMinScale: .75, adaptiveMaxScale: 1.25, vegetationStride: 1, animalDetail: 1.22, diagnosticScale: 1.25, effects: true, contactShadows: true, adaptiveResolution: true, frameCap: 60, weatherCloudQuality: "cinematic", weatherLocalPrecipitation: true, weatherDistantShafts: true, weatherCloudShadows: true, weatherWetGround: true, weatherSplashes: true, weatherLightning: true, weatherHaze: true, weatherParticleDensity: 1 }),
   ultra: graphicsPresetDefinition({ iconTextureQuality: 8, renderScale: 1.5, adaptiveMinScale: .75, adaptiveMaxScale: 1.5, vegetationStride: 1, animalDetail: 1.5, diagnosticScale: 1.25, effects: true, contactShadows: true, adaptiveResolution: true, frameCap: 60, weatherCloudQuality: "cinematic", weatherLocalPrecipitation: true, weatherDistantShafts: true, weatherCloudShadows: true, weatherWetGround: true, weatherSplashes: true, weatherLightning: true, weatherHaze: true, weatherParticleDensity: 1.35 })
 });
 const FIRST_RUN_GRAPHICS_DEFAULTS = graphicsPresetDefinition({
-  iconTextureQuality: 2,
-  renderScale: 1,
-  adaptiveMinScale: .75,
-  adaptiveMaxScale: 1.25,
-  vegetationStride: 2,
-  animalDetail: 1,
+  largeMapPerformanceMode: true,
+  iconTextureQuality: 1,
+  renderScale: .75,
+  adaptiveMinScale: .5,
+  adaptiveMaxScale: .75,
+  vegetationStride: 4,
+  animalDetail: .72,
   diagnosticScale: 1.25,
   effects: true,
-  contactShadows: true,
+  contactShadows: false,
   adaptiveResolution: true,
-  frameCap: 30,
-  weatherCloudQuality: "high",
+  frameCap: 60,
+  weatherCloudQuality: "low",
   weatherLocalPrecipitation: true,
-  weatherDistantShafts: true,
+  weatherDistantShafts: false,
   weatherCloudShadows: true,
   weatherWetGround: true,
-  weatherSplashes: true,
-  weatherLightning: true,
+  weatherSplashes: false,
+  weatherLightning: false,
   weatherHaze: true,
   weatherScientificOverlay: false,
   weatherOverlayLayer: "precipitation",
-  weatherParticleDensity: .75
+  weatherParticleDensity: .45
 });
 export const READABLE_INTERFACE_DEFAULTS = Object.freeze({
   interfaceScale: .85,
@@ -142,7 +143,7 @@ export function normalizeGraphicsSettings(value = {}) {
   const frameCap = requestedFrameCap === 45 ? 30 : requestedFrameCap === 0 ? 60 : [30, 60].includes(requestedFrameCap) ? requestedFrameCap : base.frameCap;
   return {
     preset,
-    largeMapPerformanceMode: value.largeMapPerformanceMode === true,
+    largeMapPerformanceMode: (value.largeMapPerformanceMode ?? base.largeMapPerformanceMode) === true,
     observerZoomLevel: ["map-sized", "far", "very-far", "extreme"].includes(value.observerZoomLevel) ? value.observerZoomLevel : "far",
     observerHazeMode: ["off", "light", "natural"].includes(value.observerHazeMode) ? value.observerHazeMode : "natural",
     iconTextureQuality,
@@ -152,6 +153,11 @@ export function normalizeGraphicsSettings(value = {}) {
     adaptiveMaxScale,
     vegetationStride: clamp(Math.round(Number(value.vegetationStride ?? base.vegetationStride)), 1, 5),
     animalDetail: clamp(Number(value.animalDetail ?? base.animalDetail), .6, 1.6),
+    dynamicAnimalEyes: value.dynamicAnimalEyes ?? base.dynamicAnimalEyes ?? true,
+    dynamicAnimalPupils: value.dynamicAnimalPupils ?? base.dynamicAnimalPupils ?? true,
+    independentAnimalEars: value.independentAnimalEars ?? base.independentAnimalEars ?? true,
+    smallSensoryAnimations: value.smallSensoryAnimations ?? base.smallSensoryAnimations ?? true,
+    minorAnimalFeatures: value.minorAnimalFeatures ?? base.minorAnimalFeatures ?? true,
     // `entityPanelScale` remains a compatibility alias for old saves and
     // extensions. Runtime layout uses the two explicit values below.
     entityPanelScale: entitySelectedPanelScale,

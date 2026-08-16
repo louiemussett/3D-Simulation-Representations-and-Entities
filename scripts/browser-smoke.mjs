@@ -97,7 +97,7 @@ try {
   checkpoint("first Three.js render");
   const defaults = await page.evaluate(() => ({ span: document.querySelector("#world-size").value, herbivores: document.querySelector("#start-herbivores").value, carnivores: document.querySelector("#start-carnivores").value, speed: document.querySelector("#speed").value, speedMaximum: document.querySelector("#speed").max, timeSkip: document.querySelector("#time-skip-period").value }));
   checkpoint("startup defaults read");
-  if (JSON.stringify(defaults) !== JSON.stringify({ span: "1", herbivores: "34", carnivores: "11", speed: "1", speedMaximum: "60", timeSkip: "1" })) throw new Error(`Unexpected startup defaults: ${JSON.stringify(defaults)}`);
+  if (JSON.stringify(defaults) !== JSON.stringify({ span: "1", herbivores: "37", carnivores: "3", speed: "1", speedMaximum: "60", timeSkip: "1" })) throw new Error(`Unexpected startup defaults: ${JSON.stringify(defaults)}`);
   const tickBeforeSkip = await page.evaluate(() => window.rssDiagnostics.tick());
   checkpoint("authoritative tick read");
   await page.evaluate(() => document.querySelector("#time-skip").click());
@@ -170,7 +170,7 @@ try {
   const textScaledConstellations = await page.evaluate(() => window.rssDiagnostics.entityConstellationState());
   const textScaledSelected = textScaledConstellations.find((item) => item.entityId === textScaleBaseline.entityId);
   if (!textScaledSelected || JSON.stringify(textScaledSelected.panelDimensions) !== JSON.stringify(textScaleBaseline.panelDimensions) || JSON.stringify(textScaledSelected.render.panelScreenSize) !== JSON.stringify(textScaleBaseline.panelScreenSize) || JSON.stringify(textScaledSelected.render.panelTexture) !== JSON.stringify(textScaleBaseline.panelTexture) || textScaledSelected.render.geometryKey !== textScaleBaseline.geometryKey || textScaledSelected.panelScale !== textScaleBaseline.panelScale || textScaledSelected.panelScaleRevision !== textScaleBaseline.panelScaleRevision) throw new Error(`Panel text scale changed entity-panel geometry: ${JSON.stringify({ before: textScaleBaseline, after: textScaledSelected })}`);
-  if (await page.evaluate(() => JSON.parse(localStorage.getItem("rss-living-laboratory-graphics-v3") || "{}").entityPanelTextScale) !== 1.5) throw new Error("Entity-panel text scale was not persisted");
+  if (await page.evaluate(() => JSON.parse(localStorage.getItem("rss-living-laboratory-graphics-v4") || "{}").entityPanelTextScale) !== 1.5) throw new Error("Entity-panel text scale was not persisted");
   assertIntegratedPanelContract(textScaledConstellations, constellationViewport, "Text-scaled ownership layout");
   await page.evaluate(() => { const control = document.querySelector("#graphics-entity-panel-text"); control.value = "1"; control.dispatchEvent(new Event("change", { bubbles: true })); });
   await waitFor(() => page.evaluate((selectedId) => window.rssDiagnostics.entityConstellationState().some((item) => item.entityId === selectedId && item.panelTextSettingScale === 1 && item.render.panelTextScale === 1), selectedConstellation.entityId), "entity-panel text scale reset");

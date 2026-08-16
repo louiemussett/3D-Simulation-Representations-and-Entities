@@ -47,3 +47,17 @@ test("selection ring, navigation and trail controls reach their actual world ren
   assert.match(app, /item\.arrow\.visible = Boolean\(ui\.overlayNavigationCues/);
   assert.match(app, /updateMotionTrail\([\s\S]*ui\.overlayMotionTrails/);
 });
+
+test("personal-space overlay exposes directional relationship presentation settings", () => {
+  for (const id of ["relationship-mode", "scope", "maximum-entities", "opacity", "preferred-band", "minimum-boundary", "maximum-boundary", "release-threshold", "direction-arrows", "attraction-pressure", "avoidance-pressure", "threat-pressure", "affiliation-care-pressure", "courtship-pressure", "current-band", "uncertainty", "truth-vs-perceived", "relationship-labels", "legacy-fallback", "laboratory-details"]) {
+    assert.match(html, new RegExp(`id=["']personal-space-${id}["']`), id);
+  }
+  assert.match(app, /drawPersonalSpaceOverlay\(a\)/);
+  assert.match(app, /savePersonalSpaceOverlaySettings\(localStorage/);
+  assert.match(app, /overlayGroups\[0\]\.append\(personalSpaceOptions\)/);
+  assert.doesNotMatch(app, /\[ui\.overlayPersonalSpace, false\]/);
+  assert.match(app, /enabled: ui\.overlayPersonalSpace\.checked/);
+  assert.match(html, /One primary relationship per animal/);
+  assert.match(html, /one relationship may show several rings/i);
+  assert.match(app, /no active perceived relationship—showing one legacy fallback ring/);
+});

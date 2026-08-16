@@ -1,8 +1,24 @@
 const RESOURCE_TYPES = ["water", "food", "carcass"];
+const RESOURCE_TYPE_ALIASES = Object.freeze({ plant: "food", forage: "food", vegetation: "food", meat: "carcass", carrion: "carcass" });
+
+export function resourceAcquisitionType(type) {
+  const normalized = String(type || "").trim().toLowerCase();
+  return RESOURCE_TYPES.includes(normalized) ? normalized : RESOURCE_TYPE_ALIASES[normalized] || null;
+}
+
+function acquisitionState(value) {
+  const state = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  for (const [key, fallback] of Object.entries({ failures: 0, resolved: 0, contacts: 0, suppressed: 0, longMemoryBlockedUntil: 0 })) {
+    if (!Number.isFinite(Number(state[key]))) state[key] = fallback;
+    else state[key] = Math.max(0, Number(state[key]));
+  }
+  return state;
+}
 
 export function migrateResourceAcquisition(animal) {
-  animal.resourceAcquisition ||= {};
-  for (const type of RESOURCE_TYPES) animal.resourceAcquisition[type] ||= { failures: 0, resolved: 0, contacts: 0, suppressed: 0, longMemoryBlockedUntil: 0 };
+  if (!animal || typeof animal !== "object") throw new TypeError("A valid animal is required for resource-acquisition migration");
+  if (!animal.resourceAcquisition || typeof animal.resourceAcquisition !== "object" || Array.isArray(animal.resourceAcquisition)) animal.resourceAcquisition = {};
+  for (const type of RESOURCE_TYPES) animal.resourceAcquisition[type] = acquisitionState(animal.resourceAcquisition[type]);
   return animal;
 }
 
@@ -24,11 +40,14 @@ export function resourceSearchRadius(memory) {
 
 export function failResourceMemory(animal, memory, tick, { cooldown = 12, confidenceMultiplier = .35 } = {}) {
   migrateResourceAcquisition(animal);
+  if (!memory || typeof memory !== "object") return null;
   memory.failedAttempts = (memory.failedAttempts || 0) + 1;
   memory.lastDisprovenTick = tick;
   memory.disprovenUntil = tick + cooldown * Math.min(4, memory.failedAttempts);
   memory.confidence = Math.max(.02, (memory.confidence ?? .5) * confidenceMultiplier);
-  const state = animal.resourceAcquisition[memory.type];
+  const type = resourceAcquisitionType(memory.type);
+  if (!type) { memory.resourceAcquisitionFailureIgnored = true; return memory; }
+  const state = animal.resourceAcquisition[type];
   state.failures += 1;
   state.lastFailedKey = resourceMemoryKey(memory);
   state.lastFailureTick = tick;
@@ -38,18 +57,22 @@ export function failResourceMemory(animal, memory, tick, { cooldown = 12, confid
 
 export function confirmResourceMemory(animal, type, tick) {
   migrateResourceAcquisition(animal);
-  const state = animal.resourceAcquisition[type];
+  const normalizedType = resourceAcquisitionType(type); if (!normalizedType) return false;
+  const state = animal.resourceAcquisition[normalizedType];
   state.resolved += 1;
   state.lastResolvedTick = tick;
   state.lastFailedKey = null;
   state.longMemoryBlockedUntil = 0;
+  return true;
 }
 
 export function recordResourceContact(animal, type, tick) {
   migrateResourceAcquisition(animal);
-  const state = animal.resourceAcquisition[type];
+  const normalizedType = resourceAcquisitionType(type); if (!normalizedType) return false;
+  const state = animal.resourceAcquisition[normalizedType];
   state.contacts += 1;
   state.lastContactTick = tick;
+  return true;
 }
 
 export function resourceAcquisitionTotals(animals) {

@@ -1,6 +1,7 @@
 import { sensorDefinitionsFor } from "./sensory-perspective.js";
 import { biologicalPhenotype } from "./biological-phenotypes.js";
 import { SPECIES, SPECIES_VISUAL_DESIGNS } from "./species-registry.js";
+import { sensorAnatomyProfile } from "./anatomy/sensor-anatomy-registry.js";
 
 const freeze = value => {
   if (value && typeof value === "object" && !Object.isFrozen(value)) { for (const child of Object.values(value)) freeze(child); Object.freeze(value); }
@@ -15,9 +16,11 @@ export const FOUNDER_SENSOR_ANCHORS = freeze({
 export function sensorDefinitions(animal) {
   const definitions = sensorDefinitionsFor(animal, biologicalPhenotype(animal));
   const founder = FOUNDER_SENSOR_ANCHORS[animal.speciesId];
+  const anatomy = sensorAnatomyProfile(animal.speciesId), anatomyById = new Map((anatomy?.sensors || []).map(sensor => [sensor.id, sensor]));
   return Object.freeze(definitions.map(sensor => {
+    const anatomical = anatomyById.get(sensor.id);
     const stateKey = sensor.id === "left-ear" ? "leftEarYaw" : sensor.id === "right-ear" ? "rightEarYaw" : sensor.id === "left-eye" ? "leftEyeYaw" : sensor.id === "right-eye" ? "rightEyeYaw" : null;
-    return Object.freeze({ ...sensor,
+    return Object.freeze({ ...sensor, ...(anatomical || {}), type: sensor.type,
       ...(founder ? { localPosition: founder[sensor.id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] || sensor.localPosition, visibleGeometryRequired: false } : {}),
       ...(stateKey ? { currentYawRadians: Number(animal.orientingState?.[stateKey] || 0) } : {})
     });

@@ -1,7 +1,10 @@
 const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, Number(value) || 0));
 const average = (...values) => values.reduce((sum, value) => sum + (Number(value) || 0), 0) / Math.max(1, values.length);
+import { candidatePrecedence, commitmentIdentity, commitmentMethodIdentity, createCommitmentEpisode, createMethodCandidate, shouldReplaceCommitment } from "./commitment-contracts.js";
+import { appendCommitmentEvent, createCommitmentEvent } from "./commitment-events.js";
+import { migrateParallelObligations } from "./parallel-obligations.js";
 export const COMMITMENT_PROTOCOL_SCHEMA = 2;
-export const COMMITMENT_STATE_SCHEMA = 3;
+export const COMMITMENT_STATE_SCHEMA = 4;
 
 const automaticRankingReuse = new WeakMap();
 
@@ -59,7 +62,9 @@ export function migrateCommitment(animal, tick = 0) {
     && animal.commitmentProtocolsSchema === COMMITMENT_PROTOCOL_SCHEMA
     && animal.commitmentProfile
     && animal.learnedProtocols && typeof animal.learnedProtocols === "object"
-    && Array.isArray(animal.commitmentHistory)) return animal.commitmentState;
+    && Array.isArray(animal.commitmentHistory) && Array.isArray(animal.commitmentEvents)
+    && Number.isFinite(animal.commitmentState.eventSequence)
+    && Object.hasOwn(animal.commitmentState, "lastActionKey")) return animal.commitmentState;
   if (!animal.commitmentProfile) {
     const base = hashUnit(animal.id);
     const value = (offset) => clamp(.22 + ((base * (offset * 7.13 + 1.9)) % 1) * .56);
@@ -75,6 +80,7 @@ export function migrateCommitment(animal, tick = 0) {
     socialForecast: state.socialForecast || null, protocolKey: state.protocolKey || null, riskReward: state.riskReward || null,
     commitmentId: state.commitmentId || null, minimumReviewTick: Number(state.minimumReviewTick ?? state.startedTick ?? tick), method: state.method || null, targetKey: state.targetKey || null,
     phase: state.phase || null, suspended: Boolean(state.suspended), suspendedAtTick: state.suspendedAtTick ?? null, suspensionReason: state.suspensionReason || null, lastRetentionReason: state.lastRetentionReason || null,
+    sequence: Number(state.sequence || 0), eventSequence: Number(state.eventSequence || 0), episode: state.episode || null, lastActionKey: state.lastActionKey || animal.actionState?.key || null,
   };
   animal.learnedProtocols ||= {};
   for (const key of Object.keys(animal.learnedProtocols)) {
@@ -83,6 +89,14 @@ export function migrateCommitment(animal, tick = 0) {
   }
   animal.commitmentProtocolsSchema = COMMITMENT_PROTOCOL_SCHEMA;
   animal.commitmentHistory ||= [];
+  animal.commitmentEvents ||= [];
+  migrateParallelObligations(animal);
+  if (!animal.commitmentState.episode && animal.commitmentState.priority) {
+    const plan = animal.needDependencyPlan || {}, actionTarget = animal.actionState?.target || animal.actionTarget;
+    animal.commitmentState.sequence = Math.max(1, animal.commitmentState.sequence || 1);
+    animal.commitmentState.episode = createCommitmentEpisode({ drive: animal.commitmentState.priority, needId: plan.needId || animal.commitmentState.priority, satisfierId: plan.satisfierId, methodId: plan.methodId || animal.commitmentState.method || animal.actionState?.key, targetKey: plan.targetKey || animal.commitmentState.targetKey || (actionTarget ? `entity:${actionTarget}` : null), target: plan.target, phase: plan.phase || animal.commitmentState.phase, completionCondition: plan.completionCondition, score: 0 }, { animalId: animal.id, tick: animal.commitmentState.startedTick, sequence: animal.commitmentState.sequence, commitTicks: Math.max(1, animal.commitmentState.minimumReviewTick - animal.commitmentState.startedTick) });
+    animal.commitmentState.commitmentId = animal.commitmentState.episode.commitmentId;
+  }
   return animal.commitmentState;
 }
 
@@ -166,8 +180,17 @@ function rankCandidates(animal, candidates, state, profile, context, reuse) {
     const strongerUrgentChallenger = same && candidates.some(other => other.drive !== candidate.drive && other.urgent && Number(other.score || 0) > Number(candidate.score || 0));
     const persistence = same && !strongerUrgentChallenger ? 18 + profile.commitmentStability * 25 + profile.perseverance * 20 + state.confidence * 16 + clamp(state.progress) * 12 : 0;
     const hesitation = !candidate.urgent && !same ? (social.rejectionRisk + social.exclusionRisk + social.reputationRisk + social.coordinationCost * .5) * profile.socialSusceptibility * 22 : 0;
-    return { ...candidate, baseScore: candidate.score, score: candidate.score + assessment.utility * .55 + persistence - hesitation, commitmentPersistence: persistence, socialHesitation: hesitation, socialForecast: social, riskReward: assessment };
-  }).sort((left, right) => right.score - left.score || String(left.drive).localeCompare(String(right.drive)));
+    const normalized = createMethodCandidate({ ...candidate, needId: candidate.needId || candidate.need || assessment.kind, candidateScore: candidate.score, precedenceClass: candidate.precedenceClass || (candidate.immediateLethal ? "immediate-lethal" : assessment.deathIfUnsatisfied ? "physiological-failure" : candidate.dependentCritical ? "dependent-critical" : candidate.urgent ? "high-urgency" : candidate.optional ? "optional" : "ordinary") });
+    return { ...candidate, ...normalized, baseScore: candidate.score, score: candidate.score + assessment.utility * .55 + persistence - hesitation, commitmentPersistence: persistence, socialHesitation: hesitation, socialForecast: social, riskReward: assessment };
+  }).sort((left, right) => {
+    const precedence = candidatePrecedence(right) - candidatePrecedence(left);
+    if (precedence) return precedence;
+    // Within emergency classes the explicit biological candidate score is
+    // decisive; persistence must not let an incumbent hide a stronger flee or
+    // defence challenger. Ordinary plans still benefit from full hysteresis.
+    if (candidatePrecedence(left) >= 2 && Number(right.baseScore) !== Number(left.baseScore)) return Number(right.baseScore) - Number(left.baseScore);
+    return right.score - left.score || String(left.drive).localeCompare(String(right.drive));
+  });
 }
 
 export function rankCommitmentCandidates(animal, candidates, tick, context = {}, rankingReuse = null) {
@@ -179,18 +202,36 @@ export function rankCommitmentCandidates(animal, candidates, tick, context = {},
 export function selectWithCommitment(animal, candidates, tick, context = {}, rankingReuse = null) {
   const state = migrateCommitment(animal, tick), reuse = prepareRankingReuse(animal, tick, context, rankingReuse), p = reuse.profile ||= expressedCommitmentProfileCurrent(animal);
   const scored = rankCandidates(animal, candidates, state, p, context, reuse);
-  const incumbent = scored.find((candidate) => candidate.drive === state.priority), challenger = scored[0];
-  if (incumbent && challenger !== incumbent && !challenger.urgent) {
-    if (tick < Number(state.minimumReviewTick || -Infinity) && !context.currentPlanBlocked) {
-      scored.splice(scored.indexOf(incumbent), 1); scored.unshift(incumbent);
-      incumbent.retainedAgainst = challenger.drive; incumbent.switchThreshold = Infinity; incumbent.minimumHold = true;
-      return scored;
-    }
+  // Legacy candidates may not yet declare satisfier/method/target identity. In
+  // that case the stable drive label remains the compatibility identity; fully
+  // typed candidates use the complete episode identity.
+  const exactIncumbent = state.episode
+    ? scored.find((candidate) => commitmentIdentity(candidate) === commitmentIdentity(state.episode)
+      || (!state.episode.targetKey && candidate.drive === state.priority && !candidate.targetKey))
+    : scored.find((candidate) => candidate.drive === state.priority);
+  // Candidate generation sometimes refreshes a location/contact representation
+  // before resource retention runs. Preserve the incumbent method in that case
+  // so a coordinate refresh is not mistaken for a biological priority switch.
+  const methodIncumbent = state.episode ? scored.find((candidate) => commitmentMethodIdentity(candidate) === commitmentMethodIdentity(state.episode)) : null;
+  const incumbent = exactIncumbent || methodIncumbent, challenger = scored[0];
+  // A changed target representation is itself a reconsideration. Apply the
+  // same hold/invalidation rules even when this is the only generated method.
+  if (!exactIncumbent && methodIncumbent && state.episode && commitmentIdentity(methodIncumbent) !== commitmentIdentity(state.episode)) {
+    const targetAssessment = shouldReplaceCommitment({ ...state.episode, candidateScore: state.episode.candidateScore ?? methodIncumbent.candidateScore }, methodIncumbent, { tick, blocked: context.currentPlanBlocked, targetInvalid: context.currentTargetInvalid, routeUnavailable: context.routeUnavailable, stalled: context.currentPlanStalled, etaIncreaseRatio: context.etaIncreaseRatio, switchThreshold: 0 });
+    if (!targetAssessment.replace) {
+      methodIncumbent.targetRef = state.episode.targetRef;
+      methodIncumbent.targetKey = state.episode.targetKey;
+      methodIncumbent.targetRetained = true;
+      methodIncumbent.retentionReason = targetAssessment.reason;
+    } else methodIncumbent.switchReason = targetAssessment.reason;
+  }
+  if (incumbent && challenger !== incumbent) {
     const switchThreshold = 8 + p.commitmentStability * 30 + p.evidenceThreshold * 20 - p.flexibility * 22 + state.confidence * 8;
-    if (challenger.score - incumbent.score < switchThreshold && !context.currentPlanBlocked) {
+    const assessment = shouldReplaceCommitment({ ...incumbent, minimumReviewTick: state.minimumReviewTick }, challenger, { tick, blocked: context.currentPlanBlocked, targetInvalid: context.currentTargetInvalid, routeUnavailable: context.routeUnavailable, stalled: context.currentPlanStalled, etaIncreaseRatio: context.etaIncreaseRatio, switchThreshold });
+    if (!assessment.replace) {
       scored.splice(scored.indexOf(incumbent), 1); scored.unshift(incumbent);
-      incumbent.retainedAgainst = challenger.drive; incumbent.switchThreshold = switchThreshold;
-    }
+      incumbent.retainedAgainst = challenger.drive; incumbent.switchThreshold = assessment.switchThreshold ?? switchThreshold; incumbent.minimumHold = assessment.reason.includes("minimum hold"); incumbent.retentionReason = assessment.reason;
+    } else challenger.switchReason = assessment.reason;
   }
   return scored;
 }
@@ -231,34 +272,76 @@ export function protocolRetirementAssessment(record, { minimumAttempts = 5, fail
 }
 
 export function observeCommitment(animal, chosen, tick, context = {}) {
-  const state = migrateCommitment(animal, tick), previous = state.priority, changed = previous && previous !== chosen.drive;
+  const state = migrateCommitment(animal, tick), previous = state.priority;
+  const previousEpisode = state.episode, previousActionKey = state.lastActionKey;
+  const actionTarget = animal.actionState?.target || animal.actionTarget;
+  const candidate = createMethodCandidate({ ...chosen, needId: chosen.needId || chosen.need || chosen.riskReward?.kind || chosen.drive, satisfierId: chosen.satisfierId || animal.needDependencyPlan?.satisfierId, methodId: chosen.methodId || context.method || animal.needDependencyPlan?.methodId || animal.actionState?.key, targetKey: chosen.targetKey || animal.needDependencyPlan?.targetKey || (actionTarget ? `entity:${actionTarget}` : null), target: chosen.target || animal.needDependencyPlan?.target, phase: animal.needDependencyPlan?.phase, completionCondition: chosen.completionCondition || animal.needDependencyPlan?.completionCondition });
+  const previousIdentity = state.episode ? commitmentIdentity(state.episode) : null, nextIdentity = commitmentIdentity(candidate);
+  const previousMethodIdentity = state.episode ? commitmentMethodIdentity(state.episode) : null, nextMethodIdentity = commitmentMethodIdentity(candidate);
+  // Target acquisition/refinement is an execution event, not a new priority.
+  // Only changing need, satisfier or method creates a new commitment episode.
+  const changed = Boolean(state.episode ? previousMethodIdentity !== nextMethodIdentity : previous && previous !== chosen.drive);
   state.reconsiderations += 1; state.lastReviewedTick = tick;
   if (!previous || changed) {
-    if (changed) { state.switches += 1; state.lastSwitchTick = tick; animal.commitmentHistory.push({ tick, from: previous, to: chosen.drive, reason: context.switchReason || (chosen.urgent ? "urgent override" : "stronger viable plan") }); }
-    state.priority = chosen.drive; state.startedTick = tick; state.minimumReviewTick = tick + Math.max(1, Number(chosen.commitTicks) || 1); state.commitmentId = `${animal.id || "animal"}:${tick}:${chosen.drive}`; state.progress = 0; state.previousMetric = context.progressMetric ?? null; state.switchReason = changed ? (context.switchReason || "evidence justified a change") : "initial selection";
+    if (changed) { state.switches += 1; state.lastSwitchTick = tick; animal.commitmentHistory.push({ tick, from: previous, to: chosen.drive, reason: context.switchReason || chosen.switchReason || "precedence or evidence justified a change" }); }
+    state.sequence += 1; state.priority = chosen.drive; state.startedTick = tick; state.minimumReviewTick = tick + Math.max(1, Number(chosen.commitTicks) || 1); state.progress = 0; state.previousMetric = context.progressMetric ?? null; state.switchReason = changed ? (context.switchReason || chosen.switchReason || "evidence justified a change") : "initial selection";
   } else if (Number.isFinite(context.progressMetric) && Number.isFinite(state.previousMetric)) {
     state.progress = clamp(state.progress * .7 + Math.max(0, context.progressMetric - state.previousMetric) * .03);
     state.previousMetric = context.progressMetric;
   }
-  state.commitmentId ||= `${animal.id || "animal"}:${state.startedTick}:${chosen.drive}`;
+  state.episode = createCommitmentEpisode({ ...candidate, phase: animal.needDependencyPlan?.phase || animal.actionState?.key, completionCondition: animal.needDependencyPlan?.completionCondition }, { animalId: animal.id, tick, sequence: Math.max(1, state.sequence), commitTicks: chosen.commitTicks, previous: changed ? null : state.episode });
+  state.commitmentId = state.episode.commitmentId;
   if (!Number.isFinite(state.minimumReviewTick)) state.minimumReviewTick = state.startedTick + Math.max(1, Number(chosen.commitTicks) || 1);
   state.socialForecast = chosen.socialForecast || forecastSocialCommitment(animal, chosen, context);
   state.riskReward = chosen.riskReward || evaluateRiskReward(animal, chosen, context);
   const p = expressedCommitmentProfile(animal), risk = state.socialForecast.rejectionRisk + state.socialForecast.exclusionRisk;
-  state.status = chosen.urgent ? "emergency" : changed || !previous ? "committed" : "continuing";
+  state.status = ["immediate-lethal", "physiological-failure"].includes(candidate.precedenceClass) ? "emergency" : changed || !previous ? "committed" : "continuing";
   state.publicIntention = risk > 1 && p.socialCourage < .48 ? "withheld" : risk > .55 ? "tentative proposal" : state.socialForecast.conflicts ? "public proposal" : "acting openly";
   state.protocolKey = protocolKey(chosen.drive, context.method || animal.needDependencyPlan?.method || animal.actionState?.key);
-  state.method = context.method || animal.needDependencyPlan?.method || animal.actionState?.key || null;
-  state.targetKey = animal.needDependencyPlan?.targetKey || null;
+  state.method = candidate.methodId;
+  state.targetKey = candidate.targetKey;
   state.phase = animal.needDependencyPlan?.phase || animal.actionState?.key || null;
   state.suspended = Boolean(animal.needDependencyPlan?.suspended);
   state.suspendedAtTick = animal.needDependencyPlan?.suspendedAtTick ?? null;
   state.suspensionReason = animal.needDependencyPlan?.suspensionReason || null;
-  state.lastRetentionReason = chosen.retainedAgainst ? `retained against ${chosen.retainedAgainst}; challenger remained below ${Number(chosen.switchThreshold || 0).toFixed(1)}` : changed ? state.switchReason : "commitment retained";
+  state.lastRetentionReason = chosen.retainedAgainst ? (chosen.retentionReason || `retained against ${chosen.retainedAgainst}; challenger remained below ${Number(chosen.switchThreshold || 0).toFixed(1)}`) : changed ? state.switchReason : "commitment retained";
+  const emit = (kind, from, to, reason, countsAsSwitch = false) => { state.eventSequence += 1; return appendCommitmentEvent(animal, createCommitmentEvent({ eventId: `${animal.id}:${tick}:${kind}:${state.eventSequence}`, kind, tick, animalId: animal.id, commitmentId: state.commitmentId, from, to, reason, countsAsSwitch })); };
+  const eventKind = !previous ? "commitment-created" : changed ? "priority-changed" : "commitment-retained";
+  emit(eventKind, previousIdentity || previous, nextIdentity, state.lastRetentionReason, changed);
+  if (previousEpisode) {
+    if (previousEpisode.satisfierId !== state.episode.satisfierId) emit("satisfier-changed", previousEpisode.satisfierId, state.episode.satisfierId, state.switchReason);
+    if (previousEpisode.methodId !== state.episode.methodId) emit("method-changed", previousEpisode.methodId, state.episode.methodId, state.switchReason);
+    const planMatchesEpisode = animal.needDependencyPlan?.needId === state.episode.needId;
+    if (previousEpisode.targetKey !== state.episode.targetKey) emit("target-changed", previousEpisode.targetKey, state.episode.targetKey, planMatchesEpisode ? animal.needDependencyPlan?.targetDecision || state.switchReason : state.switchReason);
+    if (previousEpisode.phase !== state.episode.phase) emit("phase-changed", previousEpisode.phase, state.episode.phase, animal.needDependencyPlan?.reason || "execution phase advanced");
+  }
+  const actionKey = animal.actionState?.key || null;
+  if (previousActionKey && previousActionKey !== actionKey) emit("action-changed", previousActionKey, actionKey, "execution changed within the recorded behavioural state");
+  state.lastActionKey = actionKey;
   const protocol = animal.learnedProtocols[state.protocolKey];
   state.confidence = clamp(state.confidence * .88 + (protocol?.confidence ?? p.confidence) * .12);
   if (animal.commitmentHistory.length > 24) animal.commitmentHistory.splice(0, animal.commitmentHistory.length - 24);
   return state;
+}
+
+/**
+ * Bind execution artifacts created by chosen.run() to the commitment that was
+ * recorded immediately afterwards. This closes the one-tick ownership gap in
+ * which locomotion previously inherited the commitment selected last tick.
+ */
+export function reconcileCommitmentExecution(animal, previousCommitmentId = null) {
+  const state = animal?.commitmentState, episode = state?.episode;
+  if (!animal || !episode?.commitmentId) return null;
+  const request = animal.movementRequest;
+  if (request) {
+    const ownershipChanged = request.commitmentId !== episode.commitmentId;
+    request.commitmentId = episode.commitmentId;
+    if (episode.targetKey) request.targetKey = episode.targetKey;
+    request.routeId = request.targetKey ? `${episode.commitmentId}:${request.targetKey}` : `${episode.commitmentId}:${request.id}`;
+    if (ownershipChanged || (previousCommitmentId && previousCommitmentId !== episode.commitmentId)) animal.routeState = null;
+  }
+  if (animal.needDependencyPlan && !animal.needDependencyPlan.commitmentId) animal.needDependencyPlan.commitmentId = episode.commitmentId;
+  return request || null;
 }
 
 export function recordProtocolOutcome(animal, { priority, method, success, duration = 0, gain = 0, risk = null, reward = null, source = "self", teacherId = null } = {}) {
@@ -321,6 +404,7 @@ export function seedStartingCommitment(animal, random = Math.random, tick = 0) {
   const lifeRanking = ranking({ key: life.key, score: 100 }, [{ key: "maintain-social-bonds" }, { key: "survive-and-maintain-condition" }], "life");
   animal.goalPlan = { currentPriority: immediate, immediateConcern: immediate, supportingGoal: support, lifeStrategy: life, shortTerm: immediate, mediumTerm: support, longTerm: life, rankings: { immediateConcern: immediateRanking, supportingGoal: supportingRanking, lifeStrategy: lifeRanking, shortTerm: immediateRanking, mediumTerm: supportingRanking, longTerm: lifeRanking } };
   const state = animal.commitmentState; state.priority = selected.priority; state.startedTick = tick - Math.floor(random() * 5); state.lastReviewedTick = tick; state.lastSwitchTick = state.startedTick; state.status = "pre-observation commitment"; state.progress = random() * .2; state.confidence = clamp(.32 + random() * .58); state.switchReason = "selected before observation began"; state.publicIntention = grouped && random() > .3 ? "acting openly" : random() > .62 ? "tentative proposal" : "not yet communicated"; state.protocolKey = protocolKey(selected.priority, selected.method);
+  state.sequence = Math.max(1, state.sequence || 1); state.episode = createCommitmentEpisode({ drive: selected.priority, methodId: selected.method, score, phase: "evaluate" }, { animalId: animal.id, tick: state.startedTick, sequence: state.sequence, commitTicks: duration }); state.commitmentId = state.episode.commitmentId; state.minimumReviewTick = state.episode.minimumReviewTick;
   state.riskReward = evaluateRiskReward(animal, selected, { methodConfidence: state.confidence });
   const protocolCount = 1 + Math.floor(random() * 4), protocolChoices = [selected, ...choices.filter((choice) => choice !== selected)];
   for (let index = 0; index < protocolCount; index += 1) {

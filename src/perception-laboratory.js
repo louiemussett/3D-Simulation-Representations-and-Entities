@@ -21,7 +21,8 @@ export function truthPerceptionTraceInspection(truthRecords = [], perceived = []
 
 export function causalWhyDiagnostic(animal = {}) {
   const trace = animal.decisionTrace || animal.rss?.current || null, priorities = animal.priorities || [], chosen = priorities[0] || { drive: animal.drive || trace?.selectedPriority?.key || "unknown", score: trace?.selectedPriority?.score || 0 }, evidence = trace?.evidence || animal.sensoryBuffer || [], primary = evidence.find(item => item.evidenceId === trace?.primaryEvidenceId) || evidence.slice().sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0] || null;
-  const chain = [primary ? `${primary.channel || primary.provenance || "sensory"} evidence: ${primary.type || "observation"} (${Math.round(clamp(primary.confidence) * 100)}% confidence)` : "No primary external evidence was recorded", `candidate selected: ${chosen.drive} (score ${Math.round(Number(chosen.score || 0))})`, animal.commitmentState?.priority ? `commitment: ${animal.commitmentState.priority}${animal.commitmentState.status ? ` · ${animal.commitmentState.status}` : ""}` : "no retained commitment was recorded", `action: ${animal.actionState?.key || trace?.actionKey || "unknown"}${animal.actionState?.intendedOutcome ? ` → ${animal.actionState.intendedOutcome}` : ""}`];
+  const action = animal.actionState || {};
+  const chain = [primary ? `${primary.channel || primary.provenance || "sensory"} evidence: ${primary.type || "observation"} (${Math.round(clamp(primary.confidence) * 100)}% confidence)` : "No primary external evidence was recorded", `candidate selected: ${chosen.drive} (score ${Math.round(Number(chosen.score || 0))})`, animal.commitmentState?.priority ? `commitment: ${animal.commitmentState.priority}${animal.commitmentState.status ? ` · ${animal.commitmentState.status}` : ""}` : "no retained commitment was recorded", `action: ${action.key || trace?.actionKey || "unknown"}${action.intendedOutcome ? ` → ${action.intendedOutcome}` : ""}`, action.episodeId ? `action episode: ${action.episodeId} · started tick ${action.startedTick ?? "unknown"} · continued ${action.continuationTicks || 0} ticks` : "action episode identity was not recorded"];
   const whyNot = priorities.slice(1, 8).map(candidate => Object.freeze({ alternative: candidate.drive, score: Number(candidate.score || 0), reason: Number(candidate.score || 0) < Number(chosen.score || 0) ? `ranked ${Math.round(Number(chosen.score || 0) - Number(candidate.score || 0))} points below the selected candidate` : "not selected under the recorded commitment or feasibility rules" }));
   const flee = priorities.find(item => /flee|escape|safety|defend|predator/.test(item.drive || ""));
   let whyNotFlee;
@@ -29,7 +30,7 @@ export function causalWhyDiagnostic(animal = {}) {
   else if (!flee) whyNotFlee = (animal.threatAssessment?.score || 0) > 0 ? "Threat evidence exists, but no flee candidate crossed the current eligibility threshold." : "No qualifying immediate-threat evidence produced a flee candidate.";
   else if (Number(flee.score || 0) < Number(chosen.score || 0)) whyNotFlee = `Fleeing scored ${Math.round(flee.score || 0)}, below ${chosen.drive} at ${Math.round(chosen.score || 0)}.`;
   else whyNotFlee = "Fleeing was eligible but was not selected; inspect commitment and feasibility constraints for the unresolved cause.";
-  return Object.freeze({ chosen: Object.freeze({ drive: chosen.drive, score: Number(chosen.score || 0), action: animal.actionState?.key || trace?.actionKey || "unknown" }), chain: Object.freeze(chain), whyNot: Object.freeze(whyNot), whyNotFlee, constraints: Object.freeze([...(trace?.constraints || [])]), explanationStatus: trace ? "recorded-causal-evidence" : "current-state-fallback" });
+  return Object.freeze({ chosen: Object.freeze({ drive: chosen.drive, score: Number(chosen.score || 0), action: action.key || trace?.actionKey || "unknown", actionEpisodeId: action.episodeId || null, actionStartedTick: action.startedTick ?? null, actionContinuationTicks: Number(action.continuationTicks || 0) }), chain: Object.freeze(chain), whyNot: Object.freeze(whyNot), whyNotFlee, constraints: Object.freeze([...(trace?.constraints || [])]), explanationStatus: trace ? "recorded-causal-evidence" : "current-state-fallback" });
 }
 
 export function gazeControlDiagnostic(animal = {}) {
@@ -38,6 +39,14 @@ export function gazeControlDiagnostic(animal = {}) {
 }
 
 export function perceptionLatencyDiagnostic(animal = {}) { return latencyDiagnostic(animal); }
+
+export function predatorPreyEvidenceDiagnostic(animal = {}, truthById = () => null) {
+  const hypotheses = [...(animal.threatHypotheses || []), ...Object.values(animal.preyHypotheses || {})];
+  return Object.freeze(hypotheses.map(hypothesis => {
+    const targetId = hypothesis.subjectAssociationId, truth = truthById(targetId), motion = hypothesis.motion, estimated = hypothesis.locationRegion?.centre || motion?.position?.estimate, exactDistance = truth && Number.isFinite(truth.x) && Number.isFinite(truth.z) ? Math.hypot(truth.x - Number(animal.x || 0), truth.z - Number(animal.z || 0)) : null, estimatedDistance = estimated ? Math.hypot(estimated.x - Number(animal.x || 0), estimated.z - Number(animal.z || 0)) : null;
+    return Object.freeze({ hypothesisId: hypothesis.hypothesisId, kind: hypothesis.hypothesisId?.startsWith("threat:") ? "threat" : "prey", targetId, observationIds: Object.freeze([...(hypothesis.provenance?.observationIds || [])]), estimatedPosition: estimated ? Object.freeze({ ...estimated }) : null, truthPosition: truth ? Object.freeze({ x: truth.x, z: truth.z }) : null, positionError: exactDistance == null || estimatedDistance == null ? null : Math.abs(exactDistance - estimatedDistance), motionState: motion?.motionState || "unknown", estimatedVelocity: motion?.velocity?.estimate || null, truthVelocity: truth ? Object.freeze({ x: Number(truth.locomotion?.vx || 0), z: Number(truth.locomotion?.vz || 0) }) : null, velocityConfidence: motion?.velocity?.confidence || 0, directionUncertaintyRadians: motion?.velocity?.directionUncertaintyRadians ?? null, targetingProbability: hypothesis.targeting?.probability ?? null, targetingConfidence: hypothesis.targeting?.confidence ?? null, informationBoundary: "truth shown for Laboratory comparison only; decision uses hypothesis" });
+  }));
+}
 
 export function perceptionResearchReadiness() {
   const profiles = Object.values(TEMPORAL_VISION_PROFILES), exact = profiles.filter(profile => ["measured-exact-species", "observed-exact-species", "inferred-exact-species"].includes(profile.evidenceGrade) && profile.sourceIds?.length).length;

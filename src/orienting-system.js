@@ -2,6 +2,16 @@ const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const angleDifference = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 const approachAngle = (current, target, maximum) => current + clamp(angleDifference(target, current), -maximum, maximum);
 
+export function setAuthoritativeBodyHeading(animal, heading) {
+  const normalized = Math.atan2(Math.sin(Number(heading) || 0), Math.cos(Number(heading) || 0));
+  animal.orientation = normalized;
+  if (animal.locomotion) {
+    animal.locomotion.heading = normalized;
+    if (Math.hypot(animal.locomotion.vx || 0, animal.locomotion.vz || 0) < .01) animal.locomotion.angularVelocity = 0;
+  }
+  return normalized;
+}
+
 export const ORIENTING_SCHEMA = 2;
 
 export function migrateOrientingState(animal) {
@@ -24,7 +34,12 @@ export function updateOrienting(animal, observations = [], tick = 0) {
   const cueHeading = cue.channel === "hearing" ? Math.PI / 2 - cue.bearing : cue.bearing;
   state.targetId = cueIdentity; state.channel = cue.channel; state.bearing = cueHeading; state.confidence = cue.confidence; state.acquiredTick = same ? state.acquiredTick : tick; state.sustainedTicks = same ? state.sustainedTicks + 1 : 1;
   const relative = angleDifference(cueHeading, animal.orientation || 0), earTarget = clamp(relative, -1.4, 1.4);
-  state.leftEarYaw = approachAngle(state.leftEarYaw, earTarget, .34); state.rightEarYaw = approachAngle(state.rightEarYaw, earTarget, .34);
+  // Both pinnae attend the cue, but retain a small side-specific divergence.
+  // This makes their independent control observable and avoids a rigid,
+  // mirrored-plate appearance without inventing a second sound source.
+  const earDivergence = cue.channel === "hearing" ? .14 : .08;
+  state.leftEarYaw = approachAngle(state.leftEarYaw, clamp(earTarget + earDivergence, -1.4, 1.4), .34);
+  state.rightEarYaw = approachAngle(state.rightEarYaw, clamp(earTarget - earDivergence, -1.4, 1.4), .34);
   const distance = Number(cue.distance || (Number.isFinite(cue.x) && Number.isFinite(cue.z) ? Math.hypot(cue.x - animal.x, cue.z - animal.z) : 20));
   const convergence = cue.channel === "sight" ? clamp(.2 / Math.max(1, distance), 0, .12) : 0;
   const eyeTarget = clamp(relative - (animal.headYaw || 0), -.5, .5);
@@ -33,7 +48,7 @@ export function updateOrienting(animal, observations = [], tick = 0) {
   animal.headYaw = approachAngle(animal.headYaw || 0, clamp(relative, -1.05, 1.05), .24);
   const stationary = Math.hypot(animal.locomotion?.vx || 0, animal.locomotion?.vz || 0) < .01;
   if (stationary && state.sustainedTicks >= 2 && Math.abs(relative) > .82 && ["listen", "orient", "search"].includes(animal.actionState?.key)) {
-    animal.orientation = approachAngle(animal.orientation || 0, cueHeading, .16); state.reason = `body orienting toward sustained ${cue.channel} cue`;
+    setAuthoritativeBodyHeading(animal, approachAngle(animal.orientation || 0, cueHeading, .16)); state.reason = `body orienting toward sustained ${cue.channel} cue`;
   } else state.reason = `${cue.channel} cue retained by ears and head`;
   return state;
 }

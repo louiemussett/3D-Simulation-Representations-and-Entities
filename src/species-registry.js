@@ -361,7 +361,7 @@ export function ecologyRosterForWorldScale(span = 1) {
 // these values are never compressed representatives of a larger population.
 export const ECOLOGY_PRESET_POPULATIONS = freeze({
   "ridge-hunter-web": freeze({ hunter: 1, grazer: 54, "dryland-runner": 95 }),
-  "updated-originals": freeze({ "valley-grazer-updated": 18, "ridge-hunter-updated": 4 }),
+  "updated-originals": freeze({ "valley-grazer-updated": 37, "ridge-hunter-updated": 3 }),
   "brush-fox-web": freeze({ "brush-fox": 1, "meadow-nibbler": 267, "brush-nibbler": 197 }),
   "shadow-stalker-web": freeze({ "shadow-stalker": 1, grazer: 50, "woodland-browser": 72 }),
   "pack-breaker-web": freeze({ "pack-breaker": 1, "great-plains-grazer": 11, "armoured-browser": 7, "northern-shaggy-grazer": 10 }),

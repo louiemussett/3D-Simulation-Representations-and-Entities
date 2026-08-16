@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const root = new URL("../", import.meta.url);
-const [html, app, css] = await Promise.all([
+const [html, app, css, worldCodec] = await Promise.all([
   readFile(new URL("index.html", root), "utf8"),
   readFile(new URL("src/app.js", root), "utf8"),
-  readFile(new URL("src/styles.css", root), "utf8")
+  readFile(new URL("src/styles.css", root), "utf8"),
+  readFile(new URL("src/persistence/world-codec.js", root), "utf8")
 ]);
 
 test("the in-game Escape menu is distinct from the startup menu and can recover every principal window", () => {
@@ -53,7 +54,8 @@ test("the startup action identifies the exact world it will open", () => {
   assert.match(app, /const loaded = await loadSlotByName\(name\)/);
   assert.match(app, /if \(!loaded\)[\s\S]*return false;[\s\S]*enterGame\(\);[\s\S]*return true;/);
   assert.match(app, /return true; \} catch \{ addEvent\("Load slot failed"\)/);
-  assert.match(app, /saveSlotName: activeSaveSlotName \|\| null/);
+  assert.match(app, /createWorldSnapshot\(sim,[\s\S]{0,200}saveSlotName: activeSaveSlotName/);
+  assert.match(worldCodec, /saveSlotName: saveSlotName \|\| null/);
   assert.match(app, /await activateSnapshotAsync\(\{ \.\.\.snapshot, saveSlotName: name \}/);
 });
 

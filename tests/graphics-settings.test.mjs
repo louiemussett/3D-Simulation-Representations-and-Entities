@@ -2,18 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { graphicsPreset, normalizeGraphicsSettings, READABLE_INTERFACE_DEFAULTS } from "../src/graphics-settings.js";
 test("low graphics reduce render work without changing simulation settings", () => { const low = graphicsPreset("low"), ultra = graphicsPreset("ultra"); assert.ok(low.renderScale < ultra.renderScale); assert.ok(low.vegetationStride > ultra.vegetationStride); assert.equal(low.frameCap, 30); });
-test("custom graphics values remain bounded", () => { const value = normalizeGraphicsSettings({ renderScale: 9, vegetationStride: 0, animalDetail: .1, frameCap: 17 }); assert.equal(value.renderScale, 1.5); assert.equal(value.vegetationStride, 1); assert.equal(value.animalDetail, .6); assert.equal(value.frameCap, 30); });
+test("custom graphics values remain bounded", () => { const value = normalizeGraphicsSettings({ renderScale: 9, vegetationStride: 0, animalDetail: .1, frameCap: 17 }); assert.equal(value.renderScale, 1.5); assert.equal(value.vegetationStride, 1); assert.equal(value.animalDetail, .6); assert.equal(value.frameCap, 60); });
 test("removed frame-rate choices migrate to supported limits", () => { assert.equal(normalizeGraphicsSettings({ frameCap: 45 }).frameCap, 30); assert.equal(normalizeGraphicsSettings({ frameCap: 0 }).frameCap, 60); assert.equal(normalizeGraphicsSettings({ frameCap: 60 }).frameCap, 60); });
 test("new users begin on the authored custom default profile", () => {
   const defaults = normalizeGraphicsSettings({});
   assert.equal(defaults.preset, "custom");
   assert.deepEqual(
     [defaults.renderScale, defaults.adaptiveMinScale, defaults.adaptiveMaxScale, defaults.vegetationStride, defaults.animalDetail, defaults.iconTextureQuality, defaults.frameCap],
-    [1, .75, 1.25, 2, 1, 2, 30]
+    [.75, .5, .75, 4, .72, 1, 60]
   );
 });
 test("adaptive resolution defaults on and can be disabled", () => { assert.equal(normalizeGraphicsSettings({}).adaptiveResolution, true); assert.equal(normalizeGraphicsSettings({ adaptiveResolution: false }).adaptiveResolution, false); });
-test("large-map performance mode is opt-in and remains a local graphics preference", () => { assert.equal(normalizeGraphicsSettings({}).largeMapPerformanceMode, false); assert.equal(normalizeGraphicsSettings({ largeMapPerformanceMode: true }).largeMapPerformanceMode, true); });
+test("large-map performance mode defaults on for the 60 FPS profile and remains a local graphics preference", () => { assert.equal(normalizeGraphicsSettings({}).largeMapPerformanceMode, true); assert.equal(normalizeGraphicsSettings({ largeMapPerformanceMode: false }).largeMapPerformanceMode, false); });
 test("observer zoom and haze preferences default safely and round-trip", () => {
   assert.deepEqual([normalizeGraphicsSettings({}).observerZoomLevel, normalizeGraphicsSettings({}).observerHazeMode], ["far", "natural"]);
   const saved = normalizeGraphicsSettings({ observerZoomLevel: "extreme", observerHazeMode: "off" });

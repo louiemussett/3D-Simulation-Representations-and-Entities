@@ -10,14 +10,33 @@ export function immediateThreatPrecedesWater({ action = null, urgency = 0, attac
 const finite = value => Number.isFinite(Number(value));
 const coordinate = value => finite(value) ? Number(value).toFixed(3) : "unknown";
 
-export function waterTargetKey(target) {
+function stableEvidenceIdentity(value) {
+  const text = String(value || "");
+  // Observation ticks identify evidence samples, not physical resources.  Keep
+  // the modality/resource/location portion stable across refreshed sightings.
+  return text.replace(/^(?:water-|resource-)?evidence:\d+:/, "").replace(/^(?:tick-)?\d+:/, "");
+}
+
+export function resourceTargetKey(target, resourceKind = "resource") {
   if (!target) return null;
   if (target.targetKey) return String(target.targetKey);
-  if (target.id != null) return `water-cell:${target.id}`;
-  if (target.memoryId != null) return `water-memory:${target.memoryId}`;
-  if (target.evidenceId != null) return `water-evidence:${target.evidenceId}`;
-  if (finite(target.x) && finite(target.z)) return `water-region:${coordinate(target.x)},${coordinate(target.z)}`;
+  if (target.resourceId != null) return `${resourceKind}:${target.resourceId}`;
+  if (target.cellId != null) return `${resourceKind}-cell:${target.cellId}`;
+  if (target.patchId != null) return `${resourceKind}-patch:${target.patchId}`;
+  if (target.carcassId != null) return `carcass:${target.carcassId}`;
+  if (target.entityId != null) return `entity:${target.entityId}`;
+  if (target.memoryId != null) return `${resourceKind}-memory:${target.memoryId}`;
+  if (target.evidenceId != null) {
+    const stable = stableEvidenceIdentity(target.evidenceId);
+    if (stable && stable !== String(target.evidenceId)) return `${resourceKind}-evidence:${stable}`;
+  }
+  if (target.id != null) return `${resourceKind}-cell:${target.id}`;
+  if (finite(target.x) && finite(target.z)) return `${resourceKind}-region:${coordinate(target.x)},${coordinate(target.z)}`;
   return null;
+}
+
+export function waterTargetKey(target) {
+  return resourceTargetKey(target, "water");
 }
 
 export function shouldRetainWaterTarget({ incumbent, candidate, incumbentDistance = Infinity, candidateDistance = Infinity, tick = 0, invalid = false, routeUnavailable = false, stalled = false, etaIncreaseRatio = 0 } = {}) {
@@ -35,7 +54,7 @@ export function shouldRetainWaterTarget({ incumbent, candidate, incumbentDistanc
   return { retain: true, reason: tick < minimumUntilTick ? "water target retained through the minimum commitment window" : "water target retained; challenger did not meet the switching threshold" };
 }
 
-export function stabilizeNeedDependencyPlan(previous, next, { tick = 0, targetKey = null, target = null, targetDecision = null, commitmentTicks = 1 } = {}) {
+export function stabilizeNeedDependencyPlan(previous, next, { tick = 0, targetKey = null, target = null, targetDecision = null, commitmentTicks = 1, resourceLabel = null } = {}) {
   const same = Boolean(previous && previous.need === next.need && previous.method === next.method && previous.targetKey === targetKey);
   const startedTick = same ? Number(previous.startedTick ?? tick) : tick;
   const minimumUntilTick = same ? Number(previous.minimumUntilTick ?? startedTick + commitmentTicks) : tick + Math.max(1, Number(commitmentTicks) || 1);
@@ -51,9 +70,9 @@ export function stabilizeNeedDependencyPlan(previous, next, { tick = 0, targetKe
     minimumUntilTick,
     phaseStartedTick: same && previous.phase === next.phase ? Number(previous.phaseStartedTick ?? previous.tick ?? tick) : tick,
     targetKey,
-    target: target ? { x: Number(target.x), z: Number(target.z), id: target.id ?? null, memoryId: target.memoryId ?? null, evidenceId: target.evidenceId ?? null, exact: Boolean(target.exact), confidence: Number(target.confidence ?? 1), source: target.source || target.channel || null } : same ? previous.target || null : null,
+    target: target ? { x: Number(target.x), z: Number(target.z), id: target.id ?? null, entityId: target.entityId ?? target.targetId ?? null, resourceId: target.resourceId ?? null, cellId: target.cellId ?? null, targetKind: target.targetKind || null, memoryId: target.memoryId ?? null, evidenceId: target.evidenceId ?? null, exact: Boolean(target.exact), confidence: Number(target.confidence ?? 1), source: target.source || target.channel || null } : same ? previous.target || null : null,
     targetSwitches,
-    targetDecision: targetDecision?.reason || (same ? "water plan retained" : "water target selected"),
+    targetDecision: targetDecision?.reason || (same ? `${resourceLabel || "resource"} plan retained` : `${resourceLabel || "resource"} target selected`),
     contactReservationKey: same ? previous.contactReservationKey ?? next.contactReservationKey ?? null : next.contactReservationKey ?? null,
     suspended: false,
     suspendedAtTick: resumed ? previous.suspendedAtTick : null,
@@ -64,8 +83,8 @@ export function stabilizeNeedDependencyPlan(previous, next, { tick = 0, targetKe
 }
 
 export function suspendNeedDependencyPlan(plan, { tick = 0, reason = "immediate danger" } = {}) {
-  if (!plan || plan.need !== "water") return plan;
-  return { ...plan, schemaVersion: NEED_DEPENDENCY_PLAN_SCHEMA, suspended: true, suspendedAtTick: tick, suspensionReason: reason, targetDecision: "Water plan suspended by immediate predator threat" };
+  if (!plan) return plan;
+  return { ...plan, schemaVersion: NEED_DEPENDENCY_PLAN_SCHEMA, suspended: true, suspendedAtTick: tick, suspensionReason: reason, targetDecision: `${plan.needId || plan.need || "need"} plan suspended: ${reason}` };
 }
 
 export function migrateNeedDependencyPlan(plan, { tick = 0, fallbackTargetKey = null } = {}) {

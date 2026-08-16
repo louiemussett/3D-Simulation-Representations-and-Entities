@@ -22,11 +22,15 @@ export function biologicalHistoryDeposits(animal = {}, cell = {}, ecologicalHour
   if (bird) {
     if (scheduled(animal.id, ecologicalHour, 72, "feather")) records.push(baseRecord(animal, cell, ecologicalHour, "feather", .3 + scale * .3, .0018, { structureEvidence: true }));
   } else if (!reptile && scheduled(animal.id, ecologicalHour, 96, "hair")) records.push(baseRecord(animal, cell, ecologicalHour, "hair", .22 + scale * .26, .0028, { structureEvidence: true }));
-  const annualHour = 24 * 365;
-  if (["woodland-browser", "valley-grazer-updated"].includes(animal.speciesId) && animal.sex === "M" && !["dependent", "juvenile"].includes(animal.lifeStage) && scheduled(animal.id, ecologicalHour, annualHour, "antler-shed")) records.push(baseRecord(animal, cell, ecologicalHour, "shed-antler", .95, .00008, { structureEvidence: true, annualShed: true }));
   if (["rest", "sleep", "deep-rest"].includes(animal.actionState?.key) && scheduled(animal.id, ecologicalHour, 18, "bedding")) records.push(baseRecord(animal, cell, ecologicalHour, "bedding-site", .35 + scale * .42, .008, { structureEvidence: true, chemicalEvidence: true, bodySizeClass: scale < .35 ? "small" : scale > .72 ? "large" : "medium" }));
   if (["rub", "scratch", "groom"].includes(animal.actionState?.key) && scheduled(animal.id, ecologicalHour, 8, "rubbing")) records.push(baseRecord(animal, cell, ecologicalHour, "rubbing-site", .4 + scale * .44, .012, { structureEvidence: true, chemicalEvidence: true, snaggedMaterial: bird ? "feather" : reptile ? "scale-fragment" : "hair" }));
   return Object.freeze(records);
+}
+
+export function shedAntlerHistoryDeposit(animal = {}, cell = {}, ecologicalHour = 0) {
+  if (cell.id == null || !animal.antlers?.justShed) return null;
+  const annual = animal.antlers.annual || {}, genes = animal.antlers.genes || {};
+  return baseRecord(animal, cell, ecologicalHour, "shed-antler", .95, .00008, { structureEvidence: true, annualShed: true, antlerYear: annual.year || null, apparentSize: clamp((genes.beamLength || 1) * (annual.conditionInvestment || 1), .25, 1), leftIntegrity: annual.leftIntegrity ?? 1, rightIntegrity: annual.rightIntegrity ?? 1, evidenceGrade: "observed-exact-entity" });
 }
 
 export function boneHistoryDeposit(corpse = {}, cell = {}, ecologicalHour = 0) {

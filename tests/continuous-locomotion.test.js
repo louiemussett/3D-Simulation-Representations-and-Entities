@@ -4,7 +4,7 @@ import { brakingDistance, predictIntercept, shortestAngle, steeringStep } from "
 import { interactionRadius, physicalContact, resolveAnimalBodyCollision, softSeparation } from "../src/interaction-spacing.js";
 import { buildNavMesh } from "../src/navmesh.js";
 import { findNavPath } from "../src/navmesh-pathfinding.js";
-import { bodySupportedByNavmesh, createLocomotionState, createMovementRequest, predictedRequestDestination, runLocomotionMinute } from "../src/locomotion-system.js";
+import { bodySupportedByNavmesh, createLocomotionState, createMovementRequest, movementRetargetDecision, predictedRequestDestination, runLocomotionMinute } from "../src/locomotion-system.js";
 
 test("motor latency delays only the beginning of a new movement request", () => {
   const mesh = { worldRadius: 1, polygons: new Map([["land", { id: "land", slope: 0, rocky: false }]]), polygonAt: () => "land" };
@@ -28,3 +28,15 @@ test("direct control can recover when collision leaves its footprint outside a n
 test("boundary recovery alone can walk inward from beyond the navmesh", () => { const mesh = buildNavMesh(tinyWorld()), animal = { id: "a", speciesId: "grazer", alive: true, x: 3, z: 0, orientation: Math.PI }; animal.locomotion = createLocomotionState(animal, profile); animal.movementRequest = createMovementRequest("boundary", { x: 1.5, z: 0 }, { allowOutsideNavmesh: true, destinationSource: "boundary-recovery" }); runLocomotionMinute([animal], mesh, { substeps: 8, profileFor: () => profile, neighboursFor: () => [] }); assert.ok(animal.x < 3); assert.equal(animal.movementRequest.allowOutsideNavmesh, true); });
 test("pursuit extrapolates stored evidence without a live target", () => { const request = createMovementRequest("chase:p", { x: 2, z: 0 }, { destinationSource: "perceived-evidence", perceivedTarget: { x: 2, z: 0, vx: 0, vz: 1, velocityConfidence: .5 }, velocityConfidence: .5 }); const destination = predictedRequestDestination(request, { x: 0, z: 0 }, { maxSpeed: 1, sprintSpeed: 2, predictionCap: 2 }, .5); assert.ok(destination.z > 0); assert.equal(destination.x, 2); });
 test("arrival retains completed locomotion mode and contact intent", () => { const mesh = buildNavMesh(tinyWorld()), animal = { id: "a", speciesId: "grazer", alive: true, x: 0, z: 0, orientation: 0 }; animal.locomotion = createLocomotionState(animal, profile); animal.movementRequest = createMovementRequest("chase:p", { x: .1, z: 0 }, { mode: "sprint", contactIntent: { preyId: "p" } }); runLocomotionMinute([animal], mesh, { substeps: 8, profileFor: () => profile, neighboursFor: () => [] }); assert.equal(animal.locomotion.completedMode, "sprint"); assert.equal(animal.locomotion.completedRequestId, "chase:p"); assert.equal(animal.locomotion.completedContactIntent.preyId, "p"); });
+
+test("equivalent movement cannot reverse direction on successive ticks", () => {
+  const current = { id: "water", mode: "walk", destinationSource: "world", commitmentId: "c1", targetKey: "lake", movementPurpose: "hydrate", destination: { x: 2, z: 0 }, lastMaterialUpdateTick: 10 };
+  const opposite = { ...current, destination: { x: -2, z: 0 } };
+  const held = movementRetargetDecision(current, opposite, { x: 0, z: 0 }, 11);
+  assert.equal(held.retain, true);
+  assert.match(held.reason, /opposite destination suppressed/);
+  assert.ok(held.reversalRadians > Math.PI * .7);
+  assert.equal(movementRetargetDecision(current, opposite, { x: 0, z: 0 }, 13).retain, false, "the hold is bounded");
+  assert.equal(movementRetargetDecision(current, { ...opposite, targetKey: "river" }, { x: 0, z: 0 }, 11).retain, false, "a genuine target change is accepted");
+  assert.equal(movementRetargetDecision(current, opposite, { x: 0, z: 0 }, 11, { routeBlocked: true }).retain, false, "a blocked route can recover immediately");
+});

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { commitmentPopulationAudit, createCommitmentRankingReuse, createProtocolRecord, evaluateRiskReward, forecastSocialCommitment, instantiateProtocolPlan, migrateCommitment, migrateProtocolRecord, observeCommitment, protocolRetirementAssessment, rankCommitmentCandidates, recordProtocolOutcome, reviseProtocol, seedStartingCommitment, selectWithCommitment, transmitProtocol } from "../src/commitment-system.js";
+import { commitmentPopulationAudit, createCommitmentRankingReuse, createProtocolRecord, evaluateRiskReward, forecastSocialCommitment, instantiateProtocolPlan, migrateCommitment, migrateProtocolRecord, observeCommitment, protocolRetirementAssessment, rankCommitmentCandidates, reconcileCommitmentExecution, recordProtocolOutcome, reviseProtocol, seedStartingCommitment, selectWithCommitment, transmitProtocol } from "../src/commitment-system.js";
 
 const animal = (overrides = {}) => ({ id: "H1", alive: true, hydration: 90, stomach: 80, energy: 80, fatigue: 5, fear: 0, offspringIds: [], actionState: { key: "travel" }, commitmentProfile: { decisiveness: .7, perseverance: .8, commitmentStability: .85, flexibility: .25, evidenceThreshold: .7, socialSusceptibility: .45, confidence: .75 }, ...overrides });
 
@@ -22,6 +22,54 @@ test("minimum commitment duration blocks ordinary switching but not the urgent c
   assert.equal(held[0].drive, "water"); assert.equal(held[0].minimumHold, true);
   const danger = selectWithCommitment(subject, [{ drive: "water", score: 600, urgent: true }, { drive: "flee", score: 700, urgent: true }], 5);
   assert.equal(danger[0].drive, "flee");
+});
+
+test("target-detail refresh retains the incumbent method during minimum hold", () => {
+  const subject = animal(); migrateCommitment(subject, 0);
+  observeCommitment(subject, { drive: "water", needId: "hydration", satisfierId: "surface-water", methodId: "drink-confirmed-shoreline", targetKey: "water-region:west", score: 70, commitTicks: 16 }, 0);
+  const ranked = selectWithCommitment(subject, [
+    { drive: "water", needId: "hydration", satisfierId: "surface-water", methodId: "drink-confirmed-shoreline", targetKey: "water-cell:42", score: 65 },
+    { drive: "forage", needId: "nutrition", score: 500 },
+  ], 4);
+  assert.equal(ranked[0].drive, "water");
+  assert.equal(ranked[0].minimumHold, true);
+  assert.equal(ranked[0].targetKey, "water-region:west");
+});
+
+test("a lone target refinement cannot reset an otherwise viable held episode", () => {
+  const subject = animal(); migrateCommitment(subject, 0);
+  observeCommitment(subject, { drive: "water", needId: "hydration", satisfierId: "surface-water", methodId: "drink-confirmed-shoreline", targetKey: "water-region:west", score: 70, commitTicks: 16 }, 0);
+  const ranked = selectWithCommitment(subject, [{ drive: "water", needId: "hydration", satisfierId: "surface-water", methodId: "drink-confirmed-shoreline", targetKey: "water-cell:42", score: 75 }], 4);
+  assert.equal(ranked[0].targetKey, "water-region:west");
+  observeCommitment(subject, ranked[0], 4);
+  assert.equal(subject.commitmentState.switches, 0);
+  assert.equal(subject.commitmentState.startedTick, 0);
+});
+
+test("an authorised target replacement stays inside the same commitment episode", () => {
+  const subject = animal(); migrateCommitment(subject, 0);
+  observeCommitment(subject, { drive: "water", needId: "hydration", satisfierId: "surface-water", methodId: "drink-confirmed-shoreline", targetKey: "water-region:west", score: 70, commitTicks: 16 }, 0);
+  const id = subject.commitmentState.commitmentId;
+  observeCommitment(subject, { drive: "water", needId: "hydration", satisfierId: "surface-water", methodId: "drink-confirmed-shoreline", targetKey: "water-cell:42", score: 75, commitTicks: 16 }, 5);
+  assert.equal(subject.commitmentState.commitmentId, id);
+  assert.equal(subject.commitmentState.startedTick, 0);
+  assert.equal(subject.commitmentState.switches, 0);
+  assert.equal(subject.commitmentState.episode.targetChangeCount, 1);
+  assert.ok(subject.commitmentEvents.some(event => event.kind === "target-changed" && !event.countsAsSwitch));
+});
+
+test("execution reconciliation assigns movement to the newly recorded commitment", () => {
+  const subject = animal();
+  migrateCommitment(subject, 0);
+  observeCommitment(subject, { drive: "forage", needId: "nutrition", targetKey: "food-patch:2", score: 60 }, 0);
+  const previousId = subject.commitmentState.commitmentId;
+  subject.movementRequest = { id: "travel", commitmentId: previousId, targetKey: "food-patch:2", routeId: "old-route" };
+  subject.routeState = { routeId: "old-route" };
+  observeCommitment(subject, { drive: "water", needId: "hydration", targetKey: "water-cell:7", score: 80 }, 1);
+  reconcileCommitmentExecution(subject, previousId);
+  assert.equal(subject.movementRequest.commitmentId, subject.commitmentState.commitmentId);
+  assert.equal(subject.movementRequest.targetKey, "water-cell:7");
+  assert.equal(subject.routeState, null);
 });
 
 test("terminal dehydration makes water reward maximum without hiding predator risk", () => {

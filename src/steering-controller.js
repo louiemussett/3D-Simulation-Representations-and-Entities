@@ -6,8 +6,9 @@ export const moveTowards = (value, target, delta) => value < target ? Math.min(t
 
 export function predictIntercept(origin, evidence, speed, cap = 2) {
   const dx = evidence.x - origin.x, dz = evidence.z - origin.z;
-  const lead = clamp(Math.hypot(dx, dz) / Math.max(.01, speed), 0, cap) * clamp(evidence.velocityConfidence ?? evidence.confidence ?? 0, 0, 1);
-  return { x: evidence.x + (evidence.vx || 0) * lead, z: evidence.z + (evidence.vz || 0) * lead, lead };
+  const velocity = evidence.motionObservation?.velocity?.estimate || (Number.isFinite(evidence.vx) && Number.isFinite(evidence.vz) ? { x: evidence.vx, z: evidence.vz } : null), confidence = clamp(evidence.motionObservation?.velocity?.confidence ?? evidence.velocityConfidence ?? evidence.confidence ?? 0, 0, 1), directionUncertainty = Math.max(0, Number(evidence.motionObservation?.velocity?.directionUncertaintyRadians ?? evidence.directionUncertainty ?? 0)), uncertaintyPenalty = clamp(directionUncertainty / Math.PI, 0, 1);
+  const lead = velocity ? clamp(Math.hypot(dx, dz) / Math.max(.01, speed), 0, cap) * confidence * (1 - uncertaintyPenalty * .7) : 0;
+  return { x: evidence.x + (velocity?.x || 0) * lead, z: evidence.z + (velocity?.z || 0) * lead, lead };
 }
 
 export function steeringStep(state, target, profile, dt, options = {}) {

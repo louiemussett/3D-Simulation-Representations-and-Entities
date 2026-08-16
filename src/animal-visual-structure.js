@@ -1,4 +1,9 @@
-export function animalStructureKey(animal) { return `${animal.speciesId}|${animal.lifeStage}`; }
+export function animalStructureKey(animal) {
+  const base = `${animal.speciesId}|${animal.lifeStage}`;
+  if (animal.speciesId !== "valley-grazer-updated" || !animal.antlers) return base;
+  const growthBucket = Math.max(0, Math.min(8, Math.round((Number(animal.antlers.growth) || 0) * 8)));
+  return `${base}|antlers:${animal.antlers.stage || "cast"}:${growthBucket}:${animal.antlers.annual?.year || 0}`;
+}
 
 export class StructuralRootCache {
   constructor() { this.entries = new Map(); this.created = 0; }

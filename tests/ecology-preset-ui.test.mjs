@@ -9,13 +9,13 @@ test("world setup exposes calculated food webs, five quick levels and an exact s
   for (const id of ["ridge-hunter-web", "brush-fox-web", "shadow-stalker-web", "pack-breaker-web", "waterline-ambusher-web", "highland-prowler-web", "sunscale-ambusher-web", "full"]) assert.match(index, new RegExp(`option value="${id}"`));
   for (const percent of [20, 50, 100, 150, 200]) assert.match(index, new RegExp(`<option value="${percent}"`));
   assert.match(index, /id="ecology-population-scale"[^>]*min="20"[^>]*max="200"[^>]*step="10"/);
-  assert.match(index, /option value="compact" selected>Compact world — 6 species/);
+  assert.match(index, /option value="compact">Compact world — 6 species/);
   assert.match(index, /option value="expanded">Standard world — 20 species/);
   assert.match(index, /option value="full">Vast world — 28 species/);
-  assert.match(index, /option value="updated-originals">Updated Valley Grazer &amp; Ridge Hunter — 2 species/);
+  assert.match(index, /option value="updated-originals" selected>Updated Valley Grazer &amp; Ridge Hunter — 2 species/);
   assert.match(index, /no fixed 22-species target/);
-  assert.match(index, /id="start-herbivores"[^>]*value="34"/);
-  assert.match(index, /id="start-carnivores"[^>]*value="11"/);
+  assert.match(index, /id="start-herbivores"[^>]*value="37"/);
+  assert.match(index, /id="start-carnivores"[^>]*value="3"/);
   assert.match(app, /ecologyPresetForWorldScale\(ui\.worldSize\.value\)/);
 });
 

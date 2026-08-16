@@ -14,9 +14,9 @@ export function visibleEyeGazeOffset(animal = {}, target = null, { side = 0, con
 }
 
 export function visiblePupilScale({ illumination = 1, arousal = 0 } = {}) {
-  const darknessDilation = (1 - clamp(illumination, 0, 1)) * .58;
-  const arousalDilation = clamp(arousal, 0, 1) * .24;
-  return clamp(.78 + darknessDilation + arousalDilation, .72, 1.52);
+  const darknessDilation = (1 - clamp(illumination, 0, 1)) * .76;
+  const arousalDilation = clamp(arousal, 0, 1) * .34;
+  return clamp(.66 + darknessDilation + arousalDilation, .6, 1.76);
 }
 
 // This is a deliberate cartoon readability exaggeration, not a claim that
@@ -24,7 +24,7 @@ export function visiblePupilScale({ illumination = 1, arousal = 0 } = {}) {
 // pattern slightly while pupil dilation remains the biologically meaningful
 // response inside it.
 export function visibleIrisScale({ illumination = 1, arousal = 0 } = {}) {
-  const darknessEmphasis = (1 - clamp(illumination, 0, 1)) * .22;
-  const arousalEmphasis = clamp(arousal, 0, 1) * .16;
-  return clamp(.88 + darknessEmphasis + arousalEmphasis, .84, 1.24);
+  const darknessEmphasis = (1 - clamp(illumination, 0, 1)) * .38;
+  const arousalEmphasis = clamp(arousal, 0, 1) * .24;
+  return clamp(.76 + darknessEmphasis + arousalEmphasis, .72, 1.38);
 }

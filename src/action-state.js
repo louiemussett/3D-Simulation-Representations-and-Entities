@@ -51,6 +51,21 @@ export function directionTo(from, destination) {
   return Math.hypot(dx, dz) > 1e-9 ? Math.atan2(dz, dx) : null;
 }
 
+function actionTargetIdentity(target) {
+  if (target === null || target === undefined) return "none";
+  if (["string", "number", "boolean"].includes(typeof target)) return `${typeof target}:${target}`;
+  if (typeof target !== "object") return typeof target;
+  for (const key of ["id", "entityId", "targetId", "cellId", "memoryId", "targetKey", "key"]) {
+    if (target[key] !== null && target[key] !== undefined) return `${key}:${target[key]}`;
+  }
+  return "object-without-stable-identity";
+}
+
+export function actionEpisodeIdentity(key, options = {}) {
+  const explicit = options.episodeKey ?? options.actionEpisodeKey;
+  return `${key}|${explicit === null || explicit === undefined ? actionTargetIdentity(options.target) : `episode:${explicit}`}`;
+}
+
 export function createActionState(key = "idle", options = {}) {
   if (!ACTION_PRESENTATION[key]) throw new Error(`Unknown action key: ${key}`);
   const moving = Boolean(options.moving);
@@ -63,12 +78,42 @@ export function createActionState(key = "idle", options = {}) {
     moving,
     direction: moving ? directionTo(options.from, destination) : null,
     label: options.label || ACTION_PRESENTATION[key].label,
-    reason: options.reason || null
+    reason: options.reason || null,
+    episodeIdentity: options.episodeIdentity || actionEpisodeIdentity(key, options),
+    episodeId: options.episodeId || null,
+    episodeSequence: Number(options.episodeSequence || 0),
+    startedTick: Number.isFinite(options.startedTick) ? options.startedTick : null,
+    lastUpdatedTick: Number.isFinite(options.lastUpdatedTick) ? options.lastUpdatedTick : null,
+    continuationTicks: Math.max(0, Number(options.continuationTicks || 0)),
+    continuationUpdates: Math.max(0, Number(options.continuationUpdates || 0))
   };
 }
 
 export function setAction(animal, key, options = {}) {
-  const state = createActionState(key, { ...options, from: options.from || { x: animal.fx ?? animal.x, z: animal.fz ?? animal.z } });
+  const previous = animal.actionState;
+  const episodeIdentity = actionEpisodeIdentity(key, options);
+  const previousIdentity = previous?.episodeIdentity || (previous?.key ? actionEpisodeIdentity(previous.key, previous) : null);
+  const continuing = previousIdentity === episodeIdentity;
+  const tick = Number.isFinite(options.tick) ? Number(options.tick) : null;
+  const previousSequence = Math.max(Number(animal.actionEpisodeSequence || 0), Number(previous?.episodeSequence || 0));
+  const episodeSequence = continuing ? Number(previous?.episodeSequence || previousSequence || 1) : previousSequence + 1;
+  const entityKey = animal.id ?? animal.entityId ?? "animal";
+  const startedTick = continuing && Number.isFinite(previous?.startedTick) ? previous.startedTick : tick;
+  const elapsedTicks = continuing && tick !== null && Number.isFinite(previous?.lastUpdatedTick)
+    ? Math.max(0, tick - previous.lastUpdatedTick)
+    : continuing ? 1 : 0;
+  const state = createActionState(key, {
+    ...options,
+    from: options.from || { x: animal.fx ?? animal.x, z: animal.fz ?? animal.z },
+    episodeIdentity,
+    episodeId: continuing && previous?.episodeId ? previous.episodeId : `action:${entityKey}:${episodeSequence}`,
+    episodeSequence,
+    startedTick,
+    lastUpdatedTick: tick,
+    continuationTicks: continuing ? Number(previous?.continuationTicks || 0) + elapsedTicks : 0,
+    continuationUpdates: continuing ? Number(previous?.continuationUpdates || 0) + 1 : 0
+  });
+  animal.actionEpisodeSequence = episodeSequence;
   animal.actionState = state;
   animal.currentAction = state.label;
   animal.actionTarget = state.target;
@@ -93,7 +138,13 @@ export function completeActionArrival(animal, key, options = {}) {
 
 export function migrateActionState(animal) {
   if (animal?.actionState && ACTION_PRESENTATION[animal.actionState.key]) {
-    animal.actionState = createActionState(animal.actionState.key, { ...animal.actionState, from: animal });
+    const migrated = createActionState(animal.actionState.key, { ...animal.actionState, from: animal });
+    const sequence = Math.max(1, Number(migrated.episodeSequence || animal.actionEpisodeSequence || 1));
+    migrated.episodeSequence = sequence;
+    migrated.episodeId ||= `action:${animal.id ?? animal.entityId ?? "animal"}:${sequence}`;
+    migrated.episodeIdentity ||= actionEpisodeIdentity(migrated.key, migrated);
+    animal.actionEpisodeSequence = sequence;
+    animal.actionState = migrated;
     animal.currentAction = animal.actionState.label;
     animal.actionTarget = animal.actionState.target;
     return animal.actionState;
@@ -107,6 +158,21 @@ export function completedVisibleVelocity(move, now, paused = false) {
 }
 
 export const MIN_VISUAL_MOVE_DURATION_MS = 80;
+
+// Let a visible movement slightly overlap the expected ecological tick. The
+// next authoritative tick retargets from the currently displayed position, so
+// this small presentation lag removes the stop at every tick boundary without
+// extrapolating or changing simulation truth.
+export function continuousPresentationDuration(ticksPerSecond, {
+  manualStepDuration = 1000,
+  overlap = 1.08,
+  minimumDuration = MIN_VISUAL_MOVE_DURATION_MS,
+  maximumDuration = 2160
+} = {}) {
+  const rate = Number(ticksPerSecond);
+  if (!(rate > 0)) return manualStepDuration;
+  return Math.min(maximumDuration, Math.max(minimumDuration, 1000 / rate * overlap));
+}
 
 export function createRetargetedVisualMove(start, destination, {
   now,

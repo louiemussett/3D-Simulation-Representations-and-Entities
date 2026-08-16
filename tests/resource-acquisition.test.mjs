@@ -23,3 +23,20 @@ test("confirmed contacts are aggregated by resource type", () => {
   assert.deepEqual(totals.water, { failures: 0, resolved: 1, contacts: 2, suppressed: 0 });
   assert.equal(totals.food.contacts, 0);
 });
+
+test("legacy and malformed acquisition records cannot crash resource failure handling", () => {
+  const animal = { resourceAcquisition: { water: "legacy", food: null, carcass: [] } };
+  migrateResourceAcquisition(animal);
+  assert.equal(animal.resourceAcquisition.water.failures, 0);
+  failResourceMemory(animal, { type: "plant", x: 1, z: 2, confidence: .5 }, 9);
+  assert.equal(animal.resourceAcquisition.food.failures, 1);
+  const unknown = { type: "unknown-legacy-resource", x: 3, z: 4, confidence: .5 };
+  assert.doesNotThrow(() => failResourceMemory(animal, unknown, 10));
+  assert.equal(unknown.resourceAcquisitionFailureIgnored, true);
+});
+
+test("unknown contact and confirmation types are rejected without dereferencing undefined state", () => {
+  const animal = {};
+  assert.equal(confirmResourceMemory(animal, "unknown", 1), false);
+  assert.equal(recordResourceContact(animal, "unknown", 1), false);
+});

@@ -15,13 +15,13 @@ test("pupils dilate in darkness and arousal without exceeding visual bounds", ()
   const alarm = visiblePupilScale({ illumination: 0, arousal: 1 });
   assert.ok(darkness > daylight);
   assert.ok(alarm >= darkness);
-  assert.ok(alarm <= 1.52);
+  assert.ok(alarm <= 1.76);
 });
 
 test("cartoon iris emphasis is stronger in darkness and alarm but remains bounded", () => {
   const daylight = visibleIrisScale({ illumination: 1, arousal: 0 });
   const alarm = visibleIrisScale({ illumination: 0, arousal: 1 });
   assert.ok(alarm > daylight);
-  assert.ok(daylight >= .84);
-  assert.ok(alarm <= 1.24);
+  assert.ok(daylight >= .72);
+  assert.ok(alarm <= 1.38);
 });

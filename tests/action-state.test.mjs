@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ACTION_KEYS, ACTION_PRESENTATION, clearFrameMotion, completeActionArrival, completedVisibleVelocity, createActionState, createRetargetedVisualMove, directionTo, migrateActionState, setAction, setBlockedAction } from "../src/action-state.js";
+import { ACTION_KEYS, ACTION_PRESENTATION, actionEpisodeIdentity, clearFrameMotion, completeActionArrival, completedVisibleVelocity, continuousPresentationDuration, createActionState, createRetargetedVisualMove, directionTo, migrateActionState, setAction, setBlockedAction } from "../src/action-state.js";
 
 test("every authoritative action key has one exhaustive presentation entry", () => {
   const required = ["idle", "rest", "travel", "wander", "graze", "browse", "drink", "flee", "join-herd", "evaluate-prey", "stalk", "chase", "attack", "search", "listen", "track-scent", "guard", "defend", "blocked", "courtship", "reject", "scavenge", "nurse", "communicate", "dominance", "submit", "spar", "social-attack", "intervene", "assess-rival", "collapse"];
@@ -27,6 +27,13 @@ test("completed interpolation reports zero visible velocity", () => {
 test("pausing after arrival cannot report visible movement", () => {
   const move = { fromX: 0, fromZ: 0, toX: 1, toZ: 0, started: 100, duration: 200 };
   assert.equal(completedVisibleVelocity(move, 150, true), 0);
+});
+
+test("presentation movement overlaps ecological ticks to avoid stop-start motion", () => {
+  assert.equal(continuousPresentationDuration(1), 1080);
+  assert.equal(continuousPresentationDuration(4), 270);
+  assert.equal(continuousPresentationDuration(0), 1000);
+  assert.equal(continuousPresentationDuration(100), 80);
 });
 
 test("accelerated ticks retain a drawable visual transition", () => {
@@ -72,6 +79,30 @@ test("arrival clears the active destination", () => {
   setAction(animal, "travel", { moving: true, destination: { x: 1, z: 0 } });
   completeActionArrival(animal, "travel", { label: "arrived" });
   assert.equal(animal.actionState.destination, null); assert.equal(animal.actionState.direction, null); assert.equal(animal.actionState.moving, true);
+});
+
+test("equivalent actions continue one episode across decision ticks", () => {
+  const animal = { id: "persistent", x: 0, z: 0 };
+  const first = setAction(animal, "graze", { tick: 10, label: "first bite" });
+  const second = setAction(animal, "graze", { tick: 11, label: "continuing to graze" });
+  assert.equal(second.episodeId, first.episodeId);
+  assert.equal(second.startedTick, 10);
+  assert.equal(second.lastUpdatedTick, 11);
+  assert.equal(second.continuationTicks, 1);
+  assert.equal(second.continuationUpdates, 1);
+  assert.equal(second.label, "continuing to graze");
+});
+
+test("a phase or stable target change starts a new action episode", () => {
+  const animal = { id: "phases", x: 0, z: 0 };
+  const travel = setAction(animal, "travel", { tick: 4, target: "water-a", moving: true, destination: { x: 2, z: 0 } });
+  const refined = setAction(animal, "travel", { tick: 5, target: "water-a", moving: true, destination: { x: 2.2, z: .1 } });
+  assert.equal(refined.episodeId, travel.episodeId, "route refinement is not a new action");
+  const otherWater = setAction(animal, "travel", { tick: 6, target: "water-b", moving: true, destination: { x: -2, z: 0 } });
+  assert.notEqual(otherWater.episodeId, travel.episodeId, "a different stable target is a new episode");
+  const drinking = setAction(animal, "drink", { tick: 7, target: "water-b" });
+  assert.notEqual(drinking.episodeId, otherWater.episodeId, "a genuine action phase is a new episode");
+  assert.equal(actionEpisodeIdentity("drink", { target: { cellId: "water-b" } }), "drink|cellId:water-b");
 });
 
 test("load/reset frame cleanup removes interpolation and trail-driving motion", () => {
